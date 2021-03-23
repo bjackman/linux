@@ -18,6 +18,12 @@ enum asi_class_id {
 static inline void asi_check_boottime_disable(void) { }
 static inline bool asi_enabled_static(void) { return false; }
 struct asi {};
+
+static inline pgd_t *asi_pgd(struct asi *asi)
+{
+	return NULL;
+}
+
 struct asi_taint_policy {};
 
 static inline int asi_init_class(enum asi_class_id class_id,

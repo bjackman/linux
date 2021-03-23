@@ -136,6 +136,11 @@ struct asi {
 };
 void asi_init(void);
 
+static inline pgd_t *asi_pgd(struct asi *asi)
+{
+	return asi->pgd;
+}
+
 DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 
 void asi_init_mm_state(struct mm_struct *mm);
