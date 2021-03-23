@@ -21,6 +21,11 @@ const char *asi_class_names[] = {
 DEFINE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 EXPORT_SYMBOL(curr_asi);
 
+pgd_t *asi_pgd(struct asi *asi)
+{
+	return asi->pgd;
+}
+
 static inline bool asi_class_id_valid(enum asi_class_id class_id)
 {
 	return class_id >= 0 && class_id < ASI_MAX_NUM_CLASSES;

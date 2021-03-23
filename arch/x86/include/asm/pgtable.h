@@ -929,8 +929,16 @@ static inline pgd_t pti_set_user_pgtbl(pgd_t *pgdp, pgd_t pgd)
 }
 #endif  /* CONFIG_MITIGATION_PAGE_TABLE_ISOLATION */
 
-#endif	/* __ASSEMBLER__ */
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+pgd_t *asi_pgd(struct asi *asi);
+#else   /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+static inline pgd_t *asi_pgd(struct asi *asi)
+{
+	return NULL;
+}
+#endif   /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
+#endif	/* __ASSEMBLER__ */
 
 #ifdef CONFIG_X86_32
 # include <asm/pgtable_32.h>
