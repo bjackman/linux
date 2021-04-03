@@ -117,6 +117,9 @@ struct asi_taint_policy {
 	asi_taints_t set;
 };
 
+extern struct asi __asi_global_nonsensitive;
+#define ASI_GLOBAL_NONSENSITIVE	(&__asi_global_nonsensitive)
+
 /*
  * An ASI domain (struct asi) represents a restricted address space. The
  * unrestricted address space (and user address space under PTI) are not

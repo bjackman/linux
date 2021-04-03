@@ -21,6 +21,8 @@ typedef u8 asi_taints_t;
 
 #ifndef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 
+#define ASI_GLOBAL_NONSENSITIVE		NULL
+
 struct asi_hooks {};
 struct asi {};
 
