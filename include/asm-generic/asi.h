@@ -2,6 +2,7 @@
 #ifndef __ASM_GENERIC_ASI_H
 #define __ASM_GENERIC_ASI_H
 
+#include <linux/log2.h>
 #include <linux/types.h>
 
 #ifndef _ASSEMBLY_
@@ -16,6 +17,7 @@ enum asi_class_id {
 #endif
 	ASI_MAX_NUM_CLASSES,
 };
+static_assert(order_base_2(X86_CR3_ASI_PCID_BITS) <= ASI_MAX_NUM_CLASSES);
 
 typedef u8 asi_taints_t;
 

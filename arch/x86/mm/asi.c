@@ -238,6 +238,7 @@ static __always_inline void maybe_flush_data(struct asi *next_asi)
 noinstr void __asi_enter(void)
 {
 	u64 asi_cr3;
+	u16 pcid;
 	struct asi *target = asi_get_target(current);
 
 	/*
@@ -266,9 +267,8 @@ noinstr void __asi_enter(void)
 	this_cpu_write(curr_asi, target);
 	maybe_flush_control(target);
 
-	asi_cr3 = build_cr3_noinstr(target->pgd,
-				    this_cpu_read(cpu_tlbstate.loaded_mm_asid),
-				    tlbstate_lam_cr3_mask());
+	pcid = asi_pcid(target, this_cpu_read(cpu_tlbstate.loaded_mm_asid));
+	asi_cr3 = build_cr3_pcid_noinstr(target->pgd, pcid, tlbstate_lam_cr3_mask(), false);
 	write_cr3(asi_cr3);
 
 	maybe_flush_data(target);
@@ -335,8 +335,8 @@ noinstr void asi_exit(void)
 
 		unrestricted_cr3 =
 			build_cr3_noinstr(this_cpu_read(cpu_tlbstate.loaded_mm)->pgd,
-					  this_cpu_read(cpu_tlbstate.loaded_mm_asid),
-					  tlbstate_lam_cr3_mask());
+					 this_cpu_read(cpu_tlbstate.loaded_mm_asid),
+					 tlbstate_lam_cr3_mask());
 
 		/* Tainting first makes reentrancy easier to reason about.  */
 		this_cpu_or(asi_taints, ASI_TAINT_KERNEL_DATA);
