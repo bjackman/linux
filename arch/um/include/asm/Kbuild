@@ -26,4 +26,4 @@ generic-y += trace_clock.h
 generic-y += kprobes.h
 generic-y += mm_hooks.h
 generic-y += vga.h
-generic-y += video.h
+generic-y += asi.h

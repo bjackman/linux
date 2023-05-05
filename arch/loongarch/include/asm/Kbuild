@@ -12,3 +12,6 @@ generic-y += mmzone.h
 generic-y += statfs.h
 generic-y += param.h
 generic-y += text-patching.h
+generic-y += asi.h
+generic-y += posix_types.h
+generic-y += resource.h
