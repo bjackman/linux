@@ -4377,12 +4377,15 @@ static noinstr void svm_vcpu_enter_exit(struct kvm_vcpu *vcpu, bool spec_ctrl_in
 	raw_local_irq_enable();
 
 	amd_clear_divider();
+	asi_enter(vcpu->kvm->arch.asi);
 
 	if (sev_es_guest(vcpu->kvm))
 		__svm_sev_es_vcpu_run(svm, spec_ctrl_intercepted,
 				      sev_es_host_save_area(sd));
 	else
 		__svm_vcpu_run(svm, spec_ctrl_intercepted);
+
+	asi_relax();
 
 	raw_local_irq_disable();
 
