@@ -8,6 +8,7 @@
 #ifndef _ASM_X86_KVM_HOST_H
 #define _ASM_X86_KVM_HOST_H
 
+#include <linux/asi.h>
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/mmu_notifier.h>
@@ -1618,6 +1619,7 @@ struct kvm_arch {
 	 * current VM.
 	 */
 	int cpu_dirty_log_size;
+	struct asi *asi;
 };
 
 struct kvm_vm_stat {
