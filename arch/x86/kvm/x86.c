@@ -85,6 +85,7 @@
 #include <asm/emulate_prefix.h>
 #include <asm/sgx.h>
 #include <clocksource/hyperv_timer.h>
+#include <asm/asi.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
@@ -9674,6 +9675,55 @@ static void kvm_x86_check_cpu_compat(void *ret)
 	*(int *)ret = kvm_x86_check_processor_compatibility();
 }
 
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+static inline int kvm_x86_init_asi_class(void)
+{
+	static struct asi_taint_policy policy = {
+		/*
+		 * Prevent going to the guest with sensitive data potentially
+		 * left in sidechannels by code running in the unrestricted
+		 * address space, or another MM.
+		 */
+		.protect_data =  ASI_TAINT_KERNEL_DATA | ASI_TAINT_OTHER_MM_DATA,
+		/*
+		 * Prevent going to the guest with branch predictor state
+		 * influenced by other processes. Note this bit is about
+		 * protecting the guest from other parts of the system, while
+		 * data_taints is about protecting other parts of the system
+		 * from the guest.
+		 */
+		.prevent_control = ASI_TAINT_OTHER_MM_CONTROL,
+		.set = ASI_TAINT_GUEST_DATA,
+	};
+
+	/*
+	 * Inform ASI that the guest will gain control of the branch predictor,
+	 * unless we're just unconditionally blasting it after VM Exit.
+	 *
+	 * RFC: This is a bit simplified - on some configurations we could avoid
+	 * a duplicated RSB-fill if we had a separate taint specifically for the
+	 * RSB.
+	 */
+	if (!cpu_feature_enabled(X86_FEATURE_IBPB_ON_VMEXIT) ||
+	    !IS_ENABLED(CONFIG_MITIGATION_RETPOLINE) ||
+	    !cpu_feature_enabled(X86_FEATURE_RSB_VMEXIT))
+		policy.set = ASI_TAINT_GUEST_CONTROL;
+
+	/*
+	 * And the same for data left behind by code in the userspace domain
+	 * (i.e. the VMM itself, plus kernel code serving its syscalls etc).
+	 * This should eventually be configurable: users whose VMMs contain
+	 * no secrets can disable it to avoid paying a mitigation cost on
+	 * transition between their guest and userspace.
+	 */
+	policy.protect_data |= ASI_TAINT_USER_DATA;
+
+	return asi_init_class(ASI_CLASS_KVM, &policy);
+}
+#else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+static inline int kvm_x86_init_asi_class(void) { return 0; }
+#endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+
 int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 {
 	u64 host_pat;
@@ -9737,6 +9787,10 @@ int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 	kvm_caps.supported_vm_types = BIT(KVM_X86_DEFAULT_VM);
 	kvm_caps.supported_mce_cap = MCG_CTL_P | MCG_SER_P;
 
+	r = kvm_x86_init_asi_class();
+	if (r < 0)
+		goto out_mmu_exit;
+
 	if (boot_cpu_has(X86_FEATURE_XSAVE)) {
 		kvm_host.xcr0 = xgetbv(XCR_XFEATURE_ENABLED_MASK);
 		kvm_caps.supported_xcr0 = kvm_host.xcr0 & KVM_SUPPORTED_XCR0;
@@ -9754,7 +9808,7 @@ int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 
 	r = ops->hardware_setup();
 	if (r != 0)
-		goto out_mmu_exit;
+		goto out_asi_uninit;
 
 	kvm_ops_update(ops);
 
@@ -9810,6 +9864,8 @@ int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 out_unwind_ops:
 	kvm_x86_ops.enable_virtualization_cpu = NULL;
 	kvm_x86_call(hardware_unsetup)();
+out_asi_uninit:
+	asi_uninit_class(ASI_CLASS_KVM);
 out_mmu_exit:
 	kvm_mmu_vendor_module_exit();
 out_free_percpu:
@@ -9841,6 +9897,7 @@ void kvm_x86_vendor_exit(void)
 	cancel_work_sync(&pvclock_gtod_work);
 #endif
 	kvm_x86_call(hardware_unsetup)();
+	asi_uninit_class(ASI_CLASS_KVM);
 	kvm_mmu_vendor_module_exit();
 	free_percpu(user_return_msrs);
 	kmem_cache_destroy(x86_emulator_cache);
@@ -11574,6 +11631,13 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 
 	r = vcpu_run(vcpu);
 
+	/*
+	 * At present ASI doesn't have the capability to transition directly
+	 * from the restricted address space to the user address space. So we
+	 * just return to the unrestricted address space in between.
+	 */
+	asi_exit();
+
 out:
 	kvm_put_guest_fpu(vcpu);
 	if (kvm_run->kvm_valid_regs)
@@ -12705,6 +12769,14 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	if (ret)
 		goto out_uninit_mmu;
 
+	ret = asi_init(kvm->mm, ASI_CLASS_KVM, &kvm->arch.asi);
+	if (ret)
+		goto out_uninit_mmu;
+
+	ret = static_call(kvm_x86_vm_init)(kvm);
+	if (ret)
+		goto out_asi_destroy;
+
 	INIT_HLIST_HEAD(&kvm->arch.mask_notifier_list);
 	atomic_set(&kvm->arch.noncoherent_dma_count, 0);
 
@@ -12742,6 +12814,8 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 
 	return 0;
 
+out_asi_destroy:
+	asi_destroy(kvm->arch.asi);
 out_uninit_mmu:
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
@@ -12883,6 +12957,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_destroy_vcpus(kvm);
 	kvfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 	kfree(srcu_dereference_check(kvm->arch.pmu_event_filter, &kvm->srcu, 1));
+	asi_destroy(kvm->arch.asi);
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
 	kvm_xen_destroy_vm(kvm);
