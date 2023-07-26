@@ -30,6 +30,7 @@
 #include <linux/atomic.h>
 
 #include <asm/apic.h>
+#include <asm/asi.h>
 #include <asm/pvclock-abi.h>
 #include <asm/debugreg.h>
 #include <asm/desc.h>
@@ -1587,6 +1588,7 @@ struct kvm_arch {
 	 * current VM.
 	 */
 	int cpu_dirty_log_size;
+	struct asi *asi;
 };
 
 struct kvm_vm_stat {
