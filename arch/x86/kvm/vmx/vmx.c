@@ -14,6 +14,7 @@
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/asi.h>
 #include <linux/highmem.h>
 #include <linux/hrtimer.h>
 #include <linux/kernel.h>
@@ -7317,8 +7318,38 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 					unsigned int flags)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	unsigned long cr3;
 
 	guest_state_enter_irqoff();
+	asi_enter(vcpu->kvm->arch.asi);
+
+	/*
+	 * Refresh vmcs.HOST_CR3 if necessary.  This must be done immediately
+	 * prior to VM-Enter, as the kernel may load a new ASID (PCID) any time
+	 * it switches back to the current->mm, which can occur in KVM context
+	 * when switching to a temporary mm to patch kernel code, e.g. if KVM
+	 * toggles a static key while handling a VM-Exit.
+	 * Also, this must be done after asi_enter(), as it changes CR3
+	 * when switching address spaces.
+	 */
+	cr3 = __get_current_cr3_fast();
+	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {
+		vmcs_writel(HOST_CR3, cr3);
+		vmx->loaded_vmcs->host_state.cr3 = cr3;
+	}
+
+	/*
+	 * Refresh vmcs.HOST_CR3 if necessary.  This must be done immediately
+	 * prior to VM-Enter, as the kernel may load a new ASID (PCID) any time
+	 * it switches back to the current->mm, which can occur in KVM context
+	 * when switching to a temporary mm to patch kernel code, e.g. if KVM
+	 * toggles a static key while handling a VM-Exit.
+	 */
+	cr3 = __get_current_cr3_fast();
+	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {
+		vmcs_writel(HOST_CR3, cr3);
+		vmx->loaded_vmcs->host_state.cr3 = cr3;
+	}
 
 	/*
 	 * L1D Flush includes CPU buffer clear to mitigate MDS, but VERW
@@ -7329,6 +7360,9 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 	 * cpu_buf_vm_clear is used when system is not vulnerable to MDS/TAA,
 	 * and is affected by MMIO Stale Data. In such cases mitigation in only
 	 * needed against an MMIO capable guest.
+	 *
+	 * This is only after asi_enter() for performance reasons.
+	 * RFC: This also needs to be integrated with ASI's tainting model.
 	 */
 	if (static_branch_unlikely(&vmx_l1d_should_flush))
 		vmx_l1d_flush(vcpu);
@@ -7348,6 +7382,8 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 	vcpu->arch.regs_avail &= ~VMX_REGS_LAZY_LOAD_SET;
 
 	vmx->idt_vectoring_info = 0;
+
+	asi_relax();
 
 	vmx_enable_fb_clear(vmx);
 
@@ -7370,7 +7406,7 @@ fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu, u64 run_flags)
 {
 	bool force_immediate_exit = run_flags & KVM_RUN_FORCE_IMMEDIATE_EXIT;
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
-	unsigned long cr3, cr4;
+	unsigned long cr4;
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!enable_vnmi &&
@@ -7418,19 +7454,6 @@ fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu, u64 run_flags)
 
 	if (run_flags & KVM_RUN_LOAD_DEBUGCTL)
 		vmx_reload_guest_debugctl(vcpu);
-
-	/*
-	 * Refresh vmcs.HOST_CR3 if necessary.  This must be done immediately
-	 * prior to VM-Enter, as the kernel may load a new ASID (PCID) any time
-	 * it switches back to the current->mm, which can occur in KVM context
-	 * when switching to a temporary mm to patch kernel code, e.g. if KVM
-	 * toggles a static key while handling a VM-Exit.
-	 */
-	cr3 = __get_current_cr3_fast();
-	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {
-		vmcs_writel(HOST_CR3, cr3);
-		vmx->loaded_vmcs->host_state.cr3 = cr3;
-	}
 
 	cr4 = cr4_read_shadow();
 	if (unlikely(cr4 != vmx->loaded_vmcs->host_state.cr4)) {
