@@ -49,6 +49,9 @@ static inline void asi_relax(void) { }
 static inline struct asi *asi_get_current(void) { return NULL; }
 static inline bool asi_in_critical_section(void) { return false; }
 
+static inline void asi_intr_enter(void) { }
+static inline void asi_intr_exit(void) { }
+
 static inline void asi_handle_switch_mm(void) { }
 static inline void asi_init_mm_state(struct mm_struct *mm) { }
 
