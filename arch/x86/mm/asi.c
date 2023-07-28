@@ -235,7 +235,7 @@ static __always_inline void maybe_flush_data(struct asi *next_asi)
 	this_cpu_and(asi_taints, ~ASI_TAINTS_DATA_MASK);
 }
 
-static noinstr void __asi_enter(void)
+noinstr void __asi_enter(void)
 {
 	u64 asi_cr3;
 	struct asi *target = asi_get_target(current);
@@ -250,6 +250,7 @@ static noinstr void __asi_enter(void)
 	 * disabling preemption should be fine.
 	 */
 	VM_BUG_ON(preemptible());
+	VM_BUG_ON(current->thread.asi_state.intr_nest_depth != 0);
 
 	if (!target || target == this_cpu_read(curr_asi))
 		return;
@@ -290,6 +291,7 @@ noinstr void asi_enter(struct asi *asi)
 	if (!static_asi_enabled())
 		return;
 
+	VM_WARN_ON_ONCE(asi_intr_nest_depth());
 	VM_WARN_ON_ONCE(!asi);
 
 	/* Should not have an asi_enter() without a prior asi_relax(). */
@@ -305,6 +307,7 @@ EXPORT_SYMBOL_GPL(asi_enter);
 noinstr void asi_relax(void)
 {
 	if (static_asi_enabled()) {
+		VM_WARN_ON_ONCE(asi_intr_nest_depth());
 		barrier();
 		asi_set_target(current, NULL);
 	}
@@ -326,6 +329,8 @@ noinstr void asi_exit(void)
 
 	asi = this_cpu_read(curr_asi);
 	if (asi) {
+		WARN_ON_ONCE(asi_in_critical_section());
+
 		maybe_flush_control(NULL);
 
 		unrestricted_cr3 =
