@@ -55,4 +55,28 @@
 # define X86_CR3_PTI_PCID_USER_BIT	11
 #endif
 
+/*
+ * An ASI identifier is included in the higher bits of PCID to use a different
+ * PCID for each restricted address space, different from the PCID of the
+ * unrestricted address space (see asi_pcid()). We use the bits directly after
+ * the bit used by PTI (if any).
+ */
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+
+#define X86_CR3_ASI_PCID_BITS 2
+
+/* Use the highest available PCID bits after the PTI bit (if any) */
+#ifdef CONFIG_MITIGATION_PAGE_TABLE_ISOLATION
+#define X86_CR3_ASI_PCID_END_BIT (X86_CR3_PTI_PCID_USER_BIT - 1)
+#else
+#define X86_CR3_ASI_PCID_END_BIT (X86_CR3_PCID_BITS - 1)
+#endif
+
+#define X86_CR3_ASI_PCID_BITS_SHIFT (X86_CR3_ASI_PCID_END_BIT - X86_CR3_ASI_PCID_BITS + 1)
+#define X86_CR3_ASI_PCID_MASK (((1UL << X86_CR3_ASI_PCID_BITS) - 1) << X86_CR3_ASI_PCID_BITS_SHIFT)
+
+#else
+#define X86_CR3_ASI_PCID_BITS 0
+#endif
+
 #endif /* _ASM_X86_PROCESSOR_FLAGS_H */
