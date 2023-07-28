@@ -12,6 +12,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/asi.h>
 #include <linux/context_tracking.h>
 #include <linux/interrupt.h>
 #include <linux/kallsyms.h>
@@ -561,6 +562,27 @@ DEFINE_IDTENTRY_DF(exc_double_fault)
 	}
 #endif
 
+	/*
+	 * Do an asi_exit() only here because a #DF usually indicates
+	 * the system is in a really bad state, and we don't want to
+	 * cause any additional issue that would prevent us from
+	 * printing a correct stack trace.
+	 *
+	 * The additional issues are not related to a possible triple
+	 * fault, which can only occurs if a fault is encountered while
+	 * invoking this handler, but here we are already executing it.
+	 * Instead, an ASI-induced #PF here could potentially end up
+	 * getting another #DF. For example, if there was some issue in
+	 * invoking the #PF handler. The handler for the second #DF
+	 * could then again cause an ASI-induced #PF leading back to the
+	 * same recursion.
+	 *
+	 * This is not needed in the espfix64 case above, since that
+	 * code is about turning a #DF into a #GP which is okay to
+	 * handle in the nonsensitive domain. That's also why we don't
+	 * asi_exit() in the #GP handler.
+	 */
+	asi_exit();
 	irqentry_nmi_enter(regs);
 	instrumentation_begin();
 	notify_die(DIE_TRAP, str, regs, error_code, X86_TRAP_DF, SIGSEGV);
