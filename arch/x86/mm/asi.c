@@ -207,9 +207,10 @@ static __always_inline void maybe_flush_data(struct asi *next_asi)
 	this_cpu_and(asi_taints, ~ASI_TAINTS_DATA_MASK);
 }
 
-static noinstr void __asi_enter(void)
+noinstr void __asi_enter(void)
 {
 	u64 asi_cr3;
+	u16 pcid;
 	struct asi *target = asi_get_target(current);
 
 	/*
@@ -222,6 +223,7 @@ static noinstr void __asi_enter(void)
 	 * disabling preemption should be fine.
 	 */
 	VM_BUG_ON(preemptible());
+	VM_BUG_ON(current->thread.asi_state.intr_nest_depth != 0);
 
 	if (!target || target == this_cpu_read(curr_asi))
 		return;
@@ -237,9 +239,8 @@ static noinstr void __asi_enter(void)
 	this_cpu_write(curr_asi, target);
 	maybe_flush_control(target);
 
-	asi_cr3 = build_cr3_noinstr(target->pgd,
-				    this_cpu_read(cpu_tlbstate.loaded_mm_asid),
-				    tlbstate_lam_cr3_mask());
+	pcid = asi_pcid(target, this_cpu_read(cpu_tlbstate.loaded_mm_asid));
+	asi_cr3 = build_cr3_pcid_noinstr(target->pgd, pcid, tlbstate_lam_cr3_mask(), false);
 	write_cr3(asi_cr3);
 
 	maybe_flush_data(target);
@@ -259,6 +260,10 @@ static noinstr void __asi_enter(void)
 
 noinstr void asi_enter(struct asi *asi)
 {
+	if (!cpu_feature_enabled(X86_FEATURE_ASI))
+		return;
+
+	VM_WARN_ON_ONCE(asi_intr_nest_depth());
 	VM_WARN_ON_ONCE(!asi);
 
 	/* Should not have an asi_enter() without a prior asi_relax(). */
@@ -273,8 +278,11 @@ EXPORT_SYMBOL_GPL(asi_enter);
 
 noinstr void asi_relax(void)
 {
-	barrier();
-	asi_set_target(current, NULL);
+	if (cpu_feature_enabled(X86_FEATURE_ASI)) {
+		VM_WARN_ON_ONCE(asi_intr_nest_depth());
+		barrier();
+		asi_set_target(current, NULL);
+	}
 }
 EXPORT_SYMBOL_GPL(asi_relax);
 
@@ -293,12 +301,14 @@ noinstr void asi_exit(void)
 
 	asi = this_cpu_read(curr_asi);
 	if (asi) {
+		WARN_ON_ONCE(asi_in_critical_section());
+
 		maybe_flush_control(NULL);
 
 		sensitive_cr3 =
 			build_cr3_noinstr(this_cpu_read(cpu_tlbstate.loaded_mm)->pgd,
-					  this_cpu_read(cpu_tlbstate.loaded_mm_asid),
-					  tlbstate_lam_cr3_mask());
+					 this_cpu_read(cpu_tlbstate.loaded_mm_asid),
+					 tlbstate_lam_cr3_mask());
 
 		/* Tainting first makes reentrancy easier to reason about.  */
 		this_cpu_or(asi_taints, ASI_TAINT_KERNEL_DATA);
