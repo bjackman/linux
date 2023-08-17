@@ -126,6 +126,9 @@ enum pageflags {
 #ifdef CONFIG_ARCH_USES_PG_ARCH_3
 	PG_arch_3,
 #endif
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	PG_global_nonsensitive,
+#endif
 	__NR_PAGEFLAGS,
 
 	PG_readahead = PG_reclaim,
@@ -630,6 +633,14 @@ FOLIO_FLAG(idle, FOLIO_HEAD_PAGE)
 FOLIO_FLAG_FALSE(young)
 FOLIO_TEST_CLEAR_FLAG_FALSE(young)
 FOLIO_FLAG_FALSE(idle)
+#endif
+
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+__PAGEFLAG(GlobalNonSensitive, global_nonsensitive, PF_ANY);
+#define __PG_GLOBAL_NONSENSITIVE (1UL << PG_global_nonsensitive)
+#else
+__PAGEFLAG_FALSE(GlobalNonSensitive, global_nonsensitive);
+#define __PG_GLOBAL_NONSENSITIVE 0
 #endif
 
 /*
