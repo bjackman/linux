@@ -6,6 +6,7 @@
 
 #include <asm/pgtable_types.h>
 #include <asm/percpu.h>
+#include <asm/cpufeature.h>
 #include <asm/processor.h>
 
 struct mm_struct;
@@ -67,6 +68,8 @@ struct mm_struct;
  */
 
 typedef u8 asi_taints_t;
+
+#define static_asi_enabled() cpu_feature_enabled(X86_FEATURE_ASI)
 
 /*
  * ASI uses a per-CPU tainting model to track what mitigation actions are
@@ -138,6 +141,8 @@ static __always_inline pgd_t *asi_pgd(struct asi *asi)
 
 DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 
+void asi_check_boottime_disable(void);
+
 void asi_init_mm_state(struct mm_struct *mm);
 
 int asi_init_class(enum asi_class_id class_id, struct asi_taint_policy *taint_policy);
@@ -162,13 +167,46 @@ void asi_exit(void);
 /* The target is the domain we'll enter when returning to process context. */
 static __always_inline struct asi *asi_get_target(struct task_struct *p)
 {
-	return p->thread.asi_state.target;
+	return static_asi_enabled()
+	       ? p->thread.asi_state.target
+	       : NULL;
 }
 
 static __always_inline void asi_set_target(struct task_struct *p,
 					   struct asi *target)
 {
 	p->thread.asi_state.target = target;
+}
+
+static __always_inline struct asi *asi_get_current(void)
+{
+	return static_asi_enabled()
+	       ? this_cpu_read(curr_asi)
+	       : NULL;
+}
+
+/* Are we currently in a restricted address space? */
+static __always_inline bool asi_is_restricted(void)
+{
+	return (bool)asi_get_current();
+}
+
+/* If we exit/have exited, can we stay that way until the next asi_enter? */
+static __always_inline bool asi_is_relaxed(void)
+{
+	return !asi_get_target(current);
+}
+
+/*
+ * Is the current task in the critical section?
+ *
+ * This is just the inverse of !asi_is_relaxed(). We have both functions in order to
+ * help write intuitive client code. In particular, asi_is_tense returns false
+ * when ASI is disabled, which is judged to make user code more obvious.
+ */
+static __always_inline bool asi_is_tense(void)
+{
+	return !asi_is_relaxed();
 }
 
 #define INIT_MM_ASI(init_mm) \
