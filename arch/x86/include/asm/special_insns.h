@@ -5,6 +5,7 @@
 #ifdef __KERNEL__
 #include <asm/nops.h>
 #include <asm/processor-flags.h>
+#include <asm-generic/asi.h>
 
 #include <linux/errno.h>
 #include <linux/irqflags.h>
@@ -42,16 +43,30 @@ static __always_inline void native_write_cr2(unsigned long val)
 	asm volatile("mov %0,%%cr2": : "r" (val) : "memory");
 }
 
-static __always_inline unsigned long __native_read_cr3(void)
+void asi_exit(void);
+
+static __always_inline unsigned long __native_read_cr3_raw(void)
 {
 	unsigned long val;
 	asm volatile("mov %%cr3,%0\n\t" : "=r" (val) : __FORCE_ORDER);
 	return val;
 }
 
-static __always_inline void native_write_cr3(unsigned long val)
+static __always_inline unsigned long __native_read_cr3(void)
+{
+	asi_exit();
+	return __native_read_cr3_raw();
+}
+
+static __always_inline void native_write_cr3_raw(unsigned long val)
 {
 	asm volatile("mov %0,%%cr3": : "r" (val) : "memory");
+}
+
+static __always_inline void native_write_cr3(unsigned long val)
+{
+	asi_exit();
+	native_write_cr3_raw(val);
 }
 
 static inline unsigned long native_read_cr4(void)
@@ -152,15 +167,37 @@ static __always_inline void write_cr2(unsigned long x)
 /*
  * Careful!  CR3 contains more than just an address.  You probably want
  * read_cr3_pa() instead.
+ *
+ * The implementation interacts with ASI to ensure that the returned value is
+ * stable as long as preemption is disabled.
  */
 static __always_inline unsigned long __read_cr3(void)
 {
 	return __native_read_cr3();
 }
 
+/*
+ * The return value of this is unstable under ASI, even with preemption off.
+ * Call __read_cr3 instead unless you have a good reason not to.
+ */
+static __always_inline unsigned long __read_cr3_raw(void)
+{
+	return __native_read_cr3_raw();
+}
+
+/* This interacts with ASI like __read_cr3. */
 static __always_inline void write_cr3(unsigned long x)
 {
 	native_write_cr3(x);
+}
+
+/*
+ * Like __read_cr3_raw, this doesn't interact with ASI. It's very unlikely that
+ * this should be called from outside ASI-specific code.
+ */
+static __always_inline void write_cr3_raw(unsigned long x)
+{
+	native_write_cr3_raw(x);
 }
 
 static inline void __write_cr4(unsigned long x)

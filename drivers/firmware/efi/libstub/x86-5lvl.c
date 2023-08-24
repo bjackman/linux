@@ -66,7 +66,7 @@ void efi_5level_switch(void)
 	bool have_la57 = native_read_cr4() & X86_CR4_LA57;
 	bool need_toggle = want_la57 ^ have_la57;
 	u64 *pgt = (void *)la57_toggle + PAGE_SIZE;
-	u64 *cr3 = (u64 *)__native_read_cr3();
+	u64 *cr3 = (u64 *)__native_read_cr3_raw();
 	u64 *new_cr3;
 
 	if (!la57_toggle || !need_toggle)

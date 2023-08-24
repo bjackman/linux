@@ -331,8 +331,14 @@ static void load_new_mm_cr3(pgd_t *pgdir, u16 new_asid, unsigned long lam,
 	 * Caution: many callers of this function expect
 	 * that load_cr3() is serializing and orders TLB
 	 * fills with respect to the mm_cpumask writes.
+	 *
+	 * The context switching code will explicitly exit ASI when needed, do
+	 * not use write_cr3() as it has an implicit ASI exit. Calling
+	 * asi_exit() here, where loaded_mm == LOADED_MM_SWITCHING, will cause
+	 * the VM_BUG_ON() in asi_exit() to fire mistakenly even though
+	 * loaded_mm is never accessed.
 	 */
-	write_cr3(new_mm_cr3);
+	write_cr3_raw(new_mm_cr3);
 }
 
 void leave_mm(void)
@@ -559,11 +565,11 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
 	 * without going through leave_mm() / switch_mm_irqs_off() or that
 	 * does something like write_cr3(read_cr3_pa()).
 	 *
-	 * Only do this check if CONFIG_DEBUG_VM=y because __read_cr3()
+	 * Only do this check if CONFIG_DEBUG_VM=y because __read_cr3_raw()
 	 * isn't free.
 	 */
 #ifdef CONFIG_DEBUG_VM
-	if (WARN_ON_ONCE(__read_cr3() != build_cr3(prev->pgd, prev_asid,
+	if (WARN_ON_ONCE(__read_cr3_raw() != build_cr3(prev->pgd, prev_asid,
 						   tlbstate_lam_cr3_mask()))) {
 		/*
 		 * If we were to BUG here, we'd be very likely to kill
@@ -1173,7 +1179,7 @@ noinstr unsigned long __get_current_cr3_fast(void)
 	 */
 	VM_WARN_ON_ONCE(asi && asi_in_critical_section());
 
-	VM_BUG_ON(cr3 != __read_cr3());
+	VM_BUG_ON(cr3 != __read_cr3_raw());
 	return cr3;
 }
 EXPORT_SYMBOL_GPL(__get_current_cr3_fast);
@@ -1373,7 +1379,7 @@ static inline bool cr3_matches_current_mm(void)
 	 * find a current ASI domain.
 	 */
 	barrier();
-	pgd_cr3 = __va(read_cr3_pa());
+	pgd_cr3 = __va(read_cr3_pa_raw());
 	return pgd_cr3 == current->mm->pgd || pgd_cr3 == pgd_asi;
 }
 

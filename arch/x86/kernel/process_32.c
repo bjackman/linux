@@ -79,7 +79,7 @@ void __show_regs(struct pt_regs *regs, enum show_regs_mode mode,
 
 	cr0 = read_cr0();
 	cr2 = read_cr2();
-	cr3 = __read_cr3();
+	cr3 = __read_cr3_raw();
 	cr4 = __read_cr4();
 	printk("%sCR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n",
 		log_lvl, cr0, cr2, cr3, cr4);

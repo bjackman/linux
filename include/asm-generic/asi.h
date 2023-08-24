@@ -71,6 +71,7 @@ static inline pgd_t *asi_pgd(struct asi *asi) { return NULL; }
 
 static inline void asi_handle_switch_mm(void) { }
 
+struct thread_struct;
 static inline void asi_init_thread_state(struct thread_struct *thread) { }
 
 static inline void asi_intr_enter(void) { }

@@ -113,7 +113,7 @@ void __show_regs(struct pt_regs *regs, enum show_regs_mode mode,
 
 	cr0 = read_cr0();
 	cr2 = read_cr2();
-	cr3 = __read_cr3();
+	cr3 = __read_cr3_raw();
 	cr4 = __read_cr4();
 
 	printk("%sFS:  %016lx(%04x) GS:%016lx(%04x) knlGS:%016lx\n",
