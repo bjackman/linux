@@ -159,13 +159,13 @@ static __always_inline void write_cr2(unsigned long x)
 	PVOP_VCALL1(mmu.write_cr2, x);
 }
 
-static inline unsigned long __read_cr3(void)
+static inline unsigned long __read_cr3_raw(void)
 {
 	return PVOP_ALT_CALL0(unsigned long, mmu.read_cr3,
 			      "mov %%cr3, %%rax;", ALT_NOT_XEN);
 }
 
-static inline void write_cr3(unsigned long x)
+static inline void write_cr3_raw(unsigned long x)
 {
 	PVOP_ALT_VCALL1(mmu.write_cr3, x, "mov %%rdi, %%cr3", ALT_NOT_XEN);
 }
