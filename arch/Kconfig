@@ -20,10 +20,12 @@ endif
 config ARCH_HAS_MITIGATION_ADDRESS_SPACE_ISOLATION
 	bool
 
+# TODO: Remove !PARAVIRT dependency. Need to figure out CR3 accessors for
+# userspace to work.
 config MITIGATION_ADDRESS_SPACE_ISOLATION
 	bool "Allow code to run with a reduced kernel address space"
 	default n
-	depends on ARCH_HAS_MITIGATION_ADDRESS_SPACE_ISOLATION
+	depends on ARCH_HAS_MITIGATION_ADDRESS_SPACE_ISOLATION && !PARAVIRT
 	help
 	  This feature provides the ability to run some kernel code
 	  with a reduced kernel address space. This can be used to
