@@ -1540,6 +1540,13 @@ config PAGE_ALLOC_UNMAPPED
 	bool
 	depends on !HIGHMEM
 
+config PAGE_ALLOC_KUNIT_TEST
+	tristate "KUnit tests for the page allocator" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Builds KUnit tests for the page allocator.
+
 source "mm/damon/Kconfig"
 
 endmenu
