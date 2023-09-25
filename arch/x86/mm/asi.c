@@ -8,6 +8,8 @@
 #include <linux/pgtable.h>
 #include <linux/syscore_ops.h>
 
+#include <kunit/visibility.h>
+
 #include <asm/cmdline.h>
 #include <asm/cpufeature.h>
 #include <asm/l1tf.h>
@@ -17,6 +19,7 @@
 #include <asm/traps.h>
 #include <asm/pgtable.h>
 
+#include "asi_internal.h"
 #include "mm_internal.h"
 #include "../../../mm/internal.h"
 
@@ -38,6 +41,7 @@ struct asi __asi_global_nonsensitive = {
 	.pgd = asi_global_nonsensitive_pgd,
 	.mm = &init_mm,
 };
+EXPORT_SYMBOL_IF_KUNIT(__asi_global_nonsensitive);
 
 static bool do_l1tf_flush __ro_after_init;
 
@@ -740,7 +744,7 @@ static bool is_page_within_range(unsigned long addr, unsigned long page_size,
 	return page_start >= range_start && page_end <= range_end;
 }
 
-static bool follow_physaddr(
+VISIBLE_IF_KUNIT bool follow_physaddr(
 	pgd_t *pgd_table, unsigned long virt,
 	phys_addr_t *phys, unsigned long *page_size, ulong *flags)
 {
@@ -808,6 +812,7 @@ static bool follow_physaddr(
 	pte_unmap(pte);
 	return true;
 }
+EXPORT_SYMBOL_IF_KUNIT(follow_physaddr);
 
 /*
  * Map the given range into the ASI page tables. The source of the mapping is
@@ -930,6 +935,7 @@ int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
 {
 	return asi_map_gfp(asi, addr, len, GFP_KERNEL);
 }
+EXPORT_SYMBOL_IF_KUNIT(asi_map);
 
 /*
  * Unmap a kernel address range previously mapped into the ASI page tables.
@@ -975,6 +981,7 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 
 	asi_flush_tlb_range(asi, addr, len);
 }
+EXPORT_SYMBOL_IF_KUNIT(asi_unmap);
 
 /*
  * This function is to copy the given unrestricted pgd entry for
