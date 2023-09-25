@@ -17,6 +17,9 @@
 #include <asm/mmu_context.h>
 #include <asm/msr.h>
 
+#include <kunit/visibility.h>
+
+#include "asi_internal.h"
 #include "mm_internal.h"
 
 static struct asi_taint_policy *taint_policies[ASI_MAX_NUM_CLASSES];
@@ -36,6 +39,7 @@ __aligned(PAGE_SIZE) pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
 struct asi __asi_global_nonsensitive = {
 	.pgd = asi_global_nonsensitive_pgd,
 };
+EXPORT_SYMBOL_IF_KUNIT(__asi_global_nonsensitive);
 
 static bool do_l1tf_flush __ro_after_init;
 
@@ -596,6 +600,7 @@ void asi_map(struct page *page, int numpages)
 		}
 	}
 }
+EXPORT_SYMBOL_IF_KUNIT(follow_physaddr);
 
 /*
  * Unmap pages previously mapped via asi_map().
