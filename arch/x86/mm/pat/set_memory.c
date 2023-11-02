@@ -34,6 +34,7 @@
 #include <asm/memtype.h>
 #include <asm/hyperv-tlfs.h>
 #include <asm/mshyperv.h>
+#include <asm/asi.h>
 
 #include <kunit/visibility.h>
 
@@ -77,6 +78,7 @@ static DEFINE_SPINLOCK(cpa_lock);
 #define CPA_ARRAY 2
 #define CPA_PAGES_ARRAY 4
 #define CPA_NO_CHECK_ALIAS 8 /* Do not search for aliases */
+#define CPA_IGNORE_FAULT 16
 
 static inline pgprot_t cachemode2pgprot(enum page_cache_mode pcm)
 {
@@ -1585,6 +1587,12 @@ static int populate_pgd(struct cpa_data *cpa, unsigned long addr)
 static int __cpa_process_fault(struct cpa_data *cpa, unsigned long vaddr,
 			       int primary)
 {
+	/* If requested, ignore faults and move on to the next page */
+	if (cpa->flags & CPA_IGNORE_FAULT) {
+		cpa->numpages = 1;
+		return 0;
+	}
+
 	if (cpa->pgd) {
 		/*
 		 * Right now, we only execute this code path when mapping
@@ -1705,7 +1713,7 @@ repeat:
 	return err;
 }
 
-static int __change_page_attr_set_clr(struct cpa_data *cpa, int primary);
+static int ___change_page_attr_set_clr(struct cpa_data *cpa, int primary);
 
 /*
  * Check the directmap and "high kernel map" 'aliases'.
@@ -1741,7 +1749,7 @@ static int cpa_process_alias(struct cpa_data *cpa)
 
 		cpa->force_flush_all = 1;
 
-		ret = __change_page_attr_set_clr(&alias_cpa, 0);
+		ret = ___change_page_attr_set_clr(&alias_cpa, 0);
 		if (ret)
 			return ret;
 	}
@@ -1775,14 +1783,14 @@ static int cpa_process_alias(struct cpa_data *cpa)
 		 * The high mapping range is imprecise, so ignore the
 		 * return value.
 		 */
-		__change_page_attr_set_clr(&alias_cpa, 0);
+		___change_page_attr_set_clr(&alias_cpa, 0);
 	}
 #endif
 
 	return 0;
 }
 
-static int __change_page_attr_set_clr(struct cpa_data *cpa, int primary)
+static int ___change_page_attr_set_clr(struct cpa_data *cpa, int primary)
 {
 	unsigned long numpages = cpa->numpages;
 	unsigned long rempages = numpages;
@@ -1832,6 +1840,74 @@ static int __change_page_attr_set_clr(struct cpa_data *cpa, int primary)
 out:
 	/* Restore the original numpages */
 	cpa->numpages = numpages;
+	return ret;
+}
+
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+
+/*
+ * Propagate attribute changes to ASI page tables. This only handles global
+ * non-sensitive memory. Updates to mappings that do not exist in ASI page
+ * tables will be ignored, courtesy of CPA_IGNORE_FAULT.
+ *
+ * We expect most kernel memory to be non-sensitive, and hence be mapped into
+ * ASI page tables. If this is not the case, we can add some optimizations:
+ * - Skip an entire CPA operaton if the first page is not mapped into ASI page
+ *   tables, as it is uncommon to have partial mappings. A debug check could be
+ *   added to confirm that the entire range is not mapped into ASI page tables.
+ * - In __change_page_attr() we can skip the lookup if all the following apply:
+ *   - cpa->pgd == asi_pgd(ASI_GLOBAL_NONSENSITIVE)
+ *   - cpa->flags & CPA_PAGES_ARRAY
+ *   - PageGlobalNonsensitive() is false
+ *
+ * Theoretically, if this function races with an asi_map() call that maps an
+ * alias of the address range we are operating on, we may miss updating the
+ * alias. This can happen for example if:
+ * (a) With vmalloc(), only the vmap mappings are added to ASI page tables,
+ *     direct map mappings are sensitive by default for vmalloc allocations.
+ * (b) set_memory_*() is used to update the permissions of the vmap mappings.
+ * (c) asi_map() is used to add the direct map mappings to ASI page tables.
+ *
+ * In theory, if (b) and (c) race, the permission updates may not propagate to
+ * the direct map mappings in ASI page tables. In practice, the above scenario
+ * would likely be a bug.
+ */
+static int asi_change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
+{
+	struct cpa_data asi_cpa;
+
+	if (!static_asi_enabled())
+		return 0;
+
+	/* ASI does not care about alternate pgds */
+	if (cpa->pgd && cpa->pgd != init_mm.pgd)
+		return 0;
+
+	asi_cpa = *cpa;
+	asi_cpa.curpage = 0;
+	asi_cpa.flags |= CPA_IGNORE_FAULT;
+	asi_cpa.pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
+	return ___change_page_attr_set_clr(&asi_cpa, checkalias);
+}
+
+#else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+
+static int asi_change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
+{
+	return 0;
+}
+
+#endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+
+static int __change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
+{
+	int ret;
+
+	ret = ___change_page_attr_set_clr(cpa, checkalias);
+	if (!ret)
+		/* Do not return an error if the above succeeded, just warn */
+		WARN_ON(asi_change_page_attr_set_clr(cpa, checkalias));
+
 	return ret;
 }
 
