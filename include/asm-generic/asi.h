@@ -16,6 +16,9 @@ enum asi_class_id {
 	ASI_CLASS_KVM,
 #endif
 	ASI_CLASS_USERSPACE,
+#if IS_ENABLED(CONFIG_ASI_KUNIT_TESTS)
+	ASI_CLASS_TEST,
+#endif
 	ASI_MAX_NUM_CLASSES,
 };
 static_assert(order_base_2(X86_CR3_ASI_PCID_BITS) <= ASI_MAX_NUM_CLASSES);
