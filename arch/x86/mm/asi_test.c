@@ -89,6 +89,28 @@ static struct asi_test_info *setup_test_asi(struct kunit *test)
 	return info;
 }
 
+static void test_asi_state(struct kunit *test)
+{
+	struct asi_test_info *info = setup_test_asi(test);
+	struct asi *asi = info->asi;
+
+	preempt_disable();
+
+	asi_enter(asi);
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+	KUNIT_EXPECT_FALSE(test, asi_is_relaxed());
+
+	asi_relax();
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+	KUNIT_EXPECT_TRUE(test, asi_is_relaxed());
+
+	asi_exit();
+	KUNIT_EXPECT_FALSE(test, asi_is_restricted());
+	KUNIT_EXPECT_TRUE(test, asi_is_relaxed());
+
+	preempt_enable();
+}
+
 struct free_pages_ctx {
 	unsigned int order;
 	struct page *pages;
@@ -162,6 +184,7 @@ static void test_alloc_sensitive_nonsensitive(struct kunit *test)
 }
 
 static struct kunit_case asi_test_cases[] = {
+	KUNIT_CASE(test_asi_state),
 	KUNIT_CASE(test_alloc_sensitive_nonsensitive),
 	{}
 };
