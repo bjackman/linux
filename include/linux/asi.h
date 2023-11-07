@@ -11,6 +11,9 @@ enum asi_class_id {
 	ASI_CLASS_KVM,
 #endif
 	ASI_CLASS_USERSPACE,
+#if IS_ENABLED(CONFIG_ASI_KUNIT_TESTS)
+	ASI_CLASS_TEST,
+#endif
 	ASI_MAX_NUM_CLASSES,
 };
 
