@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/memblock.h>
 #include <linux/string.h>
+#include <linux/syscore_ops.h>
 
 #include <asm/cmdline.h>
 #include <asm/cpufeature.h>
@@ -70,6 +71,32 @@ static void __asi_destroy(struct asi *asi)
 	lockdep_assert_held(&asi->mm->asi_init_lock);
 
 }
+
+#ifdef CONFIG_PM_SLEEP
+static int asi_suspend(void)
+{
+	/*
+	 * Must be called after IRQs are disabled and rescheduling is no longer
+	 * possible (so that we cannot re-enter ASI before suspending.
+	 */
+	lockdep_assert_irqs_disabled();
+
+	/*
+	 * Suspend operations sometimes save CR3 as part of the saved state,
+	 * which is restored later (e.g. do_suspend_lowlevel() in the suspend
+	 * path, swsusp_arch_suspend() in the hibernate path, relocate_kernel()
+	 * in the kexec path). Saving a nonsensitive CR3 and restoring it later
+	 * could leave to improperly entering ASI. Exit ASI before such
+	 * operations.
+	 */
+	asi_exit();
+	return 0;
+}
+
+static struct syscore_ops asi_syscore_ops = {
+	.suspend = asi_suspend,
+};
+#endif /* CONFIG_PM_SLEEP */
 
 int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_asi)
 {
@@ -534,6 +561,10 @@ static int __init asi_global_init(void)
 	 * Note this is making assumptions about the address space layout :/
 	 */
 	asi_clone_range(VMALLOC_START, ULONG_MAX);
+
+#ifdef CONFIG_PM_SLEEP
+	register_syscore_ops(&asi_syscore_ops);
+#endif
 
 	return 0;
 }
