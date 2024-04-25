@@ -1179,6 +1179,12 @@ unsigned int reclaim_clean_pages_from_list(struct zone *zone,
 /* Flags that allow allocations below the min watermark. */
 #define ALLOC_RESERVES (ALLOC_NON_BLOCK|ALLOC_MIN_RESERVE|ALLOC_HIGHATOMIC|ALLOC_OOM)
 
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+#define ALLOC_SKIP_INIT		0x1000 /* See asi_defer_init_on_alloc() */
+#else
+#define ALLOC_SKIP_INIT		0x0
+#endif
+
 enum ttu_flags;
 struct tlbflush_unmap_batch;
 

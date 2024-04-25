@@ -1504,8 +1504,9 @@ static inline bool should_skip_init(gfp_t flags)
 	return (flags & __GFP_SKIP_ZERO);
 }
 
-inline void post_alloc_hook(struct page *page, unsigned int order,
-				gfp_t gfp_flags)
+/* alloc_skip_init is true if ALLOC_SKIP_INIT is set in an allocation */
+static inline void __post_alloc_hook(struct page *page, unsigned int order,
+				gfp_t gfp_flags, bool alloc_skip_init)
 {
 	bool init = !want_init_on_free() && want_init_on_alloc(gfp_flags) &&
 			!should_skip_init(gfp_flags);
@@ -1524,6 +1525,17 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	 * allocations and the page unpoisoning code will complain.
 	 */
 	kernel_unpoison_pages(page, 1 << order);
+
+	/*
+	 * When ALLOC_SKIP_INIT is set, we skip kernel_init_pages() here and
+	 * call it in asi_map_alloced_pages() instead. This ignores all the
+	 * KASAN init stuff, because ASI does not currently support KASAN
+	 * anyway. Make sure that ALLOC_SKIP_INIT is not defined when KASAN is
+	 * enabled, otherwise the code is incorrect.
+	 */
+	BUILD_BUG_ON(ALLOC_SKIP_INIT && IS_ENABLED(CONFIG_KASAN));
+	if (alloc_skip_init)
+		goto after_init;
 
 	/*
 	 * As memory initialization might be integrated into KASAN,
@@ -1560,15 +1572,22 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	if (init)
 		kernel_init_pages(page, 1 << order);
 
+after_init:
 	set_page_owner(page, order, gfp_flags);
 	page_table_check_alloc(page, order);
 	pgalloc_tag_add(page, current, 1 << order);
 }
 
+inline void post_alloc_hook(struct page *page, unsigned int order,
+					gfp_t gfp_flags)
+{
+	__post_alloc_hook(page, order, gfp_flags, false);
+}
+
 static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
 							unsigned int alloc_flags)
 {
-	post_alloc_hook(page, order, gfp_flags);
+	__post_alloc_hook(page, order, gfp_flags, alloc_flags & ALLOC_SKIP_INIT);
 
 	if (order && (gfp_flags & __GFP_COMP))
 		prep_compound_page(page, order);
@@ -4618,16 +4637,36 @@ static int asi_map_alloced_pages(struct page *page, size_t size, gfp_t gfp_mask)
 
 	if (!(gfp_mask & __GFP_SENSITIVE)) {
 		int err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page), size, gfp_mask);
+		int nr_pages = size >> PAGE_SHIFT;
 		uint i;
 
 		if (err)
 			return err;
 
-		for (i = 0; i < (size >> PAGE_SHIFT); i++)
+		/*
+		 * Clear out old (potentially sensitive) data after mapping it
+		 * into ASI page tables to avoid an ASI exit. We don't check
+		 * want_init_on_alloc() because zeroing is required by ASI
+		 * regardless.
+		 */
+		if (!want_init_on_free())
+			kernel_init_pages(page, nr_pages);
+
+		for (i = 0; i < nr_pages; i++)
 			__SetPageGlobalNonSensitive(page + i);
 	}
 
 	return 0;
+}
+
+/*
+ * Skip page clearing for non-sensitive allocations as they are not
+ * yet mapped into ASI page tables, so clearing them will cause an ASI
+ * exit. asi_map_alloced_pages() will zero them after mapping them.
+ */
+static inline int asi_defer_init_on_alloc(gfp_t gfp)
+{
+	return static_asi_enabled() && !(gfp & __GFP_SENSITIVE);
 }
 
 #else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
@@ -4645,6 +4684,11 @@ bool asi_unmap_freed_pages(struct page *page, unsigned int order)
 }
 
 static bool asi_async_free_enqueue(struct page *page, unsigned int order)
+{
+	return false;
+}
+
+static inline int asi_defer_init_on_alloc(gfp_t gfp)
 {
 	return false;
 }
@@ -4850,10 +4894,6 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	if (WARN_ON_ONCE_GFP(order > MAX_PAGE_ORDER, gfp))
 		return NULL;
 
-	/* Clear out old (maybe sensitive) data before reallocating as nonsensitive. */
-	if (!static_asi_enabled() && !(gfp & __GFP_SENSITIVE))
-		gfp |= __GFP_ZERO;
-
 	gfp &= gfp_allowed_mask;
 	/*
 	 * Apply scoped allocation constraints. This is mainly about GFP_NOFS
@@ -4873,6 +4913,10 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	 * memory until all local zones are considered.
 	 */
 	alloc_flags |= alloc_flags_nofragment(zonelist_zone(ac.preferred_zoneref), gfp);
+
+	/* Skip pages init if asi_map_alloced_pages() will do it anyway below */
+	if (asi_defer_init_on_alloc(gfp))
+		alloc_flags |= ALLOC_SKIP_INIT;
 
 	/* First allocation attempt */
 	page = get_page_from_freelist(alloc_gfp, order, alloc_flags, &ac);
