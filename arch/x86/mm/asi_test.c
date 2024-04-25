@@ -437,6 +437,28 @@ static void test_change_page_attr_split_mapping(struct kunit *test)
 	}
 }
 
+static void test_page_alloc_restricted(struct kunit *test)
+{
+	struct asi_test_info *info = setup_test_asi(test);
+	struct asi *asi = info->asi;
+	struct page *page;
+
+	preempt_disable();
+
+	asi_enter(asi);
+	asi_relax();
+
+	page = alloc_page(GFP_ATOMIC);
+	KUNIT_ASSERT_NOT_NULL(test, page);
+
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+
+	asi_exit(ASI_EXIT_MISC);
+	preempt_enable();
+
+	__free_page(page);
+}
+
 static void action_free_percpu(void __percpu *ptr)
 {
 	free_percpu(ptr);
@@ -717,6 +739,7 @@ static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_change_page_attr_split_mapping),
 	KUNIT_CASE(test_asi_intr),
 	KUNIT_CASE(test_asi_intr_nesting),
+	KUNIT_CASE(test_page_alloc_restricted),
 	{}
 };
 
