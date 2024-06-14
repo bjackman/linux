@@ -132,7 +132,6 @@ struct asi_taint_policy {
 struct asi {
 	pgd_t *pgd;
 	struct mm_struct *mm;
-	int64_t ref_count;
 	enum asi_class_id class_id;
 	spinlock_t pgd_lock;
 };
@@ -146,6 +145,7 @@ static inline pgd_t *asi_pgd(struct asi *asi)
 DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 
 int asi_init_mm_state(struct mm_struct *mm);
+void asi_destroy_mm_state(struct mm_struct *mm);
 
 int asi_init_class(enum asi_class_id class_id, struct asi_taint_policy *taint_policy);
 void asi_init_userspace_class(void);
@@ -153,8 +153,6 @@ void asi_uninit_class(enum asi_class_id class_id);
 const char *asi_class_name(enum asi_class_id class_id);
 
 int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_asi);
-void asi_destroy(struct asi *asi);
-void asi_destroy_userspace(struct mm_struct *mm);
 void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp);
 
 /* Enter an ASI domain (nonsensitive address space) and begin the critical section. */
