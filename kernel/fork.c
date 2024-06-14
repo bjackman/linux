@@ -677,8 +677,8 @@ void __mmdrop(struct mm_struct *mm)
 	/* Ensure no CPUs are using this as their lazy tlb mm */
 	cleanup_lazy_tlbs(mm);
 
-	asi_destroy_userspace(mm);
 	WARN_ON_ONCE(mm == current->active_mm);
+	asi_destroy_mm_state(mm);
 	mm_free_pgd(mm);
 	mm_free_id(mm);
 	destroy_context(mm);

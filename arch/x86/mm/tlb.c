@@ -1833,16 +1833,15 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 
 static inline bool cr3_matches_current_mm(void)
 {
-	struct asi *asi = asi_get_current();
-	unsigned long pgd_asi = __pa(asi_pgd(asi));
+	struct asi *asi;
+	unsigned long pgd_asi = 0;
 	unsigned long pgd_cr3;
 
-	/*
-	 * Prevent read_cr3_pa -> [NMI, asi_exit] -> asi_get_current,
-	 * otherwise we might find CR3 pointing to the ASI PGD but not
-	 * find a current ASI domain.
-	 */
-	barrier();
+	preempt_disable();
+	asi = asi_get_current();
+	pgd_asi = (unsigned long)asi_pgd(asi);
+	preempt_enable();
+
 	pgd_cr3 = read_cr3_pa_raw();
 	return pgd_cr3 == __pa(current->mm->pgd) || pgd_cr3 == __pa(pgd_asi);
 }

@@ -12871,7 +12871,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 
 	ret = static_call(kvm_x86_vm_init)(kvm);
 	if (ret)
-		goto out_asi_destroy;
+		goto out_uninit_mmu;
 
 	INIT_HLIST_HEAD(&kvm->arch.mask_notifier_list);
 	atomic_set(&kvm->arch.noncoherent_dma_count, 0);
@@ -12918,8 +12918,6 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	once_init(&kvm->arch.nx_once);
 	return 0;
 
-out_asi_destroy:
-	asi_destroy(kvm->arch.asi);
 out_uninit_mmu:
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
@@ -13042,7 +13040,6 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_ioapic_destroy(kvm);
 	kvfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 	kfree(srcu_dereference_check(kvm->arch.pmu_event_filter, &kvm->srcu, 1));
-	asi_destroy(kvm->arch.asi);
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
 	kvm_xen_destroy_vm(kvm);

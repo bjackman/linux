@@ -40,7 +40,6 @@ static inline int asi_init(struct mm_struct *mm, enum asi_class_id class_id,
 {
 	return 0;
 }
-static inline void asi_destroy(struct asi *asi) { }
 static inline void asi_destroy_userspace(struct mm_struct *mm) { }
 
 static inline pgd_t *asi_pgd(struct asi *asi) { return NULL; }
@@ -60,6 +59,7 @@ static inline void asi_intr_exit(void) { }
 
 static inline void asi_handle_switch_mm(void) { }
 static inline int asi_init_mm_state(struct mm_struct *mm) { return 0; }
+static inline void asi_destroy_mm_state(struct mm_struct *mm) { }
 
 struct thread_struct;
 static inline void asi_init_thread_state(struct thread_struct *thread) { }
