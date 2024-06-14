@@ -98,12 +98,6 @@ const char *asi_class_name(enum asi_class_id class_id)
 	return asi_class_names[class_id];
 }
 
-static void __asi_destroy(struct asi *asi)
-{
-	lockdep_assert_held(&asi->mm->asi_init_lock);
-
-}
-
 #ifdef CONFIG_PM_SLEEP
 static int asi_suspend(void)
 {
@@ -173,9 +167,19 @@ int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id, struct asi
 
 	asi = &mm->asi[class_id];
 
+	/*
+	 * TODO: In Google's version there's an enforcement here that mm belongs
+	 * to current. IIUC this is just because we hadn't really thought
+	 * through the implications of synchronization (note we don't take
+	 * asi_init_lock in asi_destroy_mm_state()) in that case. That
+	 * enforcement isn't posible here since we need to support this in the
+	 * fork path now. So, need to do a bit more thinking about the
+	 * synchronization here.
+	 */
+
 	mutex_lock(&mm->asi_init_lock);
 
-	if (asi->ref_count++ > 0)
+	if (asi->mm) /* Already initialized? */
 		goto exit_unlock; /* err is 0 */
 
 	BUG_ON(asi->pgd != NULL);
@@ -197,9 +201,7 @@ int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id, struct asi
 	spin_lock_init(&asi->pgd_lock);
 
 exit_unlock:
-	if (err)
-		__asi_destroy(asi);
-	else if (out_asi)
+	if (!err && out_asi)
 		*out_asi = asi;
 
 	for (int i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
@@ -210,31 +212,6 @@ exit_unlock:
 
 	return err;
 }
-
-void asi_destroy(struct asi *asi)
-{
-	struct mm_struct *mm;
-
-	if (!asi)
-		return;
-
-	if (WARN_ON(!asi_class_initialized(asi->class_id)))
-		return;
-
-	mm = asi->mm;
-	/*
-	 * We would need this mutex even if the refcount was atomic as we need
-	 * to block concurrent asi_init calls.
-	 */
-	mutex_lock(&mm->asi_init_lock);
-	WARN_ON_ONCE(asi->ref_count <= 0);
-	if (--(asi->ref_count) == 0) {
-		free_pages((ulong)asi->pgd, pgd_allocation_order());
-		memset(asi, 0, sizeof(struct asi));
-	}
-	mutex_unlock(&mm->asi_init_lock);
-}
-EXPORT_SYMBOL_GPL(asi_destroy);
 
 DEFINE_PER_CPU_ALIGNED(asi_taints_t, asi_taints);
 
@@ -296,12 +273,6 @@ static __always_inline void maybe_flush_data(struct asi *next_asi)
 	this_cpu_and(asi_taints, ~ASI_TAINTS_DATA_MASK);
 }
 
-void asi_destroy_userspace(struct mm_struct *mm)
-{
-	VM_BUG_ON(!asi_class_initialized(ASI_CLASS_USERSPACE));
-	asi_destroy(&mm->asi[ASI_CLASS_USERSPACE]);
-}
-
 noinstr void __asi_enter(void)
 {
 	u64 asi_cr3;
@@ -325,6 +296,12 @@ noinstr void __asi_enter(void)
 
 	VM_BUG_ON(this_cpu_read(cpu_tlbstate.loaded_mm) ==
 		  LOADED_MM_SWITCHING);
+
+	/*
+	 * ASI domains lifetime is tied to asi->mm. Enforce entering ASI when
+	 * asi->mm == current->mm to ensure the ASI domain continued validity.
+	 */
+	WARN_ON_ONCE(target->mm != current->mm);
 
 	/*
 	 * Must update curr_asi before writing CR3 to ensure an interrupting
@@ -435,6 +412,14 @@ int asi_init_mm_state(struct mm_struct *mm)
 	mutex_init(&mm->asi_init_lock);
 
 	return asi_init_domain(mm, ASI_CLASS_USERSPACE, NULL);
+}
+
+void asi_destroy_mm_state(struct mm_struct *mm)
+{
+	if (!cpu_feature_enabled(X86_FEATURE_ASI))
+		return;
+
+	WARN_ON_ONCE(atomic_read(&mm->mm_count));
 }
 
 void asi_handle_switch_mm(void)
