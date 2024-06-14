@@ -13366,7 +13366,6 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 #endif
 	kvfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 	kfree(srcu_dereference_check(kvm->arch.pmu_event_filter, &kvm->srcu, 1));
-	asi_destroy(kvm->arch.asi);
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
 	kvm_xen_destroy_vm(kvm);
