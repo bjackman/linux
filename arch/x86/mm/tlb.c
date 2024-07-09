@@ -830,6 +830,9 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
 	u64 next_tlb_gen;
 
 
+	/* Stabilize CR3, before reading or writing CR3 */
+	asi_exit();
+
 	/* We don't want flush_tlb_func() to run concurrently with us. */
 	if (IS_ENABLED(CONFIG_PROVE_LOCKING))
 		WARN_ON_ONCE(!irqs_disabled());
