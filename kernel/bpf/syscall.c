@@ -298,7 +298,7 @@ static void *__bpf_map_area_alloc(u64 size, int numa_node, bool mmapable)
 		align = SHMLBA;
 		flags = VM_USERMAP;
 	} else if (size <= (PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER)) {
-		area = kmalloc_node(size, gfp | GFP_USER | __GFP_NORETRY,
+		area = kmalloc_node(size, gfp | BPF_GFP_USER_VMALLOC | __GFP_NORETRY,
 				    numa_node);
 		if (area != NULL)
 			return area;
@@ -1550,7 +1550,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 	value_size = bpf_map_value_size(map);
 
 	err = -ENOMEM;
-	value = kvmalloc(value_size, GFP_USER | __GFP_NOWARN);
+	value = kvmalloc(value_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!value)
 		goto free_key;
 
@@ -1717,7 +1717,7 @@ static int map_get_next_key(union bpf_attr *attr)
 	}
 
 	err = -ENOMEM;
-	next_key = kvmalloc(map->key_size, GFP_USER);
+	next_key = kvmalloc(map->key_size, BPF_GFP_USER_VMALLOC);
 	if (!next_key)
 		goto free_key;
 
@@ -1770,7 +1770,7 @@ int generic_map_delete_batch(struct bpf_map *map,
 	if (put_user(0, &uattr->batch.count))
 		return -EFAULT;
 
-	key = kvmalloc(map->key_size, GFP_USER | __GFP_NOWARN);
+	key = kvmalloc(map->key_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!key)
 		return -ENOMEM;
 
@@ -1829,11 +1829,11 @@ int generic_map_update_batch(struct bpf_map *map, struct file *map_file,
 	if (put_user(0, &uattr->batch.count))
 		return -EFAULT;
 
-	key = kvmalloc(map->key_size, GFP_USER | __GFP_NOWARN);
+	key = kvmalloc(map->key_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!key)
 		return -ENOMEM;
 
-	value = kvmalloc(value_size, GFP_USER | __GFP_NOWARN);
+	value = kvmalloc(value_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!value) {
 		kvfree(key);
 		return -ENOMEM;
@@ -1893,11 +1893,11 @@ int generic_map_lookup_batch(struct bpf_map *map,
 	if (put_user(0, &uattr->batch.count))
 		return -EFAULT;
 
-	buf_prevkey = kvmalloc(map->key_size, GFP_USER | __GFP_NOWARN);
+	buf_prevkey = kvmalloc(map->key_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!buf_prevkey)
 		return -ENOMEM;
 
-	buf = kvmalloc(map->key_size + value_size, GFP_USER | __GFP_NOWARN);
+	buf = kvmalloc(map->key_size + value_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!buf) {
 		kvfree(buf_prevkey);
 		return -ENOMEM;
@@ -2015,7 +2015,7 @@ static int map_lookup_and_delete_elem(union bpf_attr *attr)
 	value_size = bpf_map_value_size(map);
 
 	err = -ENOMEM;
-	value = kvmalloc(value_size, GFP_USER | __GFP_NOWARN);
+	value = kvmalloc(value_size, BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!value)
 		goto free_key;
 
@@ -2753,7 +2753,7 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	}
 
 	/* plain bpf_prog allocation */
-	prog = bpf_prog_alloc(bpf_prog_size(attr->insn_cnt), GFP_USER);
+	prog = bpf_prog_alloc(bpf_prog_size(attr->insn_cnt), BPF_GFP_USER_VMALLOC);
 	if (!prog) {
 		if (dst_prog)
 			bpf_prog_put(dst_prog);

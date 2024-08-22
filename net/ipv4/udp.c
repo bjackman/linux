@@ -3580,7 +3580,7 @@ static int bpf_iter_udp_realloc_batch(struct bpf_udp_iter_state *iter,
 	struct sock **new_batch;
 
 	new_batch = kvmalloc_array(new_batch_sz, sizeof(*new_batch),
-				   GFP_USER | __GFP_NOWARN);
+				   BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!new_batch)
 		return -ENOMEM;
 

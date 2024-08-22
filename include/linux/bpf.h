@@ -31,6 +31,19 @@
 #include <linux/memcontrol.h>
 #include <linux/cfi.h>
 
+/*
+ * Some BPF memory allocated with GFP_USER (e.g. maps) is accessed in
+ * latency-sensitive paths (e.g. context switches) causing expensive ASI exits.
+ * For now, make these allocations non-sensitive. This is only needed for
+ * vmalloc allocations, as the slab allocator does not support sensitive
+ * allocations yet anyway.
+ *
+ * Note that ASI is not creating a new security hole, the memory is just not
+ * protected by ASI so it needs to be protected by other mitigations now.
+ * TODO(b/361615753): Protect BPF memory with ASI if needed.
+ */
+#define BPF_GFP_USER_VMALLOC (GFP_USER & ~__GFP_SENSITIVE)
+
 struct bpf_verifier_env;
 struct bpf_verifier_log;
 struct perf_event;

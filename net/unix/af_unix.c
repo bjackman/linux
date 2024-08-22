@@ -3516,7 +3516,7 @@ static int bpf_iter_unix_realloc_batch(struct bpf_unix_iter_state *iter,
 	struct sock **new_batch;
 
 	new_batch = kvmalloc(sizeof(*new_batch) * new_batch_sz,
-			     GFP_USER | __GFP_NOWARN);
+			     BPF_GFP_USER_VMALLOC | __GFP_NOWARN);
 	if (!new_batch)
 		return -ENOMEM;
 
