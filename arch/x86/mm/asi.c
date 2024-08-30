@@ -645,6 +645,7 @@ noinstr void __asi_enter(void)
 	 */
 	this_cpu_or(asi_taints, taint_policies[target->class_id]->set);
 }
+EXPORT_SYMBOL_IF_KUNIT(__asi_enter);
 
 noinstr void asi_enter(struct asi *asi)
 {
