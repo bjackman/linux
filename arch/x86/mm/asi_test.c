@@ -192,14 +192,6 @@ static struct page **pages_to_ptr_array(struct kunit *test, struct page *pages, 
 	return pg_array;
 }
 
-static bool addr_present(pgd_t *pgd, unsigned long addr)
-{
-	phys_addr_t phys;
-	unsigned long page_size, flags;
-
-	return follow_physaddr(pgd, addr, &phys, &page_size, &flags);
-}
-
 /* This is a very minimal smoke test. */
 static void test_asi_map_global_nonsensitive(struct kunit *test)
 {

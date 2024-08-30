@@ -13,6 +13,7 @@ bool follow_physaddr(
 	pgd_t *pgd_table, unsigned long virt,
 	phys_addr_t *phys, unsigned long *page_size, ulong *flags);
 int64_t asi_cpu_stat(int cpu, enum asi_stat_item item);
+bool addr_present(pgd_t *pgd, unsigned long addr);
 
 #endif /* CONFIG_KUNIT */
 
