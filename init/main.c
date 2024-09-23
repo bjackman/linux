@@ -953,6 +953,8 @@ void start_kernel(void)
 	/* Architectural and non-timekeeping rng init, before allocator init */
 	random_init_early(command_line);
 
+	asi_init_userspace_class();
+
 	/*
 	 * These use large bootmem allocations and must precede
 	 * initalization of page allocator

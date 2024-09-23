@@ -15,6 +15,7 @@ enum asi_class_id {
 #if IS_ENABLED(CONFIG_KVM)
 	ASI_CLASS_KVM,
 #endif
+	ASI_CLASS_USERSPACE,
 	ASI_MAX_NUM_CLASSES,
 };
 static_assert(order_base_2(X86_CR3_ASI_PCID_BITS) <= ASI_MAX_NUM_CLASSES);
@@ -37,8 +38,10 @@ int asi_init_class(enum asi_class_id class_id,
 
 static inline void asi_uninit_class(enum asi_class_id class_id) { }
 
+static inline void asi_init_userspace_class(void) { }
+
 struct mm_struct;
-static inline void asi_init_mm_state(struct mm_struct *mm) { }
+static inline int asi_init_mm_state(struct mm_struct *mm) { return 0; }
 
 static inline int asi_init(struct mm_struct *mm, enum asi_class_id class_id,
 			   struct asi **out_asi)
@@ -48,7 +51,11 @@ static inline int asi_init(struct mm_struct *mm, enum asi_class_id class_id,
 
 static inline void asi_destroy(struct asi *asi) { }
 
+static inline void asi_destroy_userspace(struct mm_struct *mm) { }
+
 static inline void asi_enter(struct asi *asi) { }
+
+static inline void asi_enter_userspace(void) { }
 
 static inline void asi_relax(void) { }
 
