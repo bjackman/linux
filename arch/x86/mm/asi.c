@@ -17,6 +17,7 @@ const char *asi_class_names[] = {
 #if IS_ENABLED(CONFIG_KVM)
 	[ASI_CLASS_KVM] = "KVM",
 #endif
+	[ASI_CLASS_USERSPACE] = "userspace",
 };
 
 DEFINE_PER_CPU_ALIGNED(struct asi *, curr_asi);
@@ -48,6 +49,32 @@ int asi_init_class(enum asi_class_id class_id, struct asi_taint_policy *taint_po
 	return 0;
 }
 EXPORT_SYMBOL_GPL(asi_init_class);
+
+void __init asi_init_userspace_class(void)
+{
+	static struct asi_taint_policy policy = {
+		/*
+		 * Prevent going to userspace with sensitive data potentially
+		 * left in sidechannels by code running in the sensitive
+		 * address space, or another MM. Note we don't check for guest
+		 * data here. This reflects the assumption that the guest trusts
+		 * its VMM (absent fancy HW features, which are orthogonal).
+		 */
+		.protect_data = ASI_TAINT_KERNEL_DATA | ASI_TAINT_OTHER_MM_DATA,
+		/*
+		 * Don't go into userspace with control flow state controlled by
+		 * other processes, or any KVM guest the process is running.
+		 * Note this bit is about protecting userspace from other parts
+		 * of the system, while data_taints is about protecting other
+		 * parts of the system from the guest.
+		 */
+		.prevent_control = ASI_TAINT_GUEST_CONTROL | ASI_TAINT_OTHER_MM_CONTROL,
+		.set = ASI_TAINT_USER_CONTROL | ASI_TAINT_USER_DATA,
+	};
+	int err = asi_init_class(ASI_CLASS_USERSPACE, &policy);
+
+	WARN_ON(err);
+}
 
 void asi_uninit_class(enum asi_class_id class_id)
 {
@@ -130,7 +157,8 @@ int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id, struct asi
 	struct asi *asi;
 	int err = 0;
 
-	*out_asi = NULL;
+	if (out_asi)
+		*out_asi = NULL;
 
 	if (WARN_ON(!asi_class_initialized(class_id)))
 		return -EINVAL;
@@ -163,7 +191,7 @@ int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id, struct asi
 exit_unlock:
 	if (err)
 		__asi_destroy(asi);
-	else
+	else if (out_asi)
 		*out_asi = asi;
 
 	for (int i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
@@ -261,6 +289,12 @@ static __always_inline void maybe_flush_data(struct asi *next_asi)
 	this_cpu_and(asi_taints, ~ASI_TAINTS_DATA_MASK);
 }
 
+void asi_destroy_userspace(struct mm_struct *mm)
+{
+	VM_BUG_ON(!asi_class_initialized(ASI_CLASS_USERSPACE));
+	asi_destroy(&mm->asi[ASI_CLASS_USERSPACE]);
+}
+
 noinstr void __asi_enter(void)
 {
 	u64 asi_cr3;
@@ -330,6 +364,11 @@ noinstr void asi_enter(struct asi *asi)
 }
 EXPORT_SYMBOL_GPL(asi_enter);
 
+noinstr void asi_enter_userspace(void)
+{
+	asi_enter(&current->mm->asi[ASI_CLASS_USERSPACE]);
+}
+
 noinstr void asi_relax(void)
 {
 	if (cpu_feature_enabled(X86_FEATURE_ASI)) {
@@ -377,10 +416,12 @@ noinstr void asi_exit(void)
 }
 EXPORT_SYMBOL_GPL(asi_exit);
 
-void asi_init_mm_state(struct mm_struct *mm)
+int asi_init_mm_state(struct mm_struct *mm)
 {
 	memset(mm->asi, 0, sizeof(mm->asi));
 	mutex_init(&mm->asi_init_lock);
+
+	return asi_init_domain(mm, ASI_CLASS_USERSPACE, NULL);
 }
 
 void asi_handle_switch_mm(void)
