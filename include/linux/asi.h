@@ -10,6 +10,7 @@ enum asi_class_id {
 #if IS_ENABLED(CONFIG_KVM)
 	ASI_CLASS_KVM,
 #endif
+	ASI_CLASS_USERSPACE,
 	ASI_MAX_NUM_CLASSES,
 };
 
@@ -34,6 +35,7 @@ static inline int asi_init_class(enum asi_class_id class_id,
 	return 0;
 }
 static inline void asi_uninit_class(enum asi_class_id claass_id) { }
+static inline void asi_init_userspace_class(void) { }
 
 struct mm_struct;
 static inline int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_id,
@@ -42,12 +44,14 @@ static inline int asi_init_domain(struct mm_struct *mm, enum asi_class_id class_
 	return 0;
 }
 static inline void asi_destroy(struct asi *asi) { }
+static inline void asi_destroy_userspace(struct mm_struct *mm) { }
 
 #define asi_nonsensitive_pgd NULL
 
 static inline void asi_init(void) { };
 
 static inline void asi_enter(struct asi *asi) { }
+static inline void asi_enter_userspace(void) { }
 /* asi_exit() defined via yucky asi_exit.h. */
 static inline void asi_relax(void) { }
 
@@ -58,7 +62,7 @@ static inline void asi_intr_enter(void) { }
 static inline void asi_intr_exit(void) { }
 
 static inline void asi_handle_switch_mm(void) { }
-static inline void asi_init_mm_state(struct mm_struct *mm) { }
+static inline int asi_init_mm_state(struct mm_struct *mm) { return 0; }
 
 struct thread_struct;
 static inline void asi_init_thread_state(struct thread_struct *thread) { }
