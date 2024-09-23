@@ -193,6 +193,16 @@ static __always_inline long syscall_enter_from_user_mode(struct pt_regs *regs, l
 {
 	long ret;
 
+	/*
+	 * End the ASI critical section for userspace. Syscalls are the only
+	 * place this happens - all other entry from userspace is handled via
+	 * ASI's interrupt-tracking. The reason syscalls are special is that's
+	 * where it's possible to switch to another ASI domain within the same
+	 * task (i.e. KVM_RUN), an asi_relax() is required here in case of an
+	 * upcoming asi_enter().
+	 */
+	asi_relax();
+
 	enter_from_user_mode(regs);
 
 	instrumentation_begin();
@@ -357,6 +367,7 @@ static __always_inline void exit_to_user_mode_prepare(struct pt_regs *regs)
  */
 static __always_inline void exit_to_user_mode(void)
 {
+
 	instrumentation_begin();
 	trace_hardirqs_on_prepare();
 	lockdep_hardirqs_on_prepare();
@@ -449,6 +460,7 @@ static __always_inline void syscall_exit_to_user_mode(struct pt_regs *regs)
 	syscall_exit_to_user_mode_work(regs);
 	instrumentation_end();
 	exit_to_user_mode();
+	asi_enter_userspace();
 }
 
 /**
