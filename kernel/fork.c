@@ -917,6 +917,7 @@ void __mmdrop(struct mm_struct *mm)
 	/* Ensure no CPUs are using this as their lazy tlb mm */
 	cleanup_lazy_tlbs(mm);
 
+	asi_destroy_userspace(mm);
 	WARN_ON_ONCE(mm == current->active_mm);
 	mm_free_pgd(mm);
 	destroy_context(mm);
@@ -1293,10 +1294,11 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 		mm->def_flags = 0;
 	}
 
-	asi_init_mm_state(mm);
-
 	if (mm_alloc_pgd(mm))
 		goto fail_nopgd;
+
+	if (asi_init_mm_state(mm))
+		goto fail_noasi;
 
 	if (init_new_context(p, mm))
 		goto fail_nocontext;
@@ -1318,6 +1320,7 @@ fail_cid:
 	destroy_context(mm);
 fail_nocontext:
 	mm_free_pgd(mm);
+fail_noasi:
 fail_nopgd:
 	free_mm(mm);
 	return NULL;

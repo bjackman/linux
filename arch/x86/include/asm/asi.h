@@ -119,17 +119,22 @@ DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 
 void asi_check_boottime_disable(void);
 
-void asi_init_mm_state(struct mm_struct *mm);
+int asi_init_mm_state(struct mm_struct *mm);
 
 int  asi_register_class(const char *name, const struct asi_hooks *ops);
+void asi_register_userspace_class(void);
 void asi_unregister_class(int index);
 
 int  asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi);
 void asi_destroy(struct asi *asi);
+void asi_destroy_userspace(struct mm_struct *mm);
 void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp);
 
 /* Enter an ASI domain (restricted address space) and begin the critical section. */
 void asi_enter(struct asi *asi);
+
+/* TODO dumb name */
+void asi_enter_user_mode(void);
 
 /*
  * Leave the "tense" state if we are in it, i.e. end the critical section. We
@@ -279,8 +284,8 @@ static __always_inline bool asi_in_critical_section(void)
  */
 static inline bool asi_maps_user_addr(void)
 {
-	return cpu_feature_enabled(X86_FEATURE_SMAP) &&
-	       !static_cpu_has_bug(X86_BUG_L1TF);
+	/* TODO: make this a flag on the class probably. */
+	return true;
 }
 
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */

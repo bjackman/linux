@@ -22,9 +22,11 @@ int asi_register_class(const char *name, const struct asi_hooks *ops)
 	return 0;
 }
 
+static inline void asi_register_userspace_class(void) { }
+
 static inline void asi_unregister_class(int asi_index) { }
 
-static inline void asi_init_mm_state(struct mm_struct *mm) { }
+static inline int asi_init_mm_state(struct mm_struct *mm) { return 0 }
 
 static inline int asi_init(struct mm_struct *mm, int asi_index,
 			   struct asi **asi_out)
@@ -34,7 +36,11 @@ static inline int asi_init(struct mm_struct *mm, int asi_index,
 
 static inline void asi_destroy(struct asi *asi) { }
 
+static inline void asi_destroy_userspace(struct mm_struct *mm) { }
+
 static inline void asi_enter(struct asi *asi) { }
+
+static inline void asi_enter_user_mode(void) { }
 
 static inline void asi_relax(void) { }
 

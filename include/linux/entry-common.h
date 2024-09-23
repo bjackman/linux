@@ -111,6 +111,8 @@ static __always_inline void enter_from_user_mode(struct pt_regs *regs)
 	CT_WARN_ON(__ct_state() != CONTEXT_USER);
 	user_exit_irqoff();
 
+	asi_relax();
+
 	instrumentation_begin();
 	kmsan_unpoison_entry_regs(regs);
 	trace_hardirqs_off_finish();
@@ -355,10 +357,14 @@ static __always_inline void exit_to_user_mode_prepare(struct pt_regs *regs)
  */
 static __always_inline void exit_to_user_mode(void)
 {
+
 	instrumentation_begin();
 	trace_hardirqs_on_prepare();
 	lockdep_hardirqs_on_prepare();
 	instrumentation_end();
+
+	/* TOOD: Not really sure exactly where this goes. */
+	asi_enter_user_mode();
 
 	user_enter_irqoff();
 	arch_exit_to_user_mode();

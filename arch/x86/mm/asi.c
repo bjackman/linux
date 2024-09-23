@@ -34,6 +34,8 @@ struct asi __asi_global_nonsensitive = {
 };
 EXPORT_SYMBOL_IF_KUNIT(__asi_global_nonsensitive);
 
+static int asi_userspace_index = -1;
+
 
 static inline bool asi_class_registered(int index)
 {
@@ -73,6 +75,13 @@ int asi_register_class(const char *name, const struct asi_hooks *ops)
 	return i;
 }
 EXPORT_SYMBOL_GPL(asi_register_class);
+
+void __init asi_register_userspace_class(void)
+{
+	/* TODO add hooks */
+	asi_userspace_index = asi_register_class("userspace", NULL);
+	WARN_ON(asi_userspace_index < 0);
+}
 
 void asi_unregister_class(int index)
 {
@@ -359,7 +368,8 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	int err = 0;
 	uint i;
 
-	*out_asi = NULL;
+	if (out_asi)
+		*out_asi = NULL;
 
 	if (!boot_cpu_has(X86_FEATURE_ASI))
 		return 0;
@@ -400,7 +410,7 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 exit_unlock:
 	if (err)
 		__asi_destroy(asi);
-	else
+	else if (out_asi)
 		*out_asi = asi;
 
 	__asi_init_user_pgds(mm, asi);
@@ -427,6 +437,11 @@ void asi_destroy(struct asi *asi)
 	mutex_unlock(&mm->asi_init_lock);
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
+
+void asi_destroy_userspace(struct mm_struct *mm) {
+	VM_BUG_ON(!asi_class_registered(asi_userspace_index));
+	asi_destroy(&mm->asi[asi_userspace_index]);
+}
 
 noinstr void __asi_enter(void)
 {
@@ -481,6 +496,18 @@ noinstr void asi_enter(struct asi *asi)
 }
 EXPORT_SYMBOL_GPL(asi_enter);
 
+noinstr void asi_enter_user_mode(void)
+{
+	if (!static_asi_enabled())
+		return;
+
+	VM_BUG_ON(!asi_class_registered(asi_userspace_index));
+	asi_set_target(current, &current->mm->asi[asi_userspace_index]);
+	barrier();
+
+	__asi_enter();
+}
+
 inline_or_noinstr void asi_relax(void)
 {
 	if (static_asi_enabled()) {
@@ -528,13 +555,15 @@ noinstr void asi_exit(void)
 }
 EXPORT_SYMBOL_GPL(asi_exit);
 
-void asi_init_mm_state(struct mm_struct *mm)
+int asi_init_mm_state(struct mm_struct *mm)
 {
 	if (!boot_cpu_has(X86_FEATURE_ASI))
-		return;
+		return 0;
 
 	memset(mm->asi, 0, sizeof(mm->asi));
 	mutex_init(&mm->asi_init_lock);
+
+	return asi_init(mm, asi_userspace_index, NULL);
 }
 
 static bool is_page_within_range(unsigned long addr, unsigned long page_size,
