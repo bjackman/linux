@@ -50,7 +50,7 @@ static inline bool asi_is_tense(void) { return false; }
 
 static inline bool asi_in_critical_section(void) { return false; }
 
-static inline void asi_exit(void) { }
+static inline bool asi_exit(void) { return false; }
 
 static inline bool asi_is_restricted(void) { return false; }
 
