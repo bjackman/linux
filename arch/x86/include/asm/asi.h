@@ -142,8 +142,8 @@ void asi_enter_user_mode(void);
  */
 void asi_relax(void);
 
-/* Immediately exit the restricted address space if in it */
-void asi_exit(void);
+/* Immediately exit the restricted address space if in it. If we did, return true. */
+bool asi_exit(void);
 
 int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);
