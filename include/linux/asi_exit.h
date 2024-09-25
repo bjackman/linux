@@ -2,6 +2,8 @@
 #ifndef _INCLUDE_ASI_EXIT_H
 #define _INCLUDE_ASI_EXIT_H
 
+#include <linux/types.h>
+
 enum asi_exit_reason {
 	ASI_EXIT_PAGE_FAULT,
 	ASI_EXIT_USER_RET,
@@ -21,9 +23,15 @@ enum asi_exit_reason {
  * dramatically during LKML reviews anyway.
  */
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
-void asi_exit(enum asi_exit_reason reason);
+/*
+ * Immediately exit the restricted address space if in it. If we did that,
+ * return true. Note that the return value is accurate inasmuch as we
+ * "performed" an ASI exit, but due to reentrancy it's possible that we return
+ * true from a call that didn't actually create an address space transition.
+ */
+bool asi_exit(enum asi_exit_reason reason);
 #else
-static inline void asi_exit(enum asi_exit_reason reason) { }
+static inline bool asi_exit(enum asi_exit_reason reason) { return false; }
 #endif
 
 #endif /* _INCLUDE_ASI_EXIT_H */
