@@ -168,8 +168,13 @@ void asi_enter_userspace(void);
  */
 void asi_relax(void);
 
-/* Immediately exit the restricted address space if in it. */
-void asi_exit(enum asi_exit_reason reason);
+/*
+ * Immediately exit the restricted address space if in it. If we did that,
+ * return true. Note that the return value is accurate inasmuch as we
+ * "performed" an ASI exit, but due to reentrancy it's possible that we return
+ * true from a call that didn't actually create an address space transition.
+ */
+bool asi_exit(enum asi_exit_reason reason);
 
 int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);

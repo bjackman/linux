@@ -77,7 +77,7 @@ static inline bool asi_is_tense(void) { return false; }
 
 static inline bool asi_in_critical_section(void) { return false; }
 
-static inline void asi_exit(enum asi_exit_reason reason) {  }
+static inline bool asi_exit(enum asi_exit_reason reason) { return false; }
 
 static inline bool asi_is_restricted(void) { return false; }
 

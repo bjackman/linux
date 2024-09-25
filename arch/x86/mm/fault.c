@@ -40,6 +40,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
+#include <asm/trace/asi.h>
 
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
@@ -1557,32 +1558,13 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 {
 	irqentry_state_t state;
 	unsigned long address;
+	bool maybe_asi_pf = false, did_asi_exit = false;
 
 	address = cpu_feature_enabled(X86_FEATURE_FRED) ? fred_event_data(regs) : read_cr2();
 
 	if (static_asi_enabled() && !user_mode(regs)) {
-		pgd_t *pgd;
-
-		/* Can be a NOP even for ASI faults, because of NMIs */
-		asi_exit(ASI_EXIT_PAGE_FAULT);
-
-		/*
-		 * handle_page_fault() might oops if we run it for a kernel
-		 * address in kernel mode. This might be the case if we got here
-		 * due to an ASI fault. We avoid this case by checking whether
-		 * the address is now, after asi_exit(), accessible by hardware.
-		 * If it is - there's nothing to do. Note that this is a bit of
-		 * a shotgun; we can also bail early from user-address faults
-		 * here that weren't actually caused by ASI. So we might wanna
-		 * move this logic later in the handler. In particular, we might
-		 * be losing some stats here. However for now this keeps ASI
-		 * page faults nice and fast.
-		 */
-		pgd = (pgd_t *)__va(read_cr3_pa_raw()) + pgd_index(address);
-		if (!user_mode(regs) && kernel_access_ok(error_code, address, pgd)) {
-			warn_if_bad_asi_pf(error_code, address);
-			return;
-		}
+		maybe_asi_pf = true;
+		did_asi_exit = asi_exit(ASI_EXIT_PAGE_FAULT);
 	}
 
 	prefetchw(&current->mm->mmap_lock);
@@ -1624,7 +1606,44 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 	state = irqentry_enter(regs);
 
 	instrumentation_begin();
+	if (maybe_asi_pf) {
+		pgd_t *pgd;
+
+		/*
+		 * We only trace if asi_exit() reports that it actually did an
+		 * ASI exit, because it's possible that this fault was caused by
+		 * ASI, but that we didn't do the exit ourselves, instead we got
+		 * beaten to it by an NMI:
+		 *
+		 * #PF -> [ NMI -> #PF -> real asi_exit() ] -> nop asi_exit()
+		 *
+		 * In that case we _don't_ want to trace (the inner #PF will
+		 * already have done that) but we _do_ still want the logic
+		 * below to skip the main handler.
+		 */
+		if (did_asi_exit)
+			trace_asi_exit_pf(address, regs, error_code, user_mode(regs));
+
+		/*
+		 * handle_page_fault() might oops if we run it for a kernel
+		 * address in kernel mode. This might be the case if we got here
+		 * due to an ASI fault. We avoid this case by checking whether
+		 * the address is now, after asi_exit(), accessible by hardware.
+		 * If it is - there's nothing to do. Note that this is a bit of
+		 * a shotgun; we can also bail early from user-address faults
+		 * here that weren't actually caused by ASI. So we might wanna
+		 * move this logic later in the handler. In particular, we might
+		 * be losing some stats here. However for now this keeps ASI
+		 * page faults nice and fast.
+		 */
+		pgd = (pgd_t *)__va(read_cr3_pa_raw()) + pgd_index(address);
+		if (!user_mode(regs) && kernel_access_ok(error_code, address, pgd)) {
+			warn_if_bad_asi_pf(error_code, address);
+			goto skip_handler;
+		}
+	}
 	handle_page_fault(regs, error_code, address);
+skip_handler:
 	instrumentation_end();
 
 	irqentry_exit(regs, state);

@@ -680,13 +680,13 @@ noinstr void asi_relax(void)
 }
 EXPORT_SYMBOL_GPL(asi_relax);
 
-noinstr void asi_exit(enum asi_exit_reason reason)
+noinstr bool asi_exit(enum asi_exit_reason reason)
 {
 	u64 unrestricted_cr3;
 	struct asi *asi;
 
 	if (!static_asi_enabled())
-		return;
+		return false;
 
 	preempt_disable_notrace();
 
@@ -717,6 +717,7 @@ noinstr void asi_exit(enum asi_exit_reason reason)
 	}
 
 	preempt_enable_notrace();
+	return !!asi;
 }
 EXPORT_SYMBOL_GPL(asi_exit);
 
