@@ -38,9 +38,9 @@
 #include <asm/fred.h>
 #include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
 
+#include <trace/events/asi.h>
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
-#include <trace/events/asi.h>
 
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
