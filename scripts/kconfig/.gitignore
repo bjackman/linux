@@ -5,3 +5,4 @@
 /[gmnq]conf-cflags
 /[gmnq]conf-libs
 /qconf-moc.cc
+/cfoutconfig
