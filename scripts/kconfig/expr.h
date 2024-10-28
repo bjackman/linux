@@ -140,6 +140,19 @@ struct symbol {
 	 * "Weak" reverse dependencies through being implied by other symbols
 	 */
 	struct expr_value implied;
+
+	/*
+	 * ConfigFix
+	 */
+	struct fexpr *fexpr_y;
+	struct fexpr *fexpr_m;
+	struct fexpr *fexpr_sel_y;
+	struct fexpr *fexpr_sel_m;
+	struct pexpr *list_sel_y;
+	struct pexpr *list_sel_m;
+	struct fexpr *noPromptCond;
+	struct fexpr_list *nb_vals; /* list of struct fexpr_node's; used for non-booleans */
+	struct pexpr_list *constraints; /* list of constraints for symbol */
 };
 
 #define SYMBOL_CONST      0x0001  /* symbol is const */
@@ -201,6 +214,10 @@ struct property {
 	for (st = sym->prop; st; st = st->next) \
 		if (st->type == (tok))
 #define for_all_defaults(sym, st) for_all_properties(sym, st, P_DEFAULT)
+#define for_all_choices(symbol, child, menu_ptr) \
+	list_for_each_entry(menu_ptr, &(symbol)->menus, link) \
+		for (child = (menu_ptr)->list; child; child = (child)->next) \
+			if ((child)->sym && sym_is_choice_value((child)->sym))
 #define for_all_prompts(sym, st) \
 	for (st = sym->prop; st; st = st->next) \
 		if (st->text)
