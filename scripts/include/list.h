@@ -220,6 +220,21 @@ static inline int list_empty(const struct list_head *head)
 }
 
 /**
+ * list_size - counts the number of entries in a list
+ * @head: the list whose entries are counted
+ */
+static inline size_t list_size(const struct list_head *head)
+{
+	size_t ret = 0;
+
+	for (struct list_head *curr = head->next; curr != head;
+	     curr = curr->next)
+		++ret;
+
+	return ret;
+}
+
+/**
  * list_entry - get the struct for this entry
  * @ptr:	the &struct list_head pointer.
  * @type:	the type of the struct this is embedded in.
@@ -309,6 +324,40 @@ static inline int list_empty(const struct list_head *head)
 		n = list_next_entry(pos, member);			\
 	     !list_entry_is_head(pos, head, member);			\
 	     pos = n, n = list_next_entry(n, member))
+
+/**
+ * list_for_each_entry_from - iterate over list of given type starting at a given node
+ * @pos:	the type * to use as a loop cursor.
+ * @start:	the node to start iterating at
+ * @head:	the head for your list.
+ * @member:	the name of the list_head within the struct.
+ */
+#define list_for_each_entry_from(pos, start, head, member)  \
+	for (pos = list_entry(start, typeof(*pos), member); \
+	     !list_entry_is_head(pos, head, member);        \
+	     pos = list_next_entry(pos, member))
+
+/**
+ * list_at_index - retrieve the entry at index i in O(n)
+ * @i:		index of entry to retrieve.
+ * @head:	the head for your list.
+ * @type:	the type of the struct the entries are embedded in.
+ * @member:	the name of the list_head within the struct.
+ */
+#define list_at_index(i, head, type, member)               \
+	({                                                 \
+		type *__pos;                               \
+		size_t __counter = 0;                      \
+		list_for_each_entry(__pos, head, member) { \
+			if (__counter++ == i)              \
+				break;                     \
+			if (__pos->member.next == head) {  \
+				__pos = NULL;              \
+				break;                     \
+			}                                  \
+		}                                          \
+		__pos;                                     \
+	})
 
 /*
  * Double linked lists with a single pointer list head.
