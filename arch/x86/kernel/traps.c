@@ -484,7 +484,7 @@ DEFINE_IDTENTRY_DF(exc_double_fault)
 	 * handle in the restricted domain. That's also why we don't
 	 * asi_exit() in the #GP handler.
 	 */
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 	irqentry_nmi_enter(regs);
 	instrumentation_begin();
 	notify_die(DIE_TRAP, str, regs, error_code, X86_TRAP_DF, SIGSEGV);

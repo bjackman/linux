@@ -43,7 +43,7 @@ static __always_inline void native_write_cr2(unsigned long val)
 	asm volatile("mov %0,%%cr2": : "r" (val) : "memory");
 }
 
-void asi_exit(void);
+void asi_exit(enum asi_exit_reason reason);
 
 static __always_inline unsigned long __native_read_cr3_raw(void)
 {
@@ -54,7 +54,7 @@ static __always_inline unsigned long __native_read_cr3_raw(void)
 
 static __always_inline unsigned long __native_read_cr3(void)
 {
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 	return __native_read_cr3_raw();
 }
 
@@ -65,7 +65,7 @@ static __always_inline void native_write_cr3_raw(unsigned long val)
 
 static __always_inline void native_write_cr3(unsigned long val)
 {
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 	native_write_cr3_raw(val);
 }
 

@@ -553,7 +553,7 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
 	u16 new_asid;
 
 	/* Stabilize CR3, before reading or writing CR3 */
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 
 	/* We don't want flush_tlb_func() to run concurrently with us. */
 	if (IS_ENABLED(CONFIG_PROVE_LOCKING))
@@ -1306,7 +1306,7 @@ STATIC_NOPV void native_flush_tlb_local(void)
 	if (WARN_ON(asi_in_critical_section()))
 		native_flush_tlb_global();
 	else
-		asi_exit();
+		asi_exit(ASI_EXIT_TLB_FLUSH);
 
 	/* If current->mm == NULL then the read_cr3() "borrows" an mm */
 	native_write_cr3(__native_read_cr3());

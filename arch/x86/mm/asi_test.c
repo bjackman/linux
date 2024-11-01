@@ -116,7 +116,7 @@ static void test_asi_state(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
 	KUNIT_EXPECT_TRUE(test, asi_is_relaxed());
 
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 	KUNIT_EXPECT_FALSE(test, asi_is_restricted());
 	KUNIT_EXPECT_TRUE(test, asi_is_relaxed());
 

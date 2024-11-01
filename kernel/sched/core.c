@@ -5279,7 +5279,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * that, it's probably possible to get rid of this in certain cases just
 	 * by fiddling with the context switch path itself.
 	 */
-	asi_exit();
+	asi_exit(ASI_EXIT_CONTEXT_SWITCH);
 
 	prepare_task_switch(rq, prev, next);
 

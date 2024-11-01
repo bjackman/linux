@@ -7,6 +7,15 @@
 
 #ifndef _ASSEMBLY_
 
+enum asi_exit_reason {
+	ASI_EXIT_PAGE_FAULT,
+	ASI_EXIT_USER_RET,
+	ASI_EXIT_CONTEXT_SWITCH,
+	ASI_EXIT_TLB_FLUSH,
+	ASI_EXIT_MISC,
+	NR_ASI_EXIT_REASONS,
+};
+
 /*
  * An ASI class is a type of isolation that can be applied to a process. A
  * process may have a domain for each class.
@@ -68,7 +77,7 @@ static inline bool asi_is_tense(void) { return false; }
 
 static inline bool asi_in_critical_section(void) { return false; }
 
-static inline void asi_exit(void) { }
+static inline void asi_exit(enum asi_exit_reason reason) {  }
 
 static inline bool asi_is_restricted(void) { return false; }
 

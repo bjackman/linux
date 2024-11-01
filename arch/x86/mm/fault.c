@@ -1564,7 +1564,7 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 		pgd_t *pgd;
 
 		/* Can be a NOP even for ASI faults, because of NMIs */
-		asi_exit();
+		asi_exit(ASI_EXIT_PAGE_FAULT);
 
 		/*
 		 * handle_page_fault() might oops if we run it for a kernel

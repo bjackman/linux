@@ -11640,7 +11640,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 	 * from the restricted address space to the user address space. So we
 	 * just return to the unrestricted address space in between.
 	 */
-	asi_exit();
+	asi_exit(ASI_EXIT_USER_RET);
 
 out:
 	kvm_put_guest_fpu(vcpu);

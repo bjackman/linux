@@ -3218,7 +3218,7 @@ static int nested_vmx_check_vmentry_hw(struct kvm_vcpu *vcpu)
 	 * Stabilize CR3 to ensure the VM Exit returns to the correct address
 	 * space. This is costly, we wouldn't do this in hot-path code.
 	 */
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 
 	cr3 = __get_current_cr3_fast();
 	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {

@@ -11,6 +11,11 @@
 
 #include <asm-generic/asi.h>
 
+enum asi_stat_item {
+	/* Currently the only stats are for asi_exit. */
+	NR_ASI_STAT_ITEMS = NR_ASI_EXIT_REASONS,
+};
+
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 
 /*
@@ -163,8 +168,8 @@ void asi_enter_userspace(void);
  */
 void asi_relax(void);
 
-/* Immediately exit the restricted address space if in it */
-void asi_exit(void);
+/* Immediately exit the restricted address space if in it. */
+void asi_exit(enum asi_exit_reason reason);
 
 int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);
