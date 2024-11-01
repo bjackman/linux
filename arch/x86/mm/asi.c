@@ -36,6 +36,8 @@ EXPORT_SYMBOL(curr_asi);
 
 __aligned(PAGE_SIZE) pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
 
+static void asi_stat_inc(enum asi_stat_item index);
+
 struct asi __asi_global_nonsensitive = {
 	.pgd = asi_global_nonsensitive_pgd,
 };
@@ -158,7 +160,7 @@ static int asi_suspend(void)
 	 * could leave to improperly entering ASI. Exit ASI before such
 	 * operations.
 	 */
-	asi_exit();
+	asi_exit(ASI_EXIT_MISC);
 	return 0;
 }
 
@@ -416,8 +418,7 @@ noinstr void asi_relax(void)
 }
 EXPORT_SYMBOL_GPL(asi_relax);
 
-/* Immediately exit the restricted address space if in it. */
-noinstr void asi_exit(void)
+noinstr void asi_exit(enum asi_exit_reason reason)
 {
 	u64 unrestricted_cr3;
 	struct asi *asi;
@@ -433,6 +434,7 @@ noinstr void asi_exit(void)
 	asi = this_cpu_read(curr_asi);
 	if (asi) {
 		WARN_ON_ONCE(asi_in_critical_section());
+		asi_stat_inc((enum asi_stat_item)reason);
 
 		maybe_flush_control(NULL);
 
@@ -831,3 +833,29 @@ void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp)
 		spin_unlock(&asi->pgd_lock);
 	}
 }
+
+#if IS_ENABLED(CONFIG_ASI_KUNIT_TESTS)
+
+struct asi_cpu_stats {
+	uint64_t stats[NR_ASI_STAT_ITEMS];
+};
+
+DEFINE_PER_CPU_ALIGNED(struct asi_cpu_stats, asi_stats);
+
+int64_t asi_cpu_stat(int cpu, enum asi_stat_item item)
+{
+	return per_cpu(asi_stats, cpu).stats[item];
+}
+EXPORT_SYMBOL_IF_KUNIT(asi_cpu_stat);
+
+static __always_inline void asi_stat_inc(enum asi_stat_item index)
+{
+	if (WARN_ON_ONCE(index >= ARRAY_SIZE(asi_stats.stats)))
+		return;
+
+	this_cpu_inc(asi_stats.stats[index]);
+}
+
+#else /* CONFIG_ASI_KUNIT_TESTS */
+static __always_inline void asi_stat_inc(enum asi_stat_item index) { }
+#endif /* CONFIG_ASI_KUNIT_TESTS */

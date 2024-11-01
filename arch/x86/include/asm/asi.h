@@ -14,6 +14,11 @@
 
 struct mm_struct;
 
+enum asi_stat_item {
+	/* Currently the only stats are for asi_exit. */
+	NR_ASI_STAT_ITEMS = NR_ASI_EXIT_REASONS,
+};
+
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 
 /*
