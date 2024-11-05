@@ -1,8 +1,44 @@
+CONFIG_NET=y
+CONFIG_INET=y
 CONFIG_PCI=y
 CONFIG_MMU=y
 CONFIG_64BIT=y
 CONFIG_X86_64=y
 CONFIG_KUNIT=y
+CONFIG_HUGETLBFS=y
+
+# Some stuff that's handy for debugging tests. These don't really belong in this
+# file, developers should really just use kunit.py's --kconfig_add arg to set
+# them, but prodkernel is pretty broken under nonstandard configs. To avoid
+# having developers run into that issue all the time we just stick to a single
+# helpful config.
+CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y
+CONFIG_DEBUG_INFO=y
+CONFIG_GDB_SCRIPTS=y
+CONFIG_DEBUG_KERNEL=y
+CONFIG_PAGE_TABLE_CHECK=y
+CONFIG_PAGE_TABLE_CHECK_ENFORCED=y
+CONFIG_DEBUG_VM=y
+CONFIG_DEBUG_PAGEALLOC=y
+CONFIG_PAGE_OWNER=y
+CONFIG_RANDOMIZE_BASE=n
+CONFIG_DEBUG_LIST=y
+CONFIG_DEBUG_ATOMIC_SLEEP=y
+CONFIG_LOCK_DEBUGGING_SUPPORT=y
+CONFIG_PROVE_LOCKING=y
+CONFIG_DEBUG_RT_MUTEXES=y
+CONFIG_DEBUG_SPINLOCK=y
+CONFIG_DEBUG_MUTEXES=y
+CONFIG_DEBUG_WW_MUTEX_SLOWPATH=y
+CONFIG_DEBUG_RWSEMS=y
+CONFIG_DEBUG_LOCK_ALLOC=y
+CONFIG_LOCKDEP=y
+CONFIG_PCI=y
+CONFIG_MMU=y
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_KUNIT=y
+
 # These need to be disabled so we can enable ASI.
 # CONFIG_HYPERV is not set
 # CONFIG_PARAVIRT is not set
