@@ -6,6 +6,10 @@ CONFIG_64BIT=y
 CONFIG_X86_64=y
 CONFIG_KUNIT=y
 CONFIG_HUGETLBFS=y
+CONFIG_HIGH_RES_TIMERS=y
+CONFIG_KVM=y
+CONFIG_KVM_INTEL=y
+CONFIG_KVM_AMD=y
 
 # Some stuff that's handy for debugging tests. These don't really belong in this
 # file, developers should really just use kunit.py's --kconfig_add arg to set

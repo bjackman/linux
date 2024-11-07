@@ -66,6 +66,8 @@
 #include <trace/events/ipi.h>
 #include <trace/events/kvm.h>
 
+#include <kunit/visibility.h>
+
 #include <asm/debugreg.h>
 #include <asm/msr.h>
 #include <asm/desc.h>
@@ -9676,7 +9678,7 @@ static void kvm_x86_check_cpu_compat(void *ret)
 }
 
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
-static inline int kvm_x86_init_asi_class(void)
+VISIBLE_IF_KUNIT inline int kvm_x86_init_asi_class(void)
 {
 	static struct asi_taint_policy policy = {
 		/*
@@ -9724,6 +9726,7 @@ static inline int kvm_x86_init_asi_class(void)
 
 	return asi_init_class(ASI_CLASS_KVM, &policy);
 }
+EXPORT_SYMBOL_IF_KUNIT(kvm_x86_init_asi_class);
 #else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 static inline int kvm_x86_init_asi_class(void) { return 0; }
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */

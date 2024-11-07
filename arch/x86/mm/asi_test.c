@@ -14,6 +14,7 @@
 
 #include <asm/apic.h>
 #include <asm/asi.h>
+#include <asm/kvm_host.h>
 #include <asm/nmi.h>
 #include <asm/set_memory.h>
 
@@ -49,6 +50,15 @@ struct asi_test_info {
 static void action_mmdrop(void *ctx)
 {
 	mmdrop((struct mm_struct *)ctx);
+}
+
+static struct mm_struct *do_mm_alloc(struct kunit *test)
+{
+	struct mm_struct *mm = mm_alloc();
+
+	KUNIT_ASSERT_NOT_NULL(test, mm);
+	kunit_add_action_or_reset(test, action_mmdrop, mm);
+	return mm;
 }
 
 static void action_kthread_unuse_mm(void *ctx)
@@ -93,9 +103,7 @@ static struct asi_test_info *setup_test_asi(struct kunit *test)
 	KUNIT_ASSERT_GE(test, asi_init_class(ASI_CLASS_TEST, &taint_policy), 0);
 	kunit_add_action(test, action_asi_uninit_class, (void *)ASI_CLASS_TEST);
 
-	info->mm = mm_alloc();
-	KUNIT_ASSERT_NOT_NULL(test, info->mm);
-	kunit_add_action(test, action_mmdrop, info->mm);
+	info->mm = do_mm_alloc(test);
 	kthread_use_mm(info->mm);
 	kunit_add_action(test, action_kthread_unuse_mm, info->mm);
 
@@ -124,6 +132,207 @@ static void test_asi_state(struct kunit *test)
 
 	preempt_enable();
 }
+
+enum asi_transition {
+	ASI_TRANS_ENTER_USERSPACE,
+	ASI_TRANS_ENTER_KVM,
+	ASI_TRANS_EXIT,
+	ASI_TRANS_SWITCH_MM,
+	ASI_NUM_TRANSITIONS,
+};
+
+const char *asi_transition_names[] = {
+	[ASI_TRANS_ENTER_USERSPACE] = "enter(user)",
+	[ASI_TRANS_ENTER_KVM] = "enter(kvm)",
+	[ASI_TRANS_EXIT] = "exit",
+	[ASI_TRANS_SWITCH_MM] = "switch-mm",
+};
+
+#define ASI_MAX_NUM_TRANSITIONS 4 /* Ought to be enough for anyone. */
+
+/*
+ * We want to test the tainting logic with reference to the real world, so we
+ * use the real ASI KVM logic to set up the taint flags. In other words this
+ * tests not only the core tainting logic but also the parameters of the
+ * userspace and KVM classes.
+ */
+#if IS_REACHABLE(CONFIG_KVM_X86)
+
+/*
+ * Generates a param for test_asi_tainting which takes the form of an array of
+ * asi_transitions, terminated by an invalid value.
+ */
+static const void *asi_tainting_gen_params(const void *prev, char *desc)
+{
+	/* Start with an invalid value. */
+	static enum asi_transition transitions[ASI_MAX_NUM_TRANSITIONS] = {
+		[0 ... ASI_MAX_NUM_TRANSITIONS - 1] = 0,
+	};
+	size_t desc_len = 0;
+	int i = 0;
+
+	/*
+	 * Just do an exhaustive search of all the transition sequences up to
+	 * the max length. This algorithm is just "counting" in base
+	 * ASI_NUM_TRANSITION where @transitions contains digits and [0] is the
+	 * least significant.
+	 */
+	transitions[0]++;
+	for (i = 0;
+	     i < ARRAY_SIZE(transitions) - 1 && transitions[i] >= ASI_NUM_TRANSITIONS;
+	     i++) {
+		transitions[i] = (enum asi_transition)0;
+		transitions[i + 1]++;
+	}
+	if (i == ARRAY_SIZE(transitions) - 1) {
+		/* Done. */
+		return NULL;
+	}
+
+	/* Generate description as comma-separated list .*/
+	for (i = 0;
+	     i < ARRAY_SIZE(transitions) && transitions[i] < ASI_NUM_TRANSITIONS;
+	     i++) {
+		desc_len += sized_strscpy(&desc[desc_len],
+					  asi_transition_names[transitions[i]],
+					  KUNIT_PARAM_DESC_SIZE - desc_len);
+		if (i + 1 < ARRAY_SIZE(transitions) &&
+		    transitions[i + 1] != ASI_NUM_TRANSITIONS &&
+		    desc_len < KUNIT_PARAM_DESC_SIZE) {
+			desc[desc_len++] = ',';
+		}
+	}
+
+	return (void *)transitions;
+}
+
+/*
+ * Macros are here to:
+ * - Avoid urneadable error messages due to expansion of this_cpu_read calls.
+ * - Avoid super verbose repetitive assertions.
+ * - Preserve information about the location of the assert.
+ */
+
+#define EXPECT_NO_TAINTS(test, mask, i) ({					\
+	asi_taints_t taints = this_cpu_read(asi_taints);			\
+	KUNIT_EXPECT_EQ_MSG(test, taints & mask, 0, "at iteration %d", i);	\
+})
+
+#define EXPECT_TAINTS(test, mask, i) ({						\
+	asi_taints_t taints = this_cpu_read(asi_taints);			\
+	KUNIT_EXPECT_EQ_MSG(test, taints & mask, mask, "at iteration %d", i);	\
+})
+
+static void test_asi_tainting(struct kunit *test)
+{
+	enum asi_transition *transitions = (enum asi_transition *)test->param_value;
+	struct mm_struct *mms[2];
+	struct asi *fake_kvm_asis[ARRAY_SIZE(mms)];
+	int cur_mm_idx = 0;
+	int i;
+
+	if (!asi_class_initialized(ASI_CLASS_KVM)) {
+		KUNIT_ASSERT_EQ(test, kvm_x86_init_asi_class(), 0);
+		kunit_add_action(test, action_asi_uninit_class, (void *)ASI_CLASS_KVM);
+	}
+	KUNIT_ASSERT_TRUE(test, asi_class_initialized(ASI_CLASS_USERSPACE));
+
+	/*
+	 * Switching mms needs to be fairly realistic, if you try to cheat by
+	 * just directly calling asi_handle_switch_mm(), test cases that do
+	 * asi_enter(userspace)->switch_mm->asi_enter(userspce) will get
+	 * confused, since the two userspace classes will be the same object so
+	 * the ASI code doesn't really act like it entered a new userspace
+	 * domain. So we really allocate 2 mms.
+	 */
+	for (i = 0; i < ARRAY_SIZE(mms); i++) {
+		mms[i] = do_mm_alloc(test);
+		do_asi_init(test, mms[i], ASI_CLASS_KVM, &fake_kvm_asis[i]);
+	}
+	kthread_use_mm(mms[cur_mm_idx]);
+
+	preempt_disable();
+
+	for (i = 0;
+	     i < ASI_MAX_NUM_TRANSITIONS - 1 && transitions[i] < ASI_NUM_TRANSITIONS;
+	     i++) {
+		enum asi_transition transition = transitions[i];
+		asi_taints_t taints;
+
+		/*
+		 * Enact the transition and check we applied the appropriate
+		 * taint for the incoming domain.
+		 */
+		switch (transition) {
+		case ASI_TRANS_ENTER_USERSPACE:
+			asi_enter_userspace();
+			EXPECT_TAINTS(test, ASI_TAINT_USER_DATA | ASI_TAINT_USER_CONTROL, i);
+			asi_relax();
+			break;
+		case ASI_TRANS_ENTER_KVM:
+			asi_enter(fake_kvm_asis[cur_mm_idx]);
+			EXPECT_TAINTS(test, ASI_TAINT_GUEST_CONTROL, i);
+			asi_relax();
+			break;
+		case ASI_TRANS_EXIT:
+			asi_exit(ASI_EXIT_MISC);
+			EXPECT_TAINTS(test, ASI_TAINT_KERNEL_DATA, i);
+			break;
+		case ASI_TRANS_SWITCH_MM:
+			kthread_unuse_mm(mms[cur_mm_idx]);
+			cur_mm_idx = (cur_mm_idx + 1) & ARRAY_SIZE(mms);
+			kthread_use_mm(mms[cur_mm_idx]);
+			break;
+		default:
+			KUNIT_FAIL(test, "test bug - invalid transition");
+			/* Can't use KUNIT_FAIL_AND_ABORT with preemption off. */
+			goto bail;
+		}
+
+		/*
+		 * Now check that, at least according to the taints, we
+		 * performed necessary flushes. This wouldn't catch bugs where
+		 * we clear taints without actually scrubbing uarch state.
+		 */
+		taints = this_cpu_read(asi_taints);
+
+		/* Don't let anyone leak sensitive kernel data or other MMs' data. */
+		if (taints & (ASI_TAINT_KERNEL_DATA | ASI_TAINT_OTHER_MM_DATA)) {
+			EXPECT_NO_TAINTS(test, ASI_TAINT_USER_CONTROL, i);
+			EXPECT_NO_TAINTS(test, ASI_TAINT_GUEST_CONTROL, i);
+		}
+		if (taints & ASI_TAINT_KERNEL_DATA)
+			EXPECT_NO_TAINTS(test, ASI_TAINT_OTHER_MM_CONTROL, i);
+
+		/* Don't let guests or other MMs leak data from userspace */
+		if (taints & ASI_TAINT_USER_DATA) {
+			EXPECT_NO_TAINTS(test, ASI_TAINT_OTHER_MM_CONTROL, i);
+			/*
+			 * ..unless we map userspace memory in the restricted address space of
+			 *  ASI KVM anyway.
+			 */
+			if (!asi_maps_user_addr(ASI_CLASS_KVM))
+				EXPECT_NO_TAINTS(test, ASI_TAINT_GUEST_CONTROL, i);
+		}
+	}
+
+bail:
+	kthread_unuse_mm(mms[cur_mm_idx]);
+	asi_exit(ASI_EXIT_MISC);
+	preempt_enable();
+}
+
+#else
+
+/* Make the test visible in the list, but skip it. */
+static int asi_taint_dummy_cases[] = { 0 };
+KUNIT_ARRAY_PARAM(asi_tainting, asi_taint_dummy_cases, NULL);
+static void test_asi_tainting(struct kunit *test)
+{
+	kunit_skip(test, "KVM disabled");
+}
+
+#endif /* CONFIG_KVM */
 
 struct free_pages_ctx {
 	unsigned int order;
@@ -732,6 +941,7 @@ static void test_alloc_pages_sensitivity(struct kunit *test)
 
 static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_asi_state),
+	KUNIT_CASE_PARAM(test_asi_tainting, asi_tainting_gen_params),
 	KUNIT_CASE(test_asi_map_global_nonsensitive),
 	KUNIT_CASE(test_alloc_pages_sensitivity),
 	KUNIT_CASE(test_percpu_alloc),

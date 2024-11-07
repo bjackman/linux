@@ -33,6 +33,7 @@ const char *asi_class_names[] = {
 	[ASI_CLASS_USERSPACE] = "userspace",
 };
 
+
 DEFINE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 EXPORT_SYMBOL(curr_asi);
 
@@ -53,7 +54,7 @@ static inline bool asi_class_id_valid(enum asi_class_id class_id)
 	return class_id >= 0 && class_id < ASI_MAX_NUM_CLASSES;
 }
 
-static inline bool asi_class_initialized(enum asi_class_id class_id)
+VISIBLE_IF_KUNIT inline bool asi_class_initialized(enum asi_class_id class_id)
 {
 	if (!boot_cpu_has(X86_FEATURE_ASI))
 		return 0;
@@ -63,6 +64,7 @@ static inline bool asi_class_initialized(enum asi_class_id class_id)
 
 	return !!(taint_policies[class_id]);
 }
+EXPORT_SYMBOL_IF_KUNIT(asi_class_initialized);
 
 int asi_init_class(enum asi_class_id class_id, struct asi_taint_policy *taint_policy)
 {
@@ -529,6 +531,7 @@ void asi_destroy(struct asi *asi)
 EXPORT_SYMBOL_GPL(asi_destroy);
 
 DEFINE_PER_CPU_ALIGNED(asi_taints_t, asi_taints);
+EXPORT_SYMBOL_IF_KUNIT(asi_taints);
 
 /*
  * Flush out any potentially malicious speculative control flow (e.g. branch
@@ -669,6 +672,7 @@ noinstr void asi_enter_userspace(void)
 {
 	asi_enter(&current->mm->asi[ASI_CLASS_USERSPACE]);
 }
+EXPORT_SYMBOL_IF_KUNIT(asi_enter_userspace);
 
 noinstr void asi_relax(void)
 {
