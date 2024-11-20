@@ -1,0 +1,2 @@
+x86_64 and (not asan and not hyperbox):CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION=y
+x86_64 and gtests and (not asan and not hyperbox):CONFIG_ASI_KUNIT_TESTS=m
