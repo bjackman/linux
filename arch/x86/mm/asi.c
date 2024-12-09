@@ -37,6 +37,8 @@ const char *asi_class_names[] = {
 DEFINE_PER_CPU_ALIGNED(struct asi *, curr_asi);
 EXPORT_SYMBOL(curr_asi);
 
+DEFINE_STATIC_KEY_TRUE(asi_sandbox_userspace);
+
 static void asi_stat_inc(enum asi_stat_item index);
 
 static __aligned(PAGE_SIZE) pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
@@ -224,6 +226,14 @@ void __init asi_check_boottime_disable(void)
 
 	if (enabled)
 		setup_force_cpu_cap(X86_FEATURE_ASI);
+	else
+		return;
+
+	ret = cmdline_find_option(boot_command_line, "asi_userspace", arg, sizeof(arg));
+	if (ret == 3 && !strncmp(arg, "off", 3))
+		static_branch_disable(&asi_sandbox_userspace);
+	else if (ret == 2 && !strncmp(arg, "on", 3))
+		static_branch_enable(&asi_sandbox_userspace);
 }
 
 /*
@@ -670,6 +680,9 @@ EXPORT_SYMBOL_GPL(asi_enter);
 
 noinstr void asi_enter_userspace(void)
 {
+	if (!static_branch_likely(&asi_sandbox_userspace))
+		return;
+
 	asi_enter(&current->mm->asi[ASI_CLASS_USERSPACE]);
 }
 EXPORT_SYMBOL_IF_KUNIT(asi_enter_userspace);
