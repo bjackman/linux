@@ -609,6 +609,7 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
 		 * Apply process to process speculation vulnerability
 		 * mitigations if applicable.
 		 */
+		asi_handle_switch_mm();
 		cond_mitigation(tsk);
 
 		/*
