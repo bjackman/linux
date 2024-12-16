@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <linux/asi.h>
 #include <linux/mm_types.h>
 #include <linux/maple_tree.h>
 #include <linux/rwsem.h>
@@ -45,6 +46,9 @@ struct mm_struct init_mm = {
 #endif
 	.user_ns	= &init_user_ns,
 	.cpu_bitmap	= CPU_BITS_NONE,
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	INIT_MM_ASI(init_mm)
+#endif
 	INIT_MM_CONTEXT(init_mm)
 };
 
