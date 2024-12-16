@@ -5,6 +5,7 @@
 #include <linux/mm_types_task.h>
 
 #include <linux/auxvec.h>
+#include <linux/asi.h>
 #include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
@@ -19,6 +20,7 @@
 #include <linux/workqueue.h>
 #include <linux/seqlock.h>
 #include <linux/percpu_counter.h>
+#include <linux/mutex.h>
 #include <linux/types.h>
 
 #include <asm/mmu.h>
@@ -967,6 +969,11 @@ struct mm_struct {
 		 * cache-line, which needs to be touched by switch_mm().
 		 */
 		atomic_t membarrier_state;
+#endif
+
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+		struct asi asi[ASI_MAX_NUM_CLASSES];
+		struct mutex asi_init_lock;
 #endif
 
 		/**
