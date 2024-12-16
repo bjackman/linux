@@ -40,6 +40,7 @@
 #include <linux/sched/rseq_api.h>
 #include <linux/sched/rt.h>
 
+#include <linux/asi.h>
 #include <linux/blkdev.h>
 #include <linux/context_tracking.h>
 #include <linux/cpuset.h>
@@ -5269,6 +5270,14 @@ static __always_inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next, struct rq_flags *rf)
 {
+	/*
+	 * It's possible to avoid this by tweaking ASI's domain management code
+	 * and updating code that modifies CR3 to be ASI-aware. Even without
+	 * that, it's probably possible to get rid of this in certain cases just
+	 * by fiddling with the context switch path itself.
+	 */
+	asi_exit();
+
 	prepare_task_switch(rq, prev, next);
 
 	/*
