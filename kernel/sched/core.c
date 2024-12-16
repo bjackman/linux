@@ -40,6 +40,7 @@
 #include <linux/sched/rseq_api.h>
 #include <linux/sched/rt.h>
 
+#include <linux/asi.h>
 #include <linux/blkdev.h>
 #include <linux/context_tracking.h>
 #include <linux/cpuset.h>
@@ -1596,7 +1597,7 @@ uclamp_tg_restrict(struct task_struct *p, enum uclamp_id clamp_id)
 
 	/*
 	 * Tasks in autogroups or root task group will be
-	 * restricted by system defaults.
+	 * nonsensitive by system defaults.
 	 */
 	if (task_group_is_autogroup(task_group(p)))
 		return uc_req;
@@ -3259,7 +3260,7 @@ out_free_mask:
 }
 
 /*
- * Restore the affinity of a task @p which was previously restricted by a
+ * Restore the affinity of a task @p which was previously nonsensitive by a
  * call to force_compatible_cpus_allowed_ptr().
  *
  * It is the caller's responsibility to serialise this with any calls to
@@ -5269,6 +5270,14 @@ static __always_inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next, struct rq_flags *rf)
 {
+	/*
+	 * It's possible to avoid this by tweaking ASI's domain management code
+	 * and updating code that modifies CR3 to be ASI-aware. Even without
+	 * that, it's probably possible to get rid of this in certain cases just
+	 * by fiddling with the context switch path itself.
+	 */
+	asi_exit();
+
 	prepare_task_switch(rq, prev, next);
 
 	/*

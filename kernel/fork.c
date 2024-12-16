@@ -12,6 +12,7 @@
  * management can be a bitch. See 'mm/memory.c': 'copy_page_range()'
  */
 
+#include <linux/asi.h>
 #include <linux/anon_inodes.h>
 #include <linux/slab.h>
 #include <linux/sched/autogroup.h>
@@ -1076,6 +1077,8 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 
 	if (mm_alloc_id(mm))
 		goto fail_noid;
+
+	asi_init_mm_state(mm);
 
 	if (init_new_context(p, mm))
 		goto fail_nocontext;
