@@ -155,6 +155,8 @@ static inline void native_set_p4d(p4d_t *p4dp, p4d_t p4d)
 static inline void native_p4d_clear(p4d_t *p4d)
 {
 	native_set_p4d(p4d, native_make_p4d(0));
+	if (!pgtable_l5_enabled())
+		asi_clone_user_pgtbl(NULL, (pgd_t *)p4d);
 }
 
 static inline void native_set_pgd(pgd_t *pgdp, pgd_t pgd)
@@ -165,6 +167,8 @@ static inline void native_set_pgd(pgd_t *pgdp, pgd_t pgd)
 static inline void native_pgd_clear(pgd_t *pgd)
 {
 	native_set_pgd(pgd, native_make_pgd(0));
+	if (pgtable_l5_enabled())
+		asi_clone_user_pgtbl(NULL, pgd);
 }
 
 /*

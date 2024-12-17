@@ -134,6 +134,7 @@ struct asi {
 	struct mm_struct *mm;
 	int64_t ref_count;
 	enum asi_class_id class_id;
+	spinlock_t pgd_lock;
 };
 void asi_init(void);
 
@@ -273,5 +274,14 @@ extern struct asi __asi_global_nonsensitive;
 void asi_map(struct page *page, int numpages);
 void asi_unmap(struct page *page, int numpages);
 extern pgd_t *asi_nonsensitive_pgd;
+
+/*
+ * This function returns true when we would like to map userspace addresses
+ * in the nonsensitive address space.
+ */
+static inline bool asi_maps_user_addr(enum asi_class_id class_id)
+{
+	return false;
+}
 
 #endif /* _ASM_X86_ASI_H */
