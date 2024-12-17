@@ -63,5 +63,8 @@ static inline void asi_init_mm_state(struct mm_struct *mm) { }
 struct thread_struct;
 static inline void asi_init_thread_state(struct thread_struct *thread) { }
 
+static inline void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp) { };
+static inline bool asi_maps_user_addr(enum asi_class_id class_id) { return false; }
+
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 #endif /* _INCLUDE_ASI_H */
