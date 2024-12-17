@@ -135,6 +135,7 @@ struct asi {
 	struct mm_struct *mm;
 	int64_t ref_count;
 	enum asi_class_id class_id;
+	spinlock_t pgd_lock;
 };
 
 static __always_inline pgd_t *asi_pgd(struct asi *asi)
@@ -154,6 +155,7 @@ const char *asi_class_name(enum asi_class_id class_id);
 
 int asi_init(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_asi);
 void asi_destroy(struct asi *asi);
+void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp);
 
 /* Enter an ASI domain (restricted address space) and begin the critical section. */
 void asi_enter(struct asi *asi);
@@ -281,6 +283,15 @@ extern struct asi __asi_global_nonsensitive;
 
 void asi_map(struct page *page, int numpages);
 void asi_unmap(struct page *page, int numpages);
+
+/*
+ * This function returns true when we would like to map userspace addresses
+ * in the restricted address space.
+ */
+static inline bool asi_maps_user_addr(enum asi_class_id class_id)
+{
+	return false;
+}
 
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
