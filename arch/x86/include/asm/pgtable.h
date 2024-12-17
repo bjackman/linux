@@ -931,11 +931,13 @@ static inline pgd_t pti_set_user_pgtbl(pgd_t *pgdp, pgd_t pgd)
 
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 pgd_t *asi_pgd(struct asi *asi);
+void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp);
 #else   /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 static inline pgd_t *asi_pgd(struct asi *asi)
 {
 	return NULL;
 }
+static inline void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp) { };
 #endif   /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
 #endif	/* __ASSEMBLER__ */
