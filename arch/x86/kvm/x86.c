@@ -9712,11 +9712,15 @@ static inline int kvm_x86_init_asi_class(void)
 	/*
 	 * And the same for data left behind by code in the userspace domain
 	 * (i.e. the VMM itself, plus kernel code serving its syscalls etc).
-	 * This should eventually be configurable: users whose VMMs contain
-	 * no secrets can disable it to avoid paying a mitigation cost on
-	 * transition between their guest and userspace.
+	 *
+	 *
+	 * If we decided to map userspace into the guest's restricted address
+	 * space then we don't bother with this since we assume either no bugs
+	 * allow the guest to leak that data, or the user doesn't care about
+	 * that security boundary.
 	 */
-	policy.protect_data |= ASI_TAINT_USER_DATA;
+	if (!asi_maps_user_addr(ASI_CLASS_KVM))
+		policy.protect_data |= ASI_TAINT_USER_DATA;
 
 	return asi_init_class(ASI_CLASS_KVM, &policy);
 }
