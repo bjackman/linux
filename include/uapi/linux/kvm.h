@@ -975,8 +975,10 @@ struct kvm_enable_cap {
 #define KVM_CAP_RISCV_MP_STATE_RESET 242
 #define KVM_CAP_ARM_CACHEABLE_PFNMAP_SUPPORTED 243
 #define KVM_CAP_GUEST_MEMFD_FLAGS 244
-#define KVM_CAP_ARM_SEA_TO_USER 245
-#define KVM_CAP_S390_USER_OPEREXEC 246
+// COMMENTED OUT because the Firecracker tree is built against an old kernel version.
+// #define KVM_CAP_ARM_SEA_TO_USER 245
+// #define KVM_CAP_S390_USER_OPEREXEC 246
+#define KVM_CAP_USERFAULT 245
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
