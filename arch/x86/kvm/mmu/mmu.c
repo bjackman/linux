@@ -4592,6 +4592,18 @@ static int __kvm_mmu_faultin_pfn(struct kvm_vcpu *vcpu,
 				 struct kvm_page_fault *fault)
 {
 	unsigned int foll = fault->write ? FOLL_WRITE : 0;
+	int userfault;
+
+	userfault = kvm_gfn_userfault(vcpu->kvm, fault->slot, fault->gfn);
+	if (userfault < 0)
+		return userfault;
+	if (userfault) {
+		kvm_mmu_prepare_userfault_exit(vcpu, fault);
+		return -EFAULT;
+	}
+
+	if (kvm_memslot_userfault(fault->slot))
+		fault->max_level = PG_LEVEL_4K;
 
 	if (fault->is_private || kvm_memslot_is_gmem_only(fault->slot))
 		return kvm_mmu_faultin_pfn_gmem(vcpu, fault);
