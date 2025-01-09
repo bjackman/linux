@@ -1560,7 +1560,7 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	ret = kvm_gmem_get_pfn(kvm, memslot, gfn, &pfn, &page, NULL);
 	if (ret) {
 		kvm_prepare_memory_fault_exit(vcpu, fault_ipa, PAGE_SIZE,
-					      write_fault, exec_fault, false);
+					      write_fault, exec_fault, false, false);
 		return ret;
 	}
 
