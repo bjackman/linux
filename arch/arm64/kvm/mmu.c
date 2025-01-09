@@ -1557,6 +1557,13 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	/* Pairs with the smp_wmb() in kvm_mmu_invalidate_end(). */
 	smp_rmb();
 
+	if (kvm_gfn_userfault(kvm, memslot, gfn)) {
+		kvm_prepare_memory_fault_exit(vcpu, gfn << PAGE_SHIFT,
+					      PAGE_SIZE, write_fault,
+					      exec_fault, false, true);
+		return -EFAULT;
+	}
+
 	ret = kvm_gmem_get_pfn(kvm, memslot, gfn, &pfn, &page, NULL);
 	if (ret) {
 		kvm_prepare_memory_fault_exit(vcpu, fault_ipa, PAGE_SIZE,
@@ -1653,7 +1660,7 @@ static int user_mem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 		return -EFAULT;
 	}
 
-	if (force_pte)
+	if (force_pte || kvm_memslot_userfault(memslot))
 		vma_shift = PAGE_SHIFT;
 	else
 		vma_shift = get_vma_page_shift(vma, hva);
@@ -1743,6 +1750,13 @@ static int user_mem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	 */
 	mmu_seq = kvm->mmu_invalidate_seq;
 	mmap_read_unlock(current->mm);
+
+	if (kvm_gfn_userfault(kvm, memslot, gfn)) {
+		kvm_prepare_memory_fault_exit(vcpu, gfn << PAGE_SHIFT,
+					      PAGE_SIZE, write_fault,
+					      exec_fault, false, true);
+		return -EFAULT;
+	}
 
 	pfn = __kvm_faultin_pfn(memslot, gfn, write_fault ? FOLL_WRITE : 0,
 				&writable, &page);
@@ -2256,6 +2270,23 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 				   enum kvm_mr_change change)
 {
 	bool log_dirty_pages = new && new->flags & KVM_MEM_LOG_DIRTY_PAGES;
+	u32 new_flags = new ? new->flags : 0;
+	u32 changed_flags = (new_flags) ^ (old ? old->flags : 0);
+
+	/*
+	 * If KVM_MEM_USERFAULT has been enabled, drop all the stage-2 mappings
+	 * so that we can respect userfault-ness.
+	 */
+	if ((changed_flags & KVM_MEM_USERFAULT) &&
+	    (new_flags & KVM_MEM_USERFAULT) &&
+	    change == KVM_MR_FLAGS_ONLY)
+		kvm_arch_flush_shadow_memslot(kvm, old);
+
+	/*
+	 * Nothing left to do if not toggling dirty logging.
+	 */
+	if (!(changed_flags & KVM_MEM_LOG_DIRTY_PAGES))
+		return;
 
 	/*
 	 * At this point memslot has been committed and there is an
