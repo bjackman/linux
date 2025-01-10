@@ -4604,22 +4604,20 @@ void __init page_alloc_init_asi(void)
 	}
 }
 
-static int asi_map_alloced_pages(struct page *page, uint order, gfp_t gfp_mask)
+static int asi_map_alloced_pages(struct page *page, size_t size, gfp_t gfp_mask)
 {
 
 	if (!static_asi_enabled())
 		return 0;
 
 	if (!(gfp_mask & __GFP_SENSITIVE)) {
-		int err = asi_map_gfp(
-			ASI_GLOBAL_NONSENSITIVE, page_to_virt(page),
-			PAGE_SIZE * (1 << order), gfp_mask);
+		int err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page), size, gfp_mask);
 		uint i;
 
 		if (err)
 			return err;
 
-		for (i = 0; i < (1 << order); i++)
+		for (i = 0; i < (size >> PAGE_SHIFT); i++)
 			__SetPageGlobalNonSensitive(page + i);
 	}
 
@@ -4629,7 +4627,7 @@ static int asi_map_alloced_pages(struct page *page, uint order, gfp_t gfp_mask)
 #else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
 static inline
-int asi_map_alloced_pages(struct page *pages, uint order, gfp_t gfp_mask)
+int asi_map_alloced_pages(struct page *pages, size_t size, gfp_t gfp_mask)
 {
 	return 0;
 }
@@ -4896,7 +4894,7 @@ out:
 	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);
 	kmsan_alloc_page(page, order, alloc_gfp);
 
-	if (page && unlikely(asi_map_alloced_pages(page, order, gfp))) {
+	if (page && unlikely(asi_map_alloced_pages(page, PAGE_SIZE << order, gfp))) {
 		__free_pages(page, order);
 		page = NULL;
 	}
@@ -5118,12 +5116,13 @@ void page_frag_free(void *addr)
 }
 EXPORT_SYMBOL(page_frag_free);
 
-static void *make_alloc_exact(unsigned long addr, unsigned int order,
-		size_t size)
+static void *finish_exact_alloc(unsigned long addr, unsigned int order,
+		size_t size, gfp_t gfp_mask)
 {
 	if (addr) {
 		unsigned long nr = DIV_ROUND_UP(size, PAGE_SIZE);
 		struct page *page = virt_to_page((void *)addr);
+		struct page *first = page;
 		struct page *last = page + nr;
 
 		split_page_owner(page, order, 0);
@@ -5132,9 +5131,22 @@ static void *make_alloc_exact(unsigned long addr, unsigned int order,
 		while (page < --last)
 			set_page_refcounted(last);
 
-		last = page + (1UL << order);
+		last = page + (1 << order);
 		for (page += nr; page < last; page++)
 			__free_pages_ok(page, 0, FPI_TO_TAIL);
+
+		/*
+		 * ASI doesn't support partially undoing calls to asi_map, so
+		 * we can only safely free sub-allocations if they were made
+		 * with __GFP_SENSITIVE in the first place. Users of this need
+		 * to map with forced __GFP_SENSITIVE and then here we'll make a
+		 * second asi_map_alloced_pages() call to do any mapping that's
+		 * necessary, but with the exact size.
+		 */
+		if (unlikely(asi_map_alloced_pages(first, nr << PAGE_SHIFT, gfp_mask))) {
+			free_pages_exact(first, size);
+			return NULL;
+		}
 	}
 	return (void *)addr;
 }
@@ -5162,8 +5174,8 @@ void *alloc_pages_exact_noprof(size_t size, gfp_t gfp_mask)
 	if (WARN_ON_ONCE(gfp_mask & (__GFP_COMP | __GFP_HIGHMEM)))
 		gfp_mask &= ~(__GFP_COMP | __GFP_HIGHMEM);
 
-	addr = get_free_pages_noprof(gfp_mask, order);
-	return make_alloc_exact(addr, order, size);
+	addr = get_free_pages_noprof(gfp_mask | __GFP_SENSITIVE, order);
+	return finish_exact_alloc(addr, order, size, gfp_mask);
 }
 EXPORT_SYMBOL(alloc_pages_exact_noprof);
 
@@ -5187,10 +5199,10 @@ void * __meminit alloc_pages_exact_nid_noprof(int nid, size_t size, gfp_t gfp_ma
 	if (WARN_ON_ONCE(gfp_mask & (__GFP_COMP | __GFP_HIGHMEM)))
 		gfp_mask &= ~(__GFP_COMP | __GFP_HIGHMEM);
 
-	p = alloc_pages_node_noprof(nid, gfp_mask, order);
+	p = alloc_pages_node_noprof(nid, gfp_mask | __GFP_SENSITIVE, order);
 	if (!p)
 		return NULL;
-	return make_alloc_exact((unsigned long)page_address(p), order, size);
+	return finish_exact_alloc((unsigned long)page_address(p), order, size, gfp_mask);
 }
 
 /**
