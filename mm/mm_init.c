@@ -2639,6 +2639,7 @@ void __init mm_core_init(void)
 	BUILD_BUG_ON(MAX_ZONELISTS > 2);
 	build_all_zonelists(NULL);
 	page_alloc_init_cpuhp();
+	page_alloc_init_asi();
 
 	/*
 	 * page_ext requires contiguous pages,
