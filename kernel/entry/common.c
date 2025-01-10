@@ -218,6 +218,7 @@ __visible noinstr void syscall_exit_to_user_mode(struct pt_regs *regs)
 	__syscall_exit_to_user_mode_work(regs);
 	instrumentation_end();
 	exit_to_user_mode();
+	asi_enter_userspace();
 }
 
 noinstr void irqentry_enter_from_user_mode(struct pt_regs *regs)
