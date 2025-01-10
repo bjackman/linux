@@ -425,5 +425,8 @@ static inline void __native_tlb_flush_global(unsigned long cr4)
 }
 
 unsigned long build_cr3_noinstr(pgd_t *pgd, u16 asid, unsigned long lam);
+unsigned long build_cr3_pcid_noinstr(pgd_t *pgd, u16 pcid, unsigned long lam, bool noflush);
+
+u16 asi_pcid(struct asi *asi, u16 asid);
 
 #endif /* _ASM_X86_TLBFLUSH_H */

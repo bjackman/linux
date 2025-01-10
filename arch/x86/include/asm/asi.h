@@ -4,12 +4,12 @@
 
 #include <linux/sched.h>
 
-#include <asm-generic/asi.h>
-
 #include <asm/pgtable_types.h>
 #include <asm/percpu.h>
 #include <asm/cpufeature.h>
 #include <asm/processor.h>
+
+#include <asm-generic/asi.h>
 
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 
