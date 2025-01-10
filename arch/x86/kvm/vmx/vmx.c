@@ -4323,8 +4323,14 @@ void vmx_set_constant_host_state(struct vcpu_vmx *vmx)
 	/*
 	 * Save the most likely value for this task's CR3 in the VMCS.
 	 * We can't use __get_current_cr3_fast() because we're not atomic.
+	 *
+	 * Use __read_cr3_raw() to avoid exiting ASI if we are in the restrict
+	 * address space. Preemption is enabled, so rescheduling could make us
+	 * re-enter ASI anyway. It's okay to avoid exiting ASI here because
+	 * vmx_vcpu_enter_exit() and nested_vmx_check_vmentry_hw() will
+	 * explicitly enter or exit ASI and update CR3 in the VMCS if needed.
 	 */
-	cr3 = __read_cr3();
+	cr3 = __read_cr3_raw();
 	vmcs_writel(HOST_CR3, cr3);		/* 22.2.3  FIXME: shadow tables */
 	vmx->loaded_vmcs->host_state.cr3 = cr3;
 

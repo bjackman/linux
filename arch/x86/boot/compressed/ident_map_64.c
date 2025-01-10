@@ -11,6 +11,16 @@
 /* No MITIGATION_PAGE_TABLE_ISOLATION support needed either: */
 #undef CONFIG_MITIGATION_PAGE_TABLE_ISOLATION
 
+/*
+ * CR3 access helpers (e.g. write_cr3()) will call asi_exit() to exit the
+ * restricted address space first. We cannot call the version defined in
+ * arch/x86/mm/asi.c here, so make sure we always call the noop version in
+ * asm-generic/asi.h. It does not matter because early during boot asi_exit()
+ * would be a noop anyway. The alternative is spamming the code with *_raw()
+ * variants of the CR3 helpers.
+ */
+#undef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+
 #include "error.h"
 #include "misc.h"
 

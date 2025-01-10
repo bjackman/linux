@@ -2531,7 +2531,7 @@ config MITIGATION_ADDRESS_SPACE_ISOLATION
 	  The !PARAVIRT dependency is only because of lack of testing; in theory
 	  the code is written to work under paravirtualization. In practice
 	  there are likely to be unhandled cases, in particular concerning TLB
-	  flushes.
+	  flushes and CR3 manipulation.
 
 
 config ADDRESS_SPACE_ISOLATION_DEFAULT_ON

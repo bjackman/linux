@@ -488,7 +488,7 @@ noinstr void __asi_enter(void)
 
 	pcid = asi_pcid(target, this_cpu_read(cpu_tlbstate.loaded_mm_asid));
 	asi_cr3 = build_cr3_pcid_noinstr(target->pgd, pcid, tlbstate_lam_cr3_mask(), false);
-	write_cr3(asi_cr3);
+	write_cr3_raw(asi_cr3);
 
 	maybe_flush_data(target);
 	/*
@@ -559,7 +559,7 @@ noinstr void asi_exit(void)
 
 		/* Tainting first makes reentrancy easier to reason about.  */
 		this_cpu_or(asi_taints, ASI_TAINT_KERNEL_DATA);
-		write_cr3(unrestricted_cr3);
+		write_cr3_raw(unrestricted_cr3);
 		/*
 		 * Must not update curr_asi until after CR3 write, otherwise a
 		 * re-entrant call might not enter this branch. (This means we

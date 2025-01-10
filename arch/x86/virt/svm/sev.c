@@ -379,7 +379,7 @@ void snp_dump_hva_rmpentry(unsigned long hva)
 	pgd_t *pgd;
 	pte_t *pte;
 
-	pgd = __va(read_cr3_pa());
+	pgd = __va(read_cr3_pa_raw());
 	pgd += pgd_index(hva);
 	pte = lookup_address_in_pgd(pgd, hva, &level);
 

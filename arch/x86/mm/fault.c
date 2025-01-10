@@ -295,7 +295,7 @@ static bool low_pfn(unsigned long pfn)
 
 static void dump_pagetable(unsigned long address)
 {
-	pgd_t *base = __va(read_cr3_pa());
+	pgd_t *base = __va(read_cr3_pa_raw());
 	pgd_t *pgd = &base[pgd_index(address)];
 	p4d_t *p4d;
 	pud_t *pud;
@@ -351,7 +351,7 @@ static int bad_address(void *p)
 
 static void dump_pagetable(unsigned long address)
 {
-	pgd_t *base = __va(read_cr3_pa());
+	pgd_t *base = __va(read_cr3_pa_raw());
 	pgd_t *pgd = base + pgd_index(address);
 	p4d_t *p4d;
 	pud_t *pud;
@@ -519,7 +519,7 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 		pgd_t *pgd;
 		pte_t *pte;
 
-		pgd = __va(read_cr3_pa());
+		pgd = __va(read_cr3_pa_raw());
 		pgd += pgd_index(address);
 
 		pte = lookup_address_in_pgd_attr(pgd, address, &level, &nx, &rw);
@@ -1578,7 +1578,7 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 		 * be losing some stats here. However for now this keeps ASI
 		 * page faults nice and fast.
 		 */
-		pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(address);
+		pgd = (pgd_t *)__va(read_cr3_pa_raw()) + pgd_index(address);
 		if (!user_mode(regs) && kernel_access_ok(error_code, address, pgd)) {
 			warn_if_bad_asi_pf(error_code, address);
 			return;
