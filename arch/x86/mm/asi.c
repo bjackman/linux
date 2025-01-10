@@ -4,6 +4,7 @@
 #include <linux/percpu.h>
 #include <linux/spinlock.h>
 
+#include <linux/init.h>
 #include <asm/asi.h>
 #include <asm/cmdline.h>
 #include <asm/cpufeature.h>
@@ -29,6 +30,9 @@ static inline bool asi_class_id_valid(enum asi_class_id class_id)
 
 static inline bool asi_class_initialized(enum asi_class_id class_id)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
+
 	if (WARN_ON(!asi_class_id_valid(class_id)))
 		return false;
 
@@ -51,6 +55,9 @@ EXPORT_SYMBOL_GPL(asi_init_class);
 
 void asi_uninit_class(enum asi_class_id class_id)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	if (!asi_class_initialized(class_id))
 		return;
 
@@ -66,10 +73,36 @@ const char *asi_class_name(enum asi_class_id class_id)
 	return asi_class_names[class_id];
 }
 
+void __init asi_check_boottime_disable(void)
+{
+	bool enabled = IS_ENABLED(CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION_DEFAULT_ON);
+	char arg[4];
+	int ret;
+
+	ret = cmdline_find_option(boot_command_line, "asi", arg, sizeof(arg));
+	if (ret == 3 && !strncmp(arg, "off", 3)) {
+		enabled = false;
+		pr_info("ASI disabled through kernel command line.\n");
+	} else if (ret == 2 && !strncmp(arg, "on", 2)) {
+		enabled = true;
+		pr_info("Ignoring asi=on param while ASI implementation is incomplete.\n");
+	} else {
+		pr_info("ASI %s by default.\n",
+			enabled ? "enabled" : "disabled");
+	}
+
+	if (enabled)
+		pr_info("ASI enablement ignored due to incomplete implementation.\n");
+}
+
 static void __asi_destroy(struct asi *asi)
 {
-	lockdep_assert_held(&asi->mm->asi_init_lock);
+	WARN_ON_ONCE(asi->ref_count <= 0);
+	if (--(asi->ref_count) > 0)
+		return;
 
+	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
+	memset(asi, 0, sizeof(struct asi));
 }
 
 int asi_init(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_asi)
@@ -78,6 +111,9 @@ int asi_init(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_
 	int err = 0;
 
 	*out_asi = NULL;
+
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
 
 	if (WARN_ON(!asi_class_initialized(class_id)))
 		return -EINVAL;
@@ -122,7 +158,7 @@ void asi_destroy(struct asi *asi)
 {
 	struct mm_struct *mm;
 
-	if (!asi)
+	if (!boot_cpu_has(X86_FEATURE_ASI) || !asi)
 		return;
 
 	if (WARN_ON(!asi_class_initialized(asi->class_id)))
@@ -134,11 +170,7 @@ void asi_destroy(struct asi *asi)
 	 * to block concurrent asi_init calls.
 	 */
 	mutex_lock(&mm->asi_init_lock);
-	WARN_ON_ONCE(asi->ref_count <= 0);
-	if (--(asi->ref_count) == 0) {
-		free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
-		memset(asi, 0, sizeof(struct asi));
-	}
+	__asi_destroy(asi);
 	mutex_unlock(&mm->asi_init_lock);
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
@@ -255,6 +287,9 @@ static noinstr void __asi_enter(void)
 
 noinstr void asi_enter(struct asi *asi)
 {
+	if (!static_asi_enabled())
+		return;
+
 	VM_WARN_ON_ONCE(!asi);
 
 	/* Should not have an asi_enter() without a prior asi_relax(). */
@@ -269,8 +304,10 @@ EXPORT_SYMBOL_GPL(asi_enter);
 
 noinstr void asi_relax(void)
 {
-	barrier();
-	asi_set_target(current, NULL);
+	if (static_asi_enabled()) {
+		barrier();
+		asi_set_target(current, NULL);
+	}
 }
 EXPORT_SYMBOL_GPL(asi_relax);
 
@@ -278,6 +315,9 @@ noinstr void asi_exit(void)
 {
 	u64 unrestricted_cr3;
 	struct asi *asi;
+
+	if (!static_asi_enabled())
+		return;
 
 	preempt_disable_notrace();
 
@@ -310,6 +350,9 @@ EXPORT_SYMBOL_GPL(asi_exit);
 
 void asi_init_mm_state(struct mm_struct *mm)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	memset(mm->asi, 0, sizeof(mm->asi));
 	mutex_init(&mm->asi_init_lock);
 }
