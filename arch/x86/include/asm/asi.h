@@ -133,6 +133,7 @@ struct asi {
 	struct mm_struct *mm;
 	int64_t ref_count;
 	enum asi_class_id class_id;
+	spinlock_t pgd_lock;
 };
 
 DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
@@ -147,6 +148,7 @@ const char *asi_class_name(enum asi_class_id class_id);
 
 int asi_init(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_asi);
 void asi_destroy(struct asi *asi);
+void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp);
 
 /* Enter an ASI domain (restricted address space) and begin the critical section. */
 void asi_enter(struct asi *asi);
@@ -285,6 +287,15 @@ static __always_inline bool asi_in_critical_section(void)
 	.asi_init_lock = __MUTEX_INITIALIZER(init_mm.asi_init_lock),
 
 void asi_handle_switch_mm(void);
+
+/*
+ * This function returns true when we would like to map userspace addresses
+ * in the restricted address space.
+ */
+static inline bool asi_maps_user_addr(enum asi_class_id class_id)
+{
+	return false;
+}
 
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
