@@ -138,4 +138,13 @@ void vma_iter_dump_tree(const struct vma_iterator *vmi);
 #define VM_BUG_ON_PGFLAGS(cond, page) BUILD_BUG_ON_INVALID(cond)
 #endif
 
+/* TODO: move/destroy all this crap */
+#ifdef CONFIG_PAGE_ALLOC_KUNIT_TEST
+int get_kunit_isolated_nid(void);
+bool outside_page_alloc_kunit(void);
+#else
+static inline int get_kunit_isolated_nid(void) { return -1; }
+static inline bool outside_page_alloc_kunit(void) { return true; }
+#endif
+
 #endif

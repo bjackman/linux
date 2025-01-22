@@ -291,6 +291,29 @@ static bool __free_unaccepted(struct page *page);
 
 int page_group_by_mobility_disabled __read_mostly;
 
+/*
+ * Test harness for KUnit - pick a node that we will never allocate from, except
+ * for in the page allocator tests.
+ */
+#ifdef CONFIG_PAGE_ALLOC_KUNIT_TEST
+int kunit_isolated_nid = NUMA_NO_NODE;
+
+void set_kunit_isolated_nid(int nid)
+{
+	kunit_isolated_nid = nid;
+}
+
+int get_kunit_isolated_nid(void)
+{
+	return kunit_isolated_nid;
+}
+
+bool outside_page_alloc_kunit(void)
+{
+	return current->kunit_suite != &page_alloc_test_suite;
+}
+#endif /* CONFIG_POAGE_ALLOC_KUNIT_TEST */
+
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
 /*
  * During boot we initialize deferred pages on-demand, as needed, but once
@@ -2324,6 +2347,9 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 		 * for IO devices that can merge IO requests if the physical
 		 * pages are ordered properly.
 		 */
+		if (outside_page_alloc_kunit()) {
+			VM_BUG_ON(zone->zone_pgdat->node_id == get_kunit_isolated_nid());
+		}
 		list_add_tail(&page->pcp_list, list);
 	}
 	spin_unlock_irqrestore(&zone->lock, flags);
@@ -2609,6 +2635,9 @@ static void free_frozen_page_commit(struct zone *zone,
 	pcp->alloc_factor >>= 1;
 	__count_vm_events(PGFREE, 1 << order);
 	pindex = order_to_pindex(migratetype, order);
+	if (outside_page_alloc_kunit()) {
+		VM_BUG_ON(zone->zone_pgdat->node_id == get_kunit_isolated_nid());
+	}
 	list_add(&page->pcp_list, &pcp->lists[pindex]);
 	pcp->count += 1 << order;
 
@@ -3084,6 +3113,10 @@ struct page *rmqueue(struct zone *preferred_zone,
 							migratetype);
 
 out:
+	if (page && outside_page_alloc_kunit()) {
+		VM_BUG_ON(zone->zone_pgdat->node_id == get_kunit_isolated_nid());
+	}
+
 	/* Separate test+clear to avoid unnecessary atomics */
 	if ((alloc_flags & ALLOC_KSWAPD) &&
 	    unlikely(test_bit(ZONE_BOOSTED_WATERMARK, &zone->flags))) {
@@ -5087,6 +5120,8 @@ int find_next_best_node(int node, nodemask_t *used_node_mask)
 	}
 
 	for_each_node_state(n, N_MEMORY) {
+		if (n == get_kunit_isolated_nid())
+			continue;
 
 		/* Don't want a node to appear more than once */
 		if (node_isset(n, *used_node_mask))
@@ -5134,8 +5169,11 @@ static void build_zonelists_in_node_order(pg_data_t *pgdat, int *node_order,
 
 	for (i = 0; i < nr_nodes; i++) {
 		int nr_zones;
+		int other_nid = node_order[i];
+		pg_data_t *node = NODE_DATA(other_nid);
 
-		pg_data_t *node = NODE_DATA(node_order[i]);
+		if (other_nid != pgdat->node_id && other_nid == get_kunit_isolated_nid())
+			continue;
 
 		nr_zones = build_zonerefs_node(node, zonerefs);
 		zonerefs += nr_zones;

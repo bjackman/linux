@@ -9,6 +9,7 @@
  */
 #include <uapi/linux/sched/types.h>
 #include <linux/mm.h>
+#include <linux/mmdebug.h>
 #include <linux/mmu_context.h>
 #include <linux/sched.h>
 #include <linux/sched/mm.h>
@@ -30,6 +31,8 @@
 #include <linux/sched/isolation.h>
 #include <trace/events/sched.h>
 
+extern int get_kunit_isolated_nid(void);
+extern bool outside_page_alloc_kunit(void);
 
 static DEFINE_SPINLOCK(kthread_create_lock);
 static LIST_HEAD(kthread_create_list);
@@ -481,6 +484,7 @@ static void create_kthread(struct kthread_create_info *create)
 	int pid;
 
 #ifdef CONFIG_NUMA
+	VM_BUG_ON(create->node == get_kunit_isolated_nid());
 	current->pref_node_fork = create->node;
 #endif
 	/* We want our own signal handler (we take no signals by default). */
@@ -510,6 +514,8 @@ struct task_struct *__kthread_create_on_node(int (*threadfn)(void *data),
 	struct task_struct *task;
 	struct kthread_create_info *create = kmalloc(sizeof(*create),
 						     GFP_KERNEL);
+
+	VM_BUG_ON(node != NUMA_NO_NODE && node == get_kunit_isolated_nid());
 
 	if (!create)
 		return ERR_PTR(-ENOMEM);

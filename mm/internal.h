@@ -1527,6 +1527,7 @@ int walk_page_range_mm(struct mm_struct *mm, unsigned long start,
 		unsigned long end, const struct mm_walk_ops *ops,
 		void *private);
 
+
 /* pt_reclaim.c */
 bool try_get_and_clear_pmd(struct mm_struct *mm, pmd_t *pmd, pmd_t *pmdval);
 void free_pte(struct mm_struct *mm, unsigned long addr, struct mmu_gather *tlb,
@@ -1545,5 +1546,9 @@ static inline bool reclaim_pt_is_enabled(unsigned long start, unsigned long end,
 }
 #endif /* CONFIG_PT_RECLAIM */
 
+#ifdef CONFIG_PAGE_ALLOC_KUNIT_TEST
+void set_kunit_isolated_nid(int nid);
+extern struct kunit_suite page_alloc_test_suite;
+#endif
 
 #endif	/* __MM_INTERNAL_H */

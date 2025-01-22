@@ -7,6 +7,8 @@
 #include <linux/numa.h>
 #include <linux/numa_memblks.h>
 
+#include "internal.h"
+
 int numa_distance_cnt;
 static u8 *numa_distance;
 
@@ -373,6 +375,7 @@ static void __init numa_clear_kernel_node_hotplug(void)
 
 static int __init numa_register_meminfo(struct numa_meminfo *mi)
 {
+	int kunit_fake_nid __maybe_unused;
 	int i;
 
 	/* Account for nodes with cpus and no memory */
@@ -380,6 +383,20 @@ static int __init numa_register_meminfo(struct numa_meminfo *mi)
 	numa_nodemask_from_meminfo(&node_possible_map, mi);
 	if (WARN_ON(nodes_empty(node_possible_map)))
 		return -EINVAL;
+
+	/*
+	 * TODO: figure out how to do this properly. Need to add a possible
+	 * node. The test will plug a fake one in.
+	 */
+#ifdef CONFIG_PAGE_ALLOC_KUNIT_TEST
+	kunit_fake_nid = num_possible_nodes();
+	if (!numa_valid_node(kunit_fake_nid)) {
+		pr_err("Computer too dope, all node IDs used, can't fake another.\n");
+	} else {
+		node_set(num_possible_nodes(), node_possible_map);
+		set_kunit_isolated_nid(kunit_fake_nid);
+	}
+#endif
 
 	for (i = 0; i < mi->nr_blks; i++) {
 		struct numa_memblk *mb = &mi->blk[i];
