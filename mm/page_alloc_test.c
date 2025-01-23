@@ -73,9 +73,29 @@ static inline const char *debug_list_state(struct list_head *entry)
 		return "on list?";
 }
 
-static void test_alloc(struct kunit *test)
+/*
+ * Call __alloc_pages_noprof with a nodemask containing only the nid.
+ *
+ * Never returns NULL.
+ */
+static inline struct page *alloc_pages_force_nid(struct kunit *test,
+						 gfp_t gfp, int order, int nid)
 {
 	NODEMASK_ALLOC(nodemask_t, nodemask, GFP_KERNEL);
+	struct page *page;
+
+	KUNIT_ASSERT_NOT_NULL(test, nodemask);
+	kunit_add_action(test, action_nodemask_free, &nodemask);
+	nodes_clear(*nodemask);
+	node_set(nid, *nodemask);
+
+	page = __alloc_pages_noprof(GFP_KERNEL, 0, nid, nodemask);
+	KUNIT_ASSERT_NOT_NULL(test, page);
+	return page;
+}
+
+static void test_alloc(struct kunit *test)
+{
 	int fake_nid = get_kunit_isolated_nid();
 	struct list_head *buddy_list;
 	struct per_cpu_pages *pcp;
@@ -83,17 +103,7 @@ static void test_alloc(struct kunit *test)
 	struct zone *zone_normal = &NODE_DATA(fake_nid)->node_zones[ZONE_NORMAL];
 	int cpu;
 
-	/*
-	 * Allocate a page.
-	 */
-
-	KUNIT_ASSERT_NOT_NULL(test, nodemask);
-	kunit_add_action(test, action_nodemask_free, &nodemask);
-	nodes_clear(*nodemask);
-	node_set(fake_nid, *nodemask);
-
-	page = __alloc_pages_noprof(GFP_KERNEL, 0, fake_nid, nodemask);
-	KUNIT_ASSERT_NOT_NULL(test, page);
+	page = alloc_pages_force_nid(test, GFP_KERNEL, 0, fake_nid);
 
 	/*
 	 * For a plain allocation with no memory pressure, it should come from
