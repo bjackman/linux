@@ -80,26 +80,8 @@ static void test_alloc(struct kunit *test)
 	struct list_head *buddy_list;
 	struct per_cpu_pages *pcp;
 	struct page *page, *merged_page;
-	struct zone *zone_normal;
+	struct zone *zone_normal = &NODE_DATA(fake_nid)->node_zones[ZONE_NORMAL];
 	int cpu;
-
-	if (fake_nid == NUMA_NO_NODE)
-		kunit_skip(test, "No fake NUMA node ID allocated");
-
-	zone_normal = &NODE_DATA(fake_nid)->node_zones[ZONE_NORMAL];
-	/*
-	 * Some basic defensive checking to try and detect mistakes in the test
-	 * harness.
-	 */
-	for_each_possible_cpu(cpu) {
-		struct per_cpu_pages *pcp = per_cpu_ptr(zone_normal->per_cpu_pageset, cpu);
-		int i;
-
-		for (i = 0; i < ARRAY_SIZE(pcp->lists); i++) {
-			KUNIT_EXPECT_EQ_MSG(test, list_count_nodes(&pcp->lists[i]), 0,
-				"pcplist (%px) %d on CPU %d", &pcp->lists[i], i, cpu);
-		}
-	}
 
 	/*
 	 * Allocate a page.
@@ -164,6 +146,34 @@ static void test_alloc(struct kunit *test)
 	}
 }
 
+/*
+ * Some basic defensive checking to try and detect mistakes in the test
+ * harness.
+ */
+static int check_preconditions(struct kunit *test)
+{
+	int fake_nid = get_kunit_isolated_nid();
+	struct zone *zone_normal;
+	int cpu;
+
+	if (fake_nid == NUMA_NO_NODE)
+		kunit_skip(test, "No fake NUMA node ID allocated");
+
+	zone_normal = &NODE_DATA(fake_nid)->node_zones[ZONE_NORMAL];
+
+	for_each_possible_cpu(cpu) {
+		struct per_cpu_pages *pcp = per_cpu_ptr(zone_normal->per_cpu_pageset, cpu);
+		int i;
+
+		for (i = 0; i < ARRAY_SIZE(pcp->lists); i++) {
+			KUNIT_EXPECT_EQ_MSG(test, list_count_nodes(&pcp->lists[i]), 0,
+				"pcplist (%px) %d on CPU %d", &pcp->lists[i], i, cpu);
+		}
+	}
+
+	return 0;
+}
+
 static int plug_fake_node(struct kunit_suite *suite)
 {
 	struct zone *zone_movable = &NODE_DATA(0)->node_zones[ZONE_MOVABLE];
@@ -212,6 +222,7 @@ struct kunit_suite page_alloc_test_suite = {
 	.name = "page_alloc",
 	.test_cases = test_cases,
 	.suite_init = plug_fake_node,
+	.init = check_preconditions,
 };
 kunit_test_suite(page_alloc_test_suite);
 
