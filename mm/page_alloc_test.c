@@ -11,6 +11,8 @@
 #include <linux/percpu.h>
 #include <linux/smp.h>
 
+#include <asm/asi.h>
+
 #include <kunit/test.h>
 
 #include "internal.h"
@@ -156,13 +158,25 @@ static void test_alloc(struct kunit *test)
 	}
 }
 
+/* Is an order-0 page mapped in the ASI restricted address space? */
+static bool is_asi_mapped(struct page *page)
+{
+	pgd_t *pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
+	int level;
+	pte_t *pte = lookup_address_in_pgd(pgd, (unsigned long)page_to_virt(page), &level);
+
+	if (!pte)
+		return false;
+
+	return pte_present(*pte);
+}
+
 static void test_alloc_sensitivity(struct kunit *test)
 {
 	int fake_nid = get_kunit_isolated_nid();
 	struct page *page = alloc_pages_force_nid(test, GFP_KERNEL, 0, fake_nid);
-	pgd_t gns_pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
 
-	(void)page;
+	KUNIT_EXPECT_FALSE(test, is_asi_mapped(page));
 }
 
 /*
@@ -241,6 +255,7 @@ static struct kunit_case test_cases[] = {
 	{}
 };
 
+/* TODO: This needs to be ifdef'd, or even moved to arch/ */
 struct kunit_suite page_alloc_test_suite = {
 	.name = "page_alloc",
 	.test_cases = test_cases,
