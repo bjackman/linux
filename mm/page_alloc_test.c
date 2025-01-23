@@ -156,6 +156,15 @@ static void test_alloc(struct kunit *test)
 	}
 }
 
+static void test_alloc_sensitivity(struct kunit *test)
+{
+	int fake_nid = get_kunit_isolated_nid();
+	struct page *page = alloc_pages_force_nid(test, GFP_KERNEL, 0, fake_nid);
+	pgd_t gns_pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
+
+	(void)page;
+}
+
 /*
  * Some basic defensive checking to try and detect mistakes in the test
  * harness.
@@ -226,7 +235,11 @@ static int plug_fake_node(struct kunit_suite *suite)
 	return 0;
 }
 
-static struct kunit_case test_cases[] = { KUNIT_CASE(test_alloc), {} };
+static struct kunit_case test_cases[] = {
+	KUNIT_CASE(test_alloc),
+	KUNIT_CASE(test_alloc_sensitivity),
+	{}
+};
 
 struct kunit_suite page_alloc_test_suite = {
 	.name = "page_alloc",
