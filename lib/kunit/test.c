@@ -434,6 +434,7 @@ static void kunit_try_run_case(void *data)
 	struct kunit_case *test_case = ctx->test_case;
 
 	current->kunit_test = test;
+	current->kunit_suite = suite;
 
 	/*
 	 * kunit_run_case_internal may encounter a fatal error; if it does,
@@ -609,12 +610,14 @@ int kunit_run_tests(struct kunit_suite *suite)
 	add_taint(TAINT_TEST, LOCKDEP_STILL_OK);
 
 	if (suite->suite_init) {
+		current->kunit_suite = suite;
 		suite->suite_init_err = suite->suite_init(suite);
 		if (suite->suite_init_err) {
 			kunit_err(suite, KUNIT_SUBTEST_INDENT
 				  "# failed to initialize (%d)", suite->suite_init_err);
 			goto suite_end;
 		}
+		current->kunit_suite = NULL;
 	}
 
 	kunit_print_suite_start(suite);
@@ -622,6 +625,8 @@ int kunit_run_tests(struct kunit_suite *suite)
 	kunit_suite_for_each_test_case(suite, test_case) {
 		struct kunit test = { .param_value = NULL, .param_index = 0 };
 		struct kunit_result_stats param_stats = { 0 };
+
+		current->kunit_suite = suite;
 
 		kunit_init_test(&test, test_case->name, test_case->log);
 		if (test_case->status == KUNIT_SKIPPED) {
@@ -668,6 +673,8 @@ int kunit_run_tests(struct kunit_suite *suite)
 				test.priv = NULL;
 			}
 		}
+
+		current->kunit_suite = NULL;
 
 		kunit_print_attr((void *)test_case, true, KUNIT_LEVEL_CASE);
 

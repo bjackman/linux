@@ -1455,6 +1455,7 @@ struct task_struct {
 
 #if IS_ENABLED(CONFIG_KUNIT)
 	struct kunit			*kunit_test;
+	struct kunit_suite		*kunit_suite;
 #endif
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
