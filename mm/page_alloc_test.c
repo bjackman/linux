@@ -187,12 +187,34 @@ static bool is_asi_mapped(struct page *page)
 	return pte_present(*pte);
 }
 
+struct sensitivity_test_case {
+	const char *desc;
+	gfp_t gfp;
+	bool want_mapped;
+};
+
+const struct sensitivity_test_case sensitivity_test_cases[] = {
+	{
+		.desc = "default (nonsensitive)",
+		.gfp = GFP_KERNEL,
+		.want_mapped = true,
+	},
+	{
+		.desc = "sensitive",
+		.gfp = GFP_KERNEL | __GFP_SENSITIVE,
+		.want_mapped = false,
+	}
+};
+KUNIT_ARRAY_PARAM_DESC(sensitivity, sensitivity_test_cases, desc);
+
 static void test_alloc_sensitivity(struct kunit *test)
 {
+	struct sensitivity_test_case *tc = (struct sensitivity_test_case *)test->param_value;
 	int fake_nid = get_kunit_isolated_nid();
-	struct page *page = alloc_pages_force_nid(test, GFP_KERNEL, 0, fake_nid);
+	struct page *page = alloc_pages_force_nid(test, tc->gfp, 0, fake_nid);
 
-	KUNIT_EXPECT_FALSE(test, is_asi_mapped(page));
+	KUNIT_EXPECT_EQ(test, is_asi_mapped(page), tc->want_mapped);
+	__free_pages(page, 0);
 }
 
 static void action_drain_pages_all(void *unused)
@@ -283,7 +305,7 @@ static int plug_fake_node(struct kunit_suite *suite)
 
 static struct kunit_case test_cases[] = {
 	KUNIT_CASE(test_alloc),
-	KUNIT_CASE(test_alloc_sensitivity),
+	KUNIT_CASE_PARAM(test_alloc_sensitivity, sensitivity_gen_params),
 	{}
 };
 
