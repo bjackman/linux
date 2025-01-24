@@ -10,6 +10,7 @@
 #include <linux/nodemask.h>
 #include <linux/percpu.h>
 #include <linux/smp.h>
+#include <linux/spinlock.h>
 
 #include <asm/asi.h>
 
@@ -39,6 +40,21 @@ static void action_nodemask_free(void *ctx)
 	KUNIT_EXPECT_PTR_EQ_MSG(test, page_zone(page), zone,			\
 		"Wanted %px (%s), got %px (%s)",				\
 		zone, zone->name, page_zone(page), page_zone(page)->name);	\
+})
+
+
+#define EXPECT_PCPLIST_EMPTY(test, zone, cpu, pindex) ({			\
+	struct per_cpu_pages *pcp = per_cpu_ptr(zone_normal->per_cpu_pageset, cpu); \
+	struct page *page;							\
+										\
+	lockdep_assert_held(&pcp->lock);					\
+	page = list_first_entry_or_null(					\
+		&pcp->lists[pindex], struct page, pcp_list);			\
+										\
+	if (page) {								\
+		KUNIT_FAIL(test, "PCPlist %d on CPU %d wasn't empty", i, cpu);	\
+		dump_page(page, "unexpectedly on pcplist");			\
+	}									\
 })
 
 static inline bool page_on_pcplist(struct page *want_page, struct list_head *head)
@@ -194,14 +210,22 @@ static int check_preconditions(struct kunit *test)
 
 	zone_normal = &NODE_DATA(fake_nid)->node_zones[ZONE_NORMAL];
 
+	/*
+	 * Nothing except these tests should be allocating from the fake node so
+	 * the pcplists should be empty. Obviously this is racy but at least it
+	 * can probabilistically detect issues that would otherwise make for
+	 * really confusing test results.
+	 */
 	for_each_possible_cpu(cpu) {
 		struct per_cpu_pages *pcp = per_cpu_ptr(zone_normal->per_cpu_pageset, cpu);
+		unsigned long flags;
 		int i;
 
+		spin_lock_irqsave(&pcp->lock, flags);
 		for (i = 0; i < ARRAY_SIZE(pcp->lists); i++) {
-			KUNIT_EXPECT_EQ_MSG(test, list_count_nodes(&pcp->lists[i]), 0,
-				"pcplist (%px) %d on CPU %d", &pcp->lists[i], i, cpu);
+			EXPECT_PCPLIST_EMPTY(test, zone_normal, cpu, i);
 		}
+		spin_unlock_irqrestore(&pcp->lock, flags);
 	}
 
 	return 0;
