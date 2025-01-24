@@ -56,6 +56,7 @@
 #include <linux/cacheinfo.h>
 #include <linux/pgalloc_tag.h>
 #include <asm/div64.h>
+#include <kunit/visibility.h>
 #include "internal.h"
 #include "shuffle.h"
 #include "page_reporting.h"
@@ -2436,7 +2437,7 @@ static void drain_pages_zone(unsigned int cpu, struct zone *zone)
 /*
  * Drain pcplists of all zones on the indicated processor.
  */
-static void drain_pages(unsigned int cpu)
+VISIBLE_IF_KUNIT void drain_pages(unsigned int cpu)
 {
 	struct zone *zone;
 
@@ -2444,6 +2445,7 @@ static void drain_pages(unsigned int cpu)
 		drain_pages_zone(cpu, zone);
 	}
 }
+EXPORT_SYMBOL_IF_KUNIT(drain_pages);
 
 /*
  * Spill all of this CPU's per-cpu pages back into the buddy allocator.

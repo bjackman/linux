@@ -1553,4 +1553,8 @@ void set_kunit_isolated_nid(int nid);
 extern struct kunit_suite page_alloc_test_suite;
 #endif
 
+#ifdef CONFIG_KUNIT
+void drain_pages(unsigned int cpu);
+#endif
+
 #endif	/* __MM_INTERNAL_H */

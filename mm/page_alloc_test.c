@@ -195,11 +195,16 @@ static void test_alloc_sensitivity(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, is_asi_mapped(page));
 }
 
-/*
- * Some basic defensive checking to try and detect mistakes in the test
- * harness.
- */
-static int check_preconditions(struct kunit *test)
+static void action_drain_pages_all(void *unused)
+{
+	int cpu;
+
+	for_each_online_cpu(cpu)
+		drain_pages(cpu);
+}
+
+/* Runs before each test. */
+static int test_init(struct kunit *test)
 {
 	int fake_nid = get_kunit_isolated_nid();
 	struct zone *zone_normal;
@@ -227,6 +232,9 @@ static int check_preconditions(struct kunit *test)
 		}
 		spin_unlock_irqrestore(&pcp->lock, flags);
 	}
+
+	/* Also ensure we don't leave a mess for the next test. */
+	kunit_add_action(test, action_drain_pages_all, NULL);
 
 	return 0;
 }
@@ -284,7 +292,7 @@ struct kunit_suite page_alloc_test_suite = {
 	.name = "page_alloc",
 	.test_cases = test_cases,
 	.suite_init = plug_fake_node,
-	.init = check_preconditions,
+	.init = test_init,
 };
 kunit_test_suite(page_alloc_test_suite);
 
