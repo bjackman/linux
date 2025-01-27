@@ -441,10 +441,33 @@ void set_pfnblock_flags_mask(struct page *page, unsigned long flags,
 
 void set_pageblock_migratetype(struct page *page, int migratetype)
 {
-	/* TODO: errrrrr */
+	/*
+	 * TODO: we have often literally just looked up the old migratetype so
+	 * doing it again is dumb.
+	 */
+	int old_migratetype = get_pfnblock_flags_mask(page, page_to_pfn(page), MIGRATETYPE_MASK);
+
+	VM_BUG_ON_PAGE(!pageblock_aligned(page_to_pfn(page)), page);
+	lockdep_assert(system_state == SYSTEM_BOOTING || lockdep_is_held(&page_zone(page)->lock));
+
 	if (unlikely(page_group_by_mobility_disabled &&
-		     migratetype < MIGRATE_PCPTYPES))
+		     migratetype < MIGRATE_PCPTYPES &&
+		     !is_migrate_unmovable(migratetype)))
 		migratetype = MIGRATE_UNMOVABLE_SENSITIVE;
+
+	/*
+	 * TODO: doing this here is probably horrible. Higher levels probably
+	 * need to be entirely aware of sensitivity flips instead of having
+	 * spooky constraints on calling what should basically be a simple
+	 * setter function.
+	 */
+	if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE) {
+		if (old_migratetype != MIGRATE_UNMOVABLE_NONSENSITIVE)
+			asi_map(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page), pageblock_size);
+	} else {
+		if (old_migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE)
+			asi_unmap(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page), pageblock_size);
+	}
 
 	set_pfnblock_flags_mask(page, (unsigned long)migratetype,
 				page_to_pfn(page), MIGRATETYPE_MASK);
@@ -826,18 +849,29 @@ static inline void __free_one_page(struct page *page,
 			goto done_merging;
 
 		if (unlikely(order >= pageblock_order)) {
-			/*
-			 * We want to prevent merge between freepages on pageblock
-			 * without fallbacks and normal pageblock. Without this,
-			 * pageblock isolation could cause incorrect freepage or CMA
-			 * accounting or HIGHATOMIC accounting.
-			 */
 			buddy_mt = get_pfnblock_migratetype(buddy, buddy_pfn);
 
-			if (migratetype != buddy_mt &&
-			    (!migratetype_is_mergeable(migratetype) ||
-			     !migratetype_is_mergeable(buddy_mt)))
-				goto done_merging;
+			if (migratetype != buddy_mt) {
+				/*
+				 * We want to prevent merge between freepages on
+				 * pageblock without fallbacks and normal
+				 * pageblock. Without this, pageblock isolation
+				 * could cause incorrect freepage or CMA
+				 * accounting or HIGHATOMIC accounting.
+				 */
+				if (!migratetype_is_mergeable(migratetype) ||
+				    !migratetype_is_mergeable(buddy_mt))
+					goto done_merging;
+
+				/*
+				 * We also can't flip nonsensitive blocks to
+				 * sensitive, since we're potentially in atomic
+				 * context here.
+			 	 */
+				if (migratetype == MIGRATE_UNMOVABLE_SENSITIVE &&
+				    buddy_mt != MIGRATE_UNMOVABLE_SENSITIVE)
+					goto done_merging;
+			}
 		}
 
 		/*
@@ -1902,8 +1936,7 @@ static bool can_steal_fallback(unsigned int order, int start_mt)
 	 */
 	if (order >= pageblock_order / 2 ||
 		start_mt == MIGRATE_RECLAIMABLE ||
-		start_mt == MIGRATE_UNMOVABLE_SENSITIVE ||
-		start_mt == MIGRATE_UNMOVABLE_NONSENSITIVE||
+		is_migrate_unmovable(start_mt) ||
 		page_group_by_mobility_disabled)
 		return true;
 
@@ -2052,6 +2085,7 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
 	if (area->nr_free == 0)
 		return -1;
 
+	/* TODO: need to avoid mixing sensitivity in blocks */
 	*can_steal = false;
 	for (i = 0; i < MIGRATE_PCPTYPES - 1 ; i++) {
 		fallback_mt = fallbacks[migratetype][i];

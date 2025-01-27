@@ -98,6 +98,11 @@ static inline bool is_migrate_movable(int mt)
 	return is_migrate_cma(mt) || mt == MIGRATE_MOVABLE;
 }
 
+static inline bool is_migrate_unmovable(int mt)
+{
+	return mt == MIGRATE_UNMOVABLE_SENSITIVE || mt == MIGRATE_UNMOVABLE_NONSENSITIVE;
+}
+
 /*
  * Check whether a migratetype can be merged with another migratetype.
  *

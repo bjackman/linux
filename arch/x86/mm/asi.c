@@ -641,13 +641,20 @@ int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
  * by splitting the huge mapping in the ASI page table in such a case. For now,
  * vunmap_pgd_range() will just emit a warning if this situation is detected.
  *
- * This might sleep, and cannot be called with interrupts disabled.
+ * This cannot be called with interrupts disabled.
  */
 void asi_unmap(struct asi *asi, void *addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end = start + len;
 	pgtbl_mod_mask mask = 0;
+
+	/*
+	 * Not entirely true, e.g. strictly speaking calling this after
+	 * spin_lock() would not exactly be incorrect. But, it feels like
+	 * that would be a bad idea.
+	 */
+	might_sleep();
 
 	if (!len)
 		return;
