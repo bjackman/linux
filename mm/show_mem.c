@@ -141,15 +141,16 @@ static bool show_mem_node_skip(unsigned int flags, int nid, nodemask_t *nodemask
 static void show_migration_types(unsigned char type)
 {
 	static const char types[MIGRATE_TYPES] = {
-		[MIGRATE_UNMOVABLE]	= 'U',
-		[MIGRATE_MOVABLE]	= 'M',
-		[MIGRATE_RECLAIMABLE]	= 'E',
-		[MIGRATE_HIGHATOMIC]	= 'H',
+		[MIGRATE_UNMOVABLE_SENSITIVE] 		= 'S',
+		[MIGRATE_UNMOVABLE_NONSENSITIVE]	= 'N',
+		[MIGRATE_MOVABLE]			= 'M',
+		[MIGRATE_RECLAIMABLE]			= 'E',
+		[MIGRATE_HIGHATOMIC]			= 'H',
 #ifdef CONFIG_CMA
-		[MIGRATE_CMA]		= 'C',
+		[MIGRATE_CMA]				= 'C',
 #endif
 #ifdef CONFIG_MEMORY_ISOLATION
-		[MIGRATE_ISOLATE]	= 'I',
+		[MIGRATE_ISOLATE]			= 'I',
 #endif
 	};
 	char tmp[MIGRATE_TYPES + 1];

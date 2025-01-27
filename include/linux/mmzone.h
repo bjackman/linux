@@ -46,7 +46,16 @@
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
 enum migratetype {
-	MIGRATE_UNMOVABLE,
+	/*
+	 * All movable pages are sensitive for ASI. Unmovable pages might be
+	 * either; the migratetype reflects whether they are mapped into the
+	 * global-nonsensitive address space.
+	 *
+	 * TODO: config ifdeffery
+	 * TODO: what about HIGHATOMIC/RECLAIMABLE?
+	 */
+	MIGRATE_UNMOVABLE_SENSITIVE,
+	MIGRATE_UNMOVABLE_NONSENSITIVE,
 	MIGRATE_MOVABLE,
 	MIGRATE_RECLAIMABLE,
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */

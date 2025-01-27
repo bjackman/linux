@@ -143,7 +143,7 @@ static void test_alloc(struct kunit *test)
 	cpu = get_cpu();
 	__free_pages(page, 0);
 	pcp = per_cpu_ptr(zone_normal->per_cpu_pageset, cpu);
-	KUNIT_EXPECT_TRUE(test, page_on_pcplist(page, &pcp->lists[MIGRATE_UNMOVABLE]));
+	KUNIT_EXPECT_TRUE(test, page_on_pcplist(page, &pcp->lists[MIGRATE_UNMOVABLE_NONSENSITIVE]));
 	put_cpu();
 
 	/*
@@ -153,9 +153,9 @@ static void test_alloc(struct kunit *test)
 	drain_zone_pages(zone_normal, pcp);
 	KUNIT_EXPECT_TRUE(test, PageBuddy(page));
 	KUNIT_EXPECT_EQ(test, buddy_order(page), MAX_PAGE_ORDER);
-	KUNIT_EXPECT_TRUE(test, list_empty(&pcp->lists[MIGRATE_UNMOVABLE]));
+	KUNIT_EXPECT_TRUE(test, list_empty(&pcp->lists[MIGRATE_UNMOVABLE_NONSENSITIVE]));
 	merged_page = pfn_to_page(round_down(page_to_pfn(page), 1 << MAX_PAGE_ORDER));
-	buddy_list = &zone_normal->free_area[MAX_PAGE_ORDER].free_list[MIGRATE_UNMOVABLE];
+	buddy_list = &zone_normal->free_area[MAX_PAGE_ORDER].free_list[MIGRATE_UNMOVABLE_NONSENSITIVE];
 	KUNIT_EXPECT_TRUE(test, page_on_buddy_list(merged_page, buddy_list));
 
 	/* Failures above can be a bit unhelpful so throw some more info over the fence. */
@@ -215,6 +215,8 @@ static void test_alloc_sensitivity(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, is_asi_mapped(page), tc->want_mapped);
 	__free_pages(page, 0);
+
+	/* TODO: test changing pageblock sensitivity */
 }
 
 static void action_drain_pages_all(void *unused)

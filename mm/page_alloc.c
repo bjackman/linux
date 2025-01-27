@@ -441,9 +441,10 @@ void set_pfnblock_flags_mask(struct page *page, unsigned long flags,
 
 void set_pageblock_migratetype(struct page *page, int migratetype)
 {
+	/* TODO: errrrrr */
 	if (unlikely(page_group_by_mobility_disabled &&
 		     migratetype < MIGRATE_PCPTYPES))
-		migratetype = MIGRATE_UNMOVABLE;
+		migratetype = MIGRATE_UNMOVABLE_SENSITIVE;
 
 	set_pfnblock_flags_mask(page, (unsigned long)migratetype,
 				page_to_pfn(page), MIGRATETYPE_MASK);
@@ -1635,9 +1636,27 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
  * The other migratetypes do not have fallbacks.
  */
 static int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
-	[MIGRATE_UNMOVABLE]   = { MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE   },
-	[MIGRATE_MOVABLE]     = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE },
-	[MIGRATE_RECLAIMABLE] = { MIGRATE_UNMOVABLE,   MIGRATE_MOVABLE   },
+	[MIGRATE_UNMOVABLE_NONSENSITIVE] = {
+		/*
+		 * Prefer having to asi_unmap() (TLB flush, pain right now) over
+		 * losing a movable block (pain maybe forever).
+		 */
+		MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE,
+	},
+	[MIGRATE_UNMOVABLE_SENSITIVE] = {
+		/* asi_map() is very cheap, definitely preferable. */
+		MIGRATE_UNMOVABLE_NONSENSITIVE, MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE
+	},
+	/*
+	 * TODO: Why does MOVABLE fallback first to RECLAIMABLE, but RECLAIMABLE
+	 * falls back first to UNMOVABLE?
+	 */
+	[MIGRATE_MOVABLE] = {
+		MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_UNMOVABLE_NONSENSITIVE
+	},
+	[MIGRATE_RECLAIMABLE] = {
+		MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_UNMOVABLE_NONSENSITIVE, MIGRATE_MOVABLE,
+	},
 };
 
 #ifdef CONFIG_CMA
@@ -1883,7 +1902,8 @@ static bool can_steal_fallback(unsigned int order, int start_mt)
 	 */
 	if (order >= pageblock_order / 2 ||
 		start_mt == MIGRATE_RECLAIMABLE ||
-		start_mt == MIGRATE_UNMOVABLE ||
+		start_mt == MIGRATE_UNMOVABLE_SENSITIVE ||
+		start_mt == MIGRATE_UNMOVABLE_NONSENSITIVE||
 		page_group_by_mobility_disabled)
 		return true;
 
@@ -2165,9 +2185,9 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 			 * pageblock stealing heuristics. Minimally, the caller
 			 * is doing the work and needs the pages. More
 			 * importantly, if the block was always converted to
-			 * MIGRATE_UNMOVABLE or another type then the number
-			 * of pageblocks that cannot be completely freed
-			 * may increase.
+			 * MIGRATE_UNMOVABLE_[NON]SENSITIVE or another type then
+			 * the number of pageblocks that cannot be completely
+			 * freed may increase.
 			 */
 			if (order < pageblock_order)
 				ret = move_freepages_block(zone, page, mt,

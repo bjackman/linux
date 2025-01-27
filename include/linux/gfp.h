@@ -19,6 +19,8 @@ struct mempolicy;
 static inline int gfp_migratetype(const gfp_t gfp_flags)
 {
 	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) == GFP_MOVABLE_MASK);
+	/* Only unmovable/unreclaimable pages can be sensitive right now. */
+	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) && (gfp_flags & __GFP_SENSITIVE));
 	/*
 	 * TODO: bring back highly-optimized code - currently simplified for
 	 * easy ASI hacking by dumb porgarmers.
@@ -26,7 +28,11 @@ static inline int gfp_migratetype(const gfp_t gfp_flags)
 	switch (gfp_flags & GFP_MOVABLE_MASK) {
 		case __GFP_RECLAIMABLE: return MIGRATE_RECLAIMABLE;
 		case __GFP_MOVABLE: return MIGRATE_MOVABLE;
-		default: return MIGRATE_UNMOVABLE;
+		default:
+		if (gfp_flags & __GFP_SENSITIVE)
+			return MIGRATE_UNMOVABLE_SENSITIVE;
+		else
+			return MIGRATE_UNMOVABLE_NONSENSITIVE;
 	}
 }
 #undef GFP_MOVABLE_MASK
