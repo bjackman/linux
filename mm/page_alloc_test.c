@@ -263,6 +263,12 @@ static int test_init(struct kunit *test)
 	return 0;
 }
 
+/*
+ * TODO: I just realised the page allocator get used before the physmap gets set
+ * up. Doesn't really seem like we need real memory for this at all. An
+ * alternative to using memory hotplug might just be to completely invent PFNs
+ * and a node covering them. They should never be accessed?
+ */
 static int plug_fake_node(struct kunit_suite *suite)
 {
 	struct zone *zone_movable = &NODE_DATA(0)->node_zones[ZONE_MOVABLE];
