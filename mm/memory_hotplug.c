@@ -205,7 +205,7 @@ MODULE_PARM_DESC(auto_movable_numa_aware,
 static online_page_callback_t online_page_callback = generic_online_page;
 static DEFINE_MUTEX(online_page_callback_lock);
 
-DEFINE_STATIC_PERCPU_RWSEM(mem_hotplug_lock);
+DEFINE_PERCPU_RWSEM(mem_hotplug_lock);
 
 void get_online_mems(void)
 {

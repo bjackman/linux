@@ -55,6 +55,7 @@
 #include <linux/delayacct.h>
 #include <linux/cacheinfo.h>
 #include <linux/pgalloc_tag.h>
+#include <linux/percpu-rwsem.h>
 #include <asm/div64.h>
 #include <kunit/visibility.h>
 #include "internal.h"
@@ -448,7 +449,9 @@ void set_pageblock_migratetype(struct page *page, int migratetype)
 	int old_migratetype = get_pfnblock_flags_mask(page, page_to_pfn(page), MIGRATETYPE_MASK);
 
 	VM_BUG_ON_PAGE(!pageblock_aligned(page_to_pfn(page)), page);
-	lockdep_assert(system_state == SYSTEM_BOOTING || lockdep_is_held(&page_zone(page)->lock));
+	lockdep_assert_once(system_state == SYSTEM_BOOTING ||
+		lockdep_is_held(&page_zone(page)->lock) ||
+		percpu_rwsem_is_held(&mem_hotplug_lock));
 
 	if (unlikely(page_group_by_mobility_disabled &&
 		     migratetype < MIGRATE_PCPTYPES &&

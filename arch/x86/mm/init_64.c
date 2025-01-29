@@ -774,8 +774,12 @@ __kernel_physical_mapping_init(unsigned long paddr_start,
 		pgd_changed = true;
 	}
 
-	if (pgd_changed)
+	/* TODO: synchronization? */
+	asi_sync_physmap(vaddr_start, vaddr_end - vaddr_start);
+
+	if (pgd_changed) {
 		sync_global_pgds(vaddr_start, vaddr_end - 1);
+	}
 
 	return paddr_last;
 }

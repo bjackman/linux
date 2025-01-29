@@ -75,6 +75,9 @@ static inline int asi_map(struct asi *asi, void *addr, size_t len)
 static inline
 void asi_unmap(struct asi *asi, void *addr, size_t len) { }
 
+static inline
+void void asi_sync_physmap(unsigned long start, unsigned long end) { }
+
 #endif /* !CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
 #endif  /* !_ASSEMBLY_ */

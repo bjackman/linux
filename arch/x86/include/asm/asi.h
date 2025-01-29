@@ -155,7 +155,6 @@ void asi_relax(void);
 /* Immediately exit the restricted address space if in it */
 void asi_exit(void);
 
-int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);
 void asi_unmap(struct asi *asi, void *addr, size_t len);
 
@@ -209,6 +208,8 @@ static __always_inline pgd_t *asi_pgd(struct asi *asi)
 	.asi_init_lock = __MUTEX_INITIALIZER(init_mm.asi_init_lock),
 
 void asi_handle_switch_mm(void);
+
+void asi_sync_physmap(unsigned long start, unsigned long end);
 
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 

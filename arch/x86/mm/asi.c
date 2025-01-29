@@ -105,11 +105,10 @@ const char *asi_class_name(enum asi_class_id class_id)
 static_assert(!IS_ENABLED(CONFIG_PARAVIRT));
 #define DEFINE_ASI_PGTBL_ALLOC(base, level)				\
 static level##_t * asi_##level##_alloc(struct asi *asi,			\
-				       base##_t *base, ulong addr,	\
-				       gfp_t flags)			\
+				       base##_t *base, ulong addr)	\
 {									\
 	if (unlikely(base##_none(*base))) {				\
-		ulong pgtbl = get_zeroed_page(flags);			\
+		void *pgtbl = alloc_low_page();				\
 		phys_addr_t pgtbl_pa;					\
 									\
 		if (!pgtbl)						\
@@ -119,7 +118,8 @@ static level##_t * asi_##level##_alloc(struct asi *asi,			\
 									\
 		if (cmpxchg((ulong *)base, 0,				\
 			    pgtbl_pa | _PAGE_TABLE) != 0) {		\
-			free_page(pgtbl);				\
+			if (!WARN_ON(!after_bootmem))			\
+				__free_page(pgtbl);			\
 			goto out;					\
 		}							\
 									\
@@ -156,6 +156,34 @@ static int __init asi_global_init(void)
 	return 0;
 }
 subsys_initcall(asi_global_init)
+
+/*
+ * Make sure all the pagetables in the global-nonsensitive pagetable
+ * are allocated and equivalent to the unrestricted physmap. The difference is
+ * they will be non-present.
+ *
+ * TODO: We also need to handle __set_pages_p and stuff like that.
+ */
+void asi_sync_physmap(unsigned long start, unsigned long size)
+{
+	/*
+	 * TODO: this is a stupid way to implement this and is also probably
+	 * insecure due to the transient mappings. Here we just use the plaid
+	 * old asi_map logic to copy the mappings from the physmap then unmap
+	 * them again.
+	 *
+	 * TODO: if the physmap isn't set up yet (which is probably the reason
+	 * we're calling this function) we can't allocate ASI pagetables yet so
+	 * we have to make the pagetables we're allocating here sensitive. This
+	 * is also dumb. Wherever the pagetables come from that set up the
+	 * nremal physmap during boot (i.e. memblock - see alloc_low_pages()) -
+	 * we should get them from there, then retroactively mark them as
+	 * nonsensitive if possible.
+	 */
+	int err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)start, size);
+	WARN_ON(err);
+	asi_unmap(ASI_GLOBAL_NONSENSITIVE, (void *)start, size);
+}
 
 static void __asi_destroy(struct asi *asi)
 {
@@ -545,7 +573,7 @@ static bool follow_physaddr(
  *
  * RFC: * vmap_p4d_range supports huge mappings, we can probably use that now.
  */
-int __must_check asi_map_gfp(struct asi *asi, void *addr, unsigned long len, gfp_t gfp_flags)
+int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
 {
 	unsigned long virt;
 	unsigned long start = (size_t)addr;
@@ -557,10 +585,7 @@ int __must_check asi_map_gfp(struct asi *asi, void *addr, unsigned long len, gfp
 	/* RFC: fault_in_kernel_space should be renamed. */
 	VM_BUG_ON(!fault_in_kernel_space(start));
 
-	gfp_flags &= GFP_RECLAIM_MASK;
-
-	if (asi->mm != &init_mm)
-		gfp_flags |= __GFP_ACCOUNT;
+	/* TODO: This is currently hard-coded to allocate via alloc_low_page. */
 
 	for (virt = start; virt < end; virt = ALIGN(virt + 1, page_size)) {
 		pgd_t *pgd;
@@ -582,7 +607,7 @@ int __must_check asi_map_gfp(struct asi *asi, void *addr, unsigned long len, gfp
 				continue;					\
 			}							\
 										\
-			level = asi_##level##_alloc(asi, base, virt, gfp_flags);\
+			level = asi_##level##_alloc(asi, base, virt);		\
 			if (!level)						\
 				return -ENOMEM;					\
 										\
@@ -624,11 +649,6 @@ int __must_check asi_map_gfp(struct asi *asi, void *addr, unsigned long len, gfp
 
 	return 0;
 #undef MAP_AT_LEVEL
-}
-
-int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
-{
-	return asi_map_gfp(asi, addr, len, GFP_KERNEL);
 }
 
 /*
