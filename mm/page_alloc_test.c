@@ -314,6 +314,7 @@ static int plug_fake_node(struct kunit_suite *suite)
 static struct kunit_case test_cases[] = {
 	KUNIT_CASE(test_alloc),
 	KUNIT_CASE_PARAM(test_alloc_sensitivity, sensitivity_gen_params),
+	/* TODO: test running out of sensitive pages */
 	{}
 };
 
