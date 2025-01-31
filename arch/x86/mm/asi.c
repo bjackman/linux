@@ -624,6 +624,7 @@ int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
 						return -EBUSY;			\
 					}					\
 				} else {					\
+					printk("mapped 0x%lx "__stringify(level)" at %p\n", virt, level); \
 					set_##level(level,			\
 						    __##level(phys | flags));	\
 				}						\
@@ -678,6 +679,8 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 
 	if (!len)
 		return;
+
+	printk("asi_unmap %p + 0x%zx\n", addr, len);
 
 	VM_BUG_ON(start & ~PAGE_MASK);
 	VM_BUG_ON(len & ~PAGE_MASK);

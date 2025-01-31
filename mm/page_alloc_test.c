@@ -175,7 +175,7 @@ static void test_alloc(struct kunit *test)
 }
 
 /* Is an order-0 page mapped in the ASI restricted address space? */
-static bool is_asi_mapped(struct page *page)
+static bool is_asi_mapped(struct kunit *test, struct page *page)
 {
 	pgd_t *pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
 	int level;
@@ -184,7 +184,12 @@ static bool is_asi_mapped(struct page *page)
 	if (!pte)
 		return false;
 
-	return pte_present(*pte);
+	switch (level) {
+		case PG_LEVEL_4K: return pte_present(*pte);
+		case PG_LEVEL_2M: return pmd_present(*(pmd_t *)pte);
+		/* Not necessarily wrong, but unexpected, better investigate. */
+		default: KUNIT_FAIL_AND_ABORT(test, "page level not implemented in test harness");
+	}
 }
 
 struct sensitivity_test_case {
@@ -213,7 +218,10 @@ static void test_alloc_sensitivity(struct kunit *test)
 	int fake_nid = get_kunit_isolated_nid();
 	struct page *page = alloc_pages_force_nid(test, tc->gfp, 0, fake_nid);
 
-	KUNIT_EXPECT_EQ(test, is_asi_mapped(page), tc->want_mapped);
+	KUNIT_EXPECT_EQ(test, is_asi_mapped(test, page), tc->want_mapped);
+	if (test->status == KUNIT_FAILURE)
+		dump_page(page, "test failed");
+
 	__free_pages(page, 0);
 
 	/* TODO: test changing pageblock sensitivity */

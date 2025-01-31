@@ -465,8 +465,12 @@ void set_pageblock_migratetype(struct page *page, int migratetype)
 	 * setter function.
 	 */
 	if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE) {
-		if (old_migratetype != MIGRATE_UNMOVABLE_NONSENSITIVE)
+		if (old_migratetype != MIGRATE_UNMOVABLE_NONSENSITIVE) {
+			printk("asi mapping pageblock at 0x%lx\n", page_to_pfn(page));
 			asi_map(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page), pageblock_size);
+		} else {
+			printk("asi already mapped pageblock at 0x%lx\n", page_to_pfn(page));
+		}
 	} else {
 		if (old_migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE)
 			asi_unmap(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page), pageblock_size);
