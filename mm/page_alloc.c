@@ -2303,7 +2303,7 @@ void drain_zone_pages(struct zone *zone, struct per_cpu_pages *pcp)
 /*
  * Drain pcplists of the indicated processor and zone.
  */
-static void drain_pages_zone(unsigned int cpu, struct zone *zone)
+VISIBLE_IF_KUNIT void drain_pages_zone(unsigned int cpu, struct zone *zone)
 {
 	struct per_cpu_pages *pcp = per_cpu_ptr(zone->per_cpu_pageset, cpu);
 	int count;

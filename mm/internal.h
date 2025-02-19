@@ -1561,6 +1561,7 @@ extern int isolated_node;
 
 #ifdef CONFIG_KUNIT
 void drain_pages(unsigned int cpu);
+void drain_pages_zone(unsigned int cpu, struct zone *zone);
 #endif
 
 #endif	/* __MM_INTERNAL_H */
