@@ -20,13 +20,26 @@ static inline int gfp_migratetype(const gfp_t gfp_flags)
 	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) == GFP_MOVABLE_MASK);
 
 	if (unlikely(page_group_by_mobility_disabled))
-		return MIGRATE_UNMOVABLE;
+		goto unmovable;
+
+	/* Only unmovable/unreclaimable pages can be nonsensitive right now. */
+	VM_WARN_ONCE((gfp_flags & GFP_MOVABLE_MASK) && !(gfp_flags & __GFP_SENSITIVE),
+		"%pGg", &gfp_flags);
 
 	switch (gfp_flags & GFP_MOVABLE_MASK) {
-	case __GFP_RECLAIMABLE: return MIGRATE_RECLAIMABLE;
-	case __GFP_MOVABLE: return MIGRATE_MOVABLE;
-	default: return MIGRATE_UNMOVABLE;
+	case __GFP_RECLAIMABLE:
+		return MIGRATE_RECLAIMABLE;
+	case __GFP_MOVABLE:
+		return MIGRATE_MOVABLE;
+	default:
+		break;
 	}
+
+unmovable:
+	if (gfp_flags & __GFP_SENSITIVE)
+		return MIGRATE_UNMOVABLE_SENSITIVE;
+	else
+		return MIGRATE_UNMOVABLE_NONSENSITIVE;
 }
 
 static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
