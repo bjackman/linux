@@ -1780,6 +1780,7 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
  * The other migratetypes do not have fallbacks.
  *
  * Note there are no fallbacks from sensitive to nonsensitive migratetypes.
+ * That's instead handled as a totally special case in __rmqueue_asi_unmap().
  */
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 #define TERMINATE_FALLBACK -1
@@ -3005,7 +3006,77 @@ static inline void zone_statistics(struct zone *preferred_zone, struct zone *z,
 #endif
 }
 
-static __always_inline
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+/*
+ * Allocate a page by converting some memory to sensitive, by doing an ASI
+ * unmap. This can't be done via __rmqueue_fallback because that unmap requires
+ * a TLB flush which can only be done with interrupts on.
+ */
+static inline
+struct page *__rmqueue_asi_unmap(struct zone *zone, unsigned int request_order,
+				 unsigned int alloc_flags, int migratetype)
+{
+	struct page *page;
+	int alloc_order;
+	int i;
+
+	lockdep_assert_irqs_enabled();
+
+	if (!(alloc_flags & ALLOC_ASI_UNMAP))
+		return NULL;
+
+	VM_WARN_ON_ONCE(migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE);
+
+	/*
+	 * Need to unmap a whole pageblock (otherwise it might require
+	 * allocating pagetables). Can't do that with the zone lock held, but we
+	 * also can't flip the block's migratetype until the flush is complete,
+	 * otherwise any concurrent sensitive allocations could momentarily leak
+	 * data into the restricted address space. As a simple workaround,
+	 * "allocate" at least the whole block, unmap it (with IRQs enabled),
+	 * then free any remainder of the block again.
+	 *
+	 * An alternative to this could be to synchronize an intermediate state
+	 * on the pageblock (since since this code can't be called in an IRQ,
+	 * this shouldn't be too bad - it's likely OK to just busy-wait until
+	 * any conurrent TLB flush completes.).
+	 */
+
+	alloc_order = max(request_order, pageblock_order);
+	spin_lock_irq(&zone->lock);
+	page = __rmqueue_smallest(zone, alloc_order, MIGRATE_UNMOVABLE_NONSENSITIVE);
+	spin_unlock_irq(&zone->lock);
+	if (!page)
+		return NULL;
+
+	asi_unmap(page, 1 << alloc_order);
+
+	change_pageblock_range(page, alloc_order, migratetype);
+
+	if (request_order >= alloc_order)
+		return page;
+
+	spin_lock_irq(&zone->lock);
+	for (i = request_order; i < alloc_order; i++) {
+		struct page *page_to_free = page + (1 << i);
+
+		__free_one_page(page_to_free, page_to_pfn(page_to_free), zone, i,
+			migratetype, FPI_SKIP_REPORT_NOTIFY);
+	}
+	spin_unlock_irq(&zone->lock);
+
+	return page;
+}
+#else
+static inline
+struct page *__rmqueue_asi_unmap(struct zone *zone, unsigned int order,
+				unsigned int alloc_flags, int migratetype)
+{
+	return NULL;
+}
+#endif
+
+static noinline
 struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			   unsigned int order, unsigned int alloc_flags,
 			   int migratetype)
@@ -3036,13 +3107,14 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			 */
 			if (!page && (alloc_flags & (ALLOC_OOM|ALLOC_NON_BLOCK)))
 				page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
-
-			if (!page) {
-				spin_unlock_irqrestore(&zone->lock, flags);
-				return NULL;
-			}
 		}
 		spin_unlock_irqrestore(&zone->lock, flags);
+
+		if (!page)
+			page = __rmqueue_asi_unmap(zone, order, alloc_flags, migratetype);
+
+		if (!page)
+			return NULL;
 	} while (check_new_pages(page, order));
 
 	__count_zid_vm_events(PGALLOC, page_zonenum(page), 1 << order);
@@ -3571,6 +3643,8 @@ static inline unsigned int gfp_to_alloc_flags_cma(gfp_t gfp_mask,
 	if (gfp_migratetype(gfp_mask) == MIGRATE_MOVABLE)
 		alloc_flags |= ALLOC_CMA;
 #endif
+	if (gfp_mask & __GFP_SENSITIVE && gfpflags_allow_blocking(gfp_mask))
+		alloc_flags |= ALLOC_ASI_UNMAP;
 	return alloc_flags;
 }
 
@@ -4614,7 +4688,7 @@ retry:
 	reserve_flags = __gfp_pfmemalloc_flags(gfp_mask);
 	if (reserve_flags)
 		alloc_flags = gfp_to_alloc_flags_cma(gfp_mask, reserve_flags) |
-					  (alloc_flags & ALLOC_KSWAPD);
+					  (alloc_flags & (ALLOC_KSWAPD | ALLOC_ASI_UNMAP));
 
 	/*
 	 * Reset the nodemask and zonelist iterators if memory policies can be

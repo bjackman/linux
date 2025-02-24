@@ -1268,6 +1268,11 @@ unsigned int reclaim_clean_pages_from_list(struct zone *zone,
 #define ALLOC_HIGHATOMIC	0x200 /* Allows access to MIGRATE_HIGHATOMIC */
 #define ALLOC_TRYLOCK		0x400 /* Only use spin_trylock in allocation path */
 #define ALLOC_KSWAPD		0x800 /* allow waking of kswapd, __GFP_KSWAPD_RECLAIM set */
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+#define ALLOC_ASI_UNMAP	       0x1000 /* allow asi_unmap(), requiring TLB shootdown. */
+#else
+#define ALLOC_ASI_UNMAP		0x0
+#endif
 
 /* Flags that allow allocations below the min watermark. */
 #define ALLOC_RESERVES (ALLOC_NON_BLOCK|ALLOC_MIN_RESERVE|ALLOC_HIGHATOMIC|ALLOC_OOM)
