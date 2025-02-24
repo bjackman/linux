@@ -423,8 +423,9 @@ void set_pfnblock_flags_mask(struct page *page, unsigned long flags,
 void set_pageblock_migratetype(struct page *page, int migratetype)
 {
 	if (unlikely(page_group_by_mobility_disabled &&
-		     migratetype < MIGRATE_PCPTYPES))
-		migratetype = MIGRATE_UNMOVABLE;
+		     migratetype < MIGRATE_PCPTYPES &&
+		     migratetype != MIGRATE_UNMOVABLE_NONSENSITIVE))
+		migratetype = MIGRATE_UNMOVABLE_SENSITIVE;
 
 	set_pfnblock_flags_mask(page, (unsigned long)migratetype,
 				page_to_pfn(page), MIGRATETYPE_MASK);
@@ -1763,10 +1764,14 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
  *
  * The other migratetypes do not have fallbacks.
  */
-static int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
-	[MIGRATE_UNMOVABLE]   = { MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE   },
-	[MIGRATE_MOVABLE]     = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE },
-	[MIGRATE_RECLAIMABLE] = { MIGRATE_UNMOVABLE,   MIGRATE_MOVABLE   },
+static const int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
+	[MIGRATE_UNMOVABLE_SENSITIVE]    = { MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE   },
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	/* TODO: Cannot fallback from nonsensitive */
+	[MIGRATE_UNMOVABLE_NONSENSITIVE] = { -1 },
+#endif
+	[MIGRATE_MOVABLE]                = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE_SENSITIVE },
+	[MIGRATE_RECLAIMABLE]            = { MIGRATE_UNMOVABLE_SENSITIVE,   MIGRATE_MOVABLE   },
 };
 
 #ifdef CONFIG_CMA
@@ -2046,7 +2051,7 @@ static bool should_try_claim_block(unsigned int order, int start_mt)
 	 * allocation size. Later movable allocations can always steal from this
 	 * block, which is less problematic.
 	 */
-	if (start_mt == MIGRATE_RECLAIMABLE || start_mt == MIGRATE_UNMOVABLE)
+	if (start_mt == MIGRATE_RECLAIMABLE || is_migrate_unmovable(start_mt))
 		return true;
 
 	if (page_group_by_mobility_disabled)
@@ -2081,6 +2086,9 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
 
 	for (i = 0; i < MIGRATE_PCPTYPES - 1 ; i++) {
 		int fallback_mt = fallbacks[migratetype][i];
+
+		if (fallback_mt < 0)
+			return fallback_mt;
 
 		if (!free_area_empty(area, fallback_mt))
 			return fallback_mt;

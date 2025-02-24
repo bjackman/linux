@@ -62,7 +62,19 @@
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
 enum migratetype {
-	MIGRATE_UNMOVABLE,
+	/*
+	 * All movable pages are sensitive for ASI. Unmovable pages might be
+	 * either; the migratetype reflects whether they are mapped into the
+	 * global-nonsensitive address space.
+	 *
+	 * TODO: what about HIGHATOMIC/RECLAIMABLE?
+	 */
+	MIGRATE_UNMOVABLE_SENSITIVE,
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	MIGRATE_UNMOVABLE_NONSENSITIVE,
+#else
+	MIGRATE_UNMOVABLE_NONSENSITIVE = MIGRATE_UNMOVABLE_SENSITIVE,
+#endif
 	MIGRATE_MOVABLE,
 	MIGRATE_RECLAIMABLE,
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
@@ -103,6 +115,11 @@ extern const char * const migratetype_names[MIGRATE_TYPES];
 static inline bool is_migrate_movable(int mt)
 {
 	return is_migrate_cma(mt) || mt == MIGRATE_MOVABLE;
+}
+
+static inline bool is_migrate_unmovable(int mt)
+{
+	return mt == MIGRATE_UNMOVABLE_SENSITIVE || mt == MIGRATE_UNMOVABLE_NONSENSITIVE;
 }
 
 /*
