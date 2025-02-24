@@ -6518,10 +6518,10 @@ static int __alloc_contig_verify_gfp_mask(gfp_t gfp_mask, gfp_t *gfp_cc_mask)
 		      __GFP_HARDWALL | __GFP_THISNODE | __GFP_MOVABLE);
 
 	/*
-	 * We only support most reclaim flags (but not NOFAIL/NORETRY), and
-	 * selected action flags.
+	 * We only support most reclaim flags (but not NOFAIL/NORETRY),
+	 * selected action flags, and ASI sensitivity flags.
 	 */
-	if (gfp_mask & ~(reclaim_mask | action_mask))
+	if (gfp_mask & ~(reclaim_mask | action_mask | __GFP_SENSITIVE))
 		return -EINVAL;
 
 	/*
