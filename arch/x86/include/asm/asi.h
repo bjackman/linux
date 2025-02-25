@@ -2,7 +2,12 @@
 #ifndef _ASM_X86_ASI_H
 #define _ASM_X86_ASI_H
 
+#include <linux/align.h>
+#include <linux/mm.h>
+#include <linux/mmdebug.h>
+
 #include <asm/pgtable_types.h>
+#include <asm/set_memory.h>
 
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 

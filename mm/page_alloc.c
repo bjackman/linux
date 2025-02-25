@@ -15,6 +15,7 @@
  *          (lots of bits borrowed from Ingo Molnar & Andrew Morton)
  */
 
+#include <linux/asi.h>
 #include <linux/stddef.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
@@ -426,6 +427,18 @@ void set_pageblock_migratetype(struct page *page, int migratetype)
 		     migratetype < MIGRATE_PCPTYPES &&
 		     migratetype != MIGRATE_UNMOVABLE_NONSENSITIVE))
 		migratetype = MIGRATE_UNMOVABLE_SENSITIVE;
+
+	/*
+	 * TODO: doing this here makes this code pretty confusing, since in the
+	 * asi_unmap() case it's up to the caller. Need to find a way to express
+	 * this with more symmetry.
+	 *
+	 * TODO: Also need to ensure the pages have been zeroed since they were
+	 * last in userspace. Need to figure out how to do that without too much
+	 * cost.
+	 */
+	if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE)
+		asi_map(page, pageblock_nr_pages);
 
 	set_pfnblock_flags_mask(page, (unsigned long)migratetype,
 				page_to_pfn(page), MIGRATETYPE_MASK);
@@ -1759,19 +1772,35 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 
 
 /*
- * This array describes the order lists are fallen back to when
- * the free lists for the desirable migrate type are depleted
+ * This array describes the order lists are fallen back to when the free lists
+ * for the desirable migrate type are depleted. When ASI is enabled, different
+ * migratetypes have different numbers of fallbacks available, in that case the
+ * arrays are terminated early by -1.
  *
  * The other migratetypes do not have fallbacks.
+ *
+ * Note there are no fallbacks from sensitive to nonsensitive migratetypes.
  */
-static const int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
-	[MIGRATE_UNMOVABLE_SENSITIVE]    = { MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE   },
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
-	/* TODO: Cannot fallback from nonsensitive */
-	[MIGRATE_UNMOVABLE_NONSENSITIVE] = { -1 },
+#define TERMINATE_FALLBACK -1
+#else
+#define TERMINATE_FALLBACK
 #endif
-	[MIGRATE_MOVABLE]                = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE_SENSITIVE },
-	[MIGRATE_RECLAIMABLE]            = { MIGRATE_UNMOVABLE_SENSITIVE,   MIGRATE_MOVABLE   },
+static const int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
+	[MIGRATE_UNMOVABLE_SENSITIVE]    = {
+		MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE, TERMINATE_FALLBACK
+	},
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	[MIGRATE_UNMOVABLE_NONSENSITIVE] = {
+		MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE
+	},
+#endif
+	[MIGRATE_MOVABLE] = {
+		MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE_SENSITIVE, TERMINATE_FALLBACK
+	},
+	[MIGRATE_RECLAIMABLE] = {
+		MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_MOVABLE, TERMINATE_FALLBACK
+	},
 };
 
 #ifdef CONFIG_CMA
@@ -2082,6 +2111,21 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
 		return -2;
 
 	if (area->nr_free == 0)
+		return -1;
+
+	/*
+	 * It's not possible to  change the sensitivity of individual pages,
+	 * only an entire pageblock. Thus, we can only fallback to a migratetype
+	 * of a different sensitivity when the entire block is free.
+	 *
+	 * This cross-sensitivity fallback occurs exactly when the start
+	 * migratetype is MIGRATE_UNMOVABLE_NONSENSITIVE. This is because it's
+	 * the only nonsensitive migratetype (so if it's the start type, a
+	 * fallback will always differ in sensitivity) and it doesn't appear in
+	 * the 'fallbacks' arrays (i.e. we never fall back to it, so if it isn't
+	 * the start type, the fallback will never differ in sensitivity).
+	 */
+	if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE && order < pageblock_order)
 		return -1;
 
 	for (i = 0; i < MIGRATE_PCPTYPES - 1 ; i++) {
@@ -4913,7 +4957,6 @@ retry_this_zone:
 
 out:
 	return nr_populated;
-
 failed_irq:
 	pcp_trylock_finish(UP_flags);
 
@@ -4935,13 +4978,6 @@ struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
-
-	/*
-	 * Temporary hack: Allocation of nonsensitive pages is not possible yet,
-	 * allocate everything sensitive. The restricted address space is never
-	 * actually entered yet so this is fine.
-	 */
-	gfp |= __GFP_SENSITIVE;
 
 	/*
 	 * There are several places where we assume that the order value is sane

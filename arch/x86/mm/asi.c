@@ -8,6 +8,7 @@
 #include <linux/vmalloc.h>
 
 #include <asm/asi.h>
+#include <asm/pgtable.h>
 #include <asm/traps.h>
 
 static __aligned(PAGE_SIZE) pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
@@ -55,13 +56,49 @@ void asi_map(struct page *page, int numpages)
 			continue;
 
 		/*
-		 * Existing mappings should already match the structure of the
-		 * unrestricted physmap.
+		 * If the unrestricted physmap is finer-grained than the
+		 * restricted one this is another reason why we'd need to split
+		 * up pages.
 		 */
-		if (WARN_ON_ONCE(level != level_asi))
+		if (WARN_ONCE(level < level_asi,
+		    "ASI mapping at level %d, unrestricted at %d\n",
+		    level_asi, level))
 			continue;
 
-		set_pte(pte_asi, *pte);
+		if (level == level_asi) {
+			set_pte(pte_asi, *pte);
+		} else {
+			pud_t *pud = (pud_t *)pte;
+			pgprot_t prot = pud_pgprot(*pud);
+			pmd_t pmd;
+
+			/*
+			 * TODO: This needs a more careful and flexible
+			 * implementation. It would be nice to do this without
+			 * needing a fully generic pagetable manipulation API,
+			 * maybe if I took the time to actually understand the
+			 * structure of the different pagetable levels I would
+			 * be able to see an obvious way to do it.
+			 * It also needs to be less duplicated wrt set_memory.c.
+			 */
+			WARN_ONCE(level_asi != PG_LEVEL_2M, "level %d", level_asi);
+			WARN_ONCE(level != PG_LEVEL_1G, "level %d\n", level);
+
+			/*
+			 * Clear the PSE flags if the PRESENT flag is not set
+			 * otherwise pmd_present() will return true even on a
+			 * non present pmd.
+			 */
+			if (!(pgprot_val(prot) & _PAGE_PRESENT))
+				pgprot_val(prot) &= ~_PAGE_PSE;
+
+			/*
+			 * TODO: Do we need to drop/move bits to change levels
+			 * here? See protval_large_2_4k
+			 */
+			pmd = pfn_pmd(page_to_pfn(virt_to_page(virt)), prot);
+			set_pmd((pmd_t *)pte_asi, pmd);
+		}
 	}
 }
 
