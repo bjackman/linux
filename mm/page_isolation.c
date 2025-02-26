@@ -3,6 +3,7 @@
  * linux/mm/page_isolation.c
  */
 
+#include <linux/asi.h>
 #include <linux/mm.h>
 #include <linux/page-isolation.h>
 #include <linux/pageblock-flags.h>
@@ -187,6 +188,14 @@ static int set_migratetype_isolate(struct page *page, int migratetype, int isol_
 		}
 		zone->nr_isolate_pageblock++;
 		spin_unlock_irqrestore(&zone->lock, flags);
+
+		/*
+		 * Even if the whole block was free, its type might have been
+		 * MIGRATE_UNMOVABLE_NONSENSITIVE which would mean it's mapped
+		 * in the restricted address space. Need to unmap it to make
+		 * MIGRATE_ISOLATE accurate.
+		 */
+		asi_unmap(page, pageblock_nr_pages);
 		return 0;
 	}
 

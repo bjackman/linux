@@ -6549,6 +6549,14 @@ int alloc_contig_range_noprof(unsigned long start, unsigned long end,
 		return -EINVAL;
 
 	/*
+	 * Caller needs to ensure the migratetype and GFP flags are consistent
+	 * wrt sensitivity.
+	 */
+	if (WARN_ON(!(gfp_mask & __GFP_SENSITIVE) !=
+		    (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE)))
+		return -EINVAL;
+
+	/*
 	 * What we do here is we mark all pageblocks in range as
 	 * MIGRATE_ISOLATE.  Because pageblock and max order pages may
 	 * have different sizes, and due to the way page allocator
@@ -6572,6 +6580,11 @@ int alloc_contig_range_noprof(unsigned long start, unsigned long end,
 	ret = start_isolate_page_range(start, end, migratetype, 0);
 	if (ret)
 		goto done;
+
+	/*
+	 * Now all pageblocks are MIGRATE_ISOLATE. We also know that none of the
+	 * range is mapped in the restricted address space.
+	 */
 
 	drain_all_pages(cc.zone);
 
