@@ -20,11 +20,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: github/linus/master
 
-      - name: Pull and merge kernel branch
+      - name: Pull from kernel tree
         run: |
           # Using the Github mirror is probably more efficient
           git remote add linus https://github.com/torvalds/linux.git
           git fetch linus
+
+      - name: Merge kernel branch
+        run: |
           git merge linus/master
 
       - name: Merge GitHub Actions config
