@@ -21,7 +21,7 @@ jobs:
         run: |
           # Using the Github mirror is probably more efficient
           git remote add linus https://github.com/torvalds/linux.git
-          git fetch --verbose --depth=1 linus
+          git fetch linus
 
       - name: Merge kernel branch
         run: |
