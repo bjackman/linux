@@ -28,7 +28,7 @@ jobs:
 
       - name: Merge kernel branch
         run: |
-          git merge linus/master
+          git merge linus/master --no-edit
 
       - name: Merge GitHub Actions config
         run: |
