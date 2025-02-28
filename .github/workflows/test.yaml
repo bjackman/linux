@@ -13,10 +13,8 @@ jobs:
   build-rootfs:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code with submodules
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Install mkosi
         id: apt-mkosi
@@ -38,10 +36,8 @@ jobs:
   build-kernel:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code with submodules
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Install apt packages for kernel build
         run: |
@@ -71,11 +67,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kernel.tgz
-
-      - name: Download kselftests artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kselftests.tgz
 
       - name: Install runtime dependencies
         id: apt-vng
