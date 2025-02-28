@@ -28,12 +28,15 @@ jobs:
         run: |
           git merge linus/master --no-edit
 
-      - name: Merge GitHub Actions config
-        run: |
-          git merge github-base
-
-      - name: Commit and push if changed
+      - name: Configure git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git diff --quiet && git diff --staged --quiet || (git commit -am "Update kernel to latest master" && git push)
+
+      - name: Merge GitHub Actions config
+        run: |
+          git merge --no-edit origin/github-base
+
+      - name: Commit and push if changed
+        run: |
+          git push
