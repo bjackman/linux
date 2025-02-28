@@ -68,11 +68,6 @@ jobs:
         with:
           name: kernel.tgz
 
-      - name: Download kselftests artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kselftests.tgz
-
       - name: Install runtime dependencies
         id: apt-vng
         run: |
