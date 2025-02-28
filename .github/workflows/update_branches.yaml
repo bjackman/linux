@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: "0 0 * * *" # Nightly
   workflow_dispatch: # Allows manual triggering
-  push:
-    branches:
-      - github-base
 
 
 jobs:
