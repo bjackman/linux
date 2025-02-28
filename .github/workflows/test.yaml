@@ -2,6 +2,7 @@ on:
   push:
     branches:
       - github/linus/master
+      - github/akpm-mm/mm-stable
 
 # TODO: Run build steps in parallel?
 # TODO: Nice way to reproduce.
