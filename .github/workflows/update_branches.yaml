@@ -28,7 +28,8 @@ jobs:
           # https://github.com/actions/checkout/issues/659 - need to check out
           # the branch explicitly, if you specify it in actions/checkout Github
           # just behaves idiotically.
-          git checkout github/linus/master
+          git fetch
+          git checkout origin/github/linus/master
           git merge linus/master --no-edit
 
       - name: Merge GitHub Actions config
