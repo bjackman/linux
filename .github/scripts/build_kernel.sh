@@ -24,8 +24,8 @@ ln -s vmlinuz-$(make kernelrelease) kernel-build/vmlinuz
 
 # -static is a simple way to workaround differences in the shared
 # library environment between host & guest.
-make -j $(( $(nproc) * 2 )) -C linux/tools/testing/selftests \
-    TARGETS=mm KDIR=$PWD EXTRA_CFLAGS=-static INSTALL_PATH=kernel-build/kselftests install
+make -j $(( $(nproc) * 2 )) -C tools/testing/selftests \
+    TARGETS=mm KDIR=$PWD EXTRA_CFLAGS=-static INSTALL_PATH=$PWD/kernel-build/kselftests install
 
 # Github breaks file permissions so tar everything up
 tar czf kernel.tgz -C kernel-build .
