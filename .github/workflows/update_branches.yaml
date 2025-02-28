@@ -16,6 +16,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: github/linus/master
+          fetch-depth: 0
 
       - name: Pull from kernel tree
         run: |
