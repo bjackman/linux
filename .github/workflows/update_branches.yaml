@@ -15,17 +15,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: github/linus/master
           fetch-depth: 0
 
-      - name: Pull from kernel tree
-        run: |
+      - name: Update branches
+        run: .github/scripts/update_branches.sh
+
           # Using the Github mirror is probably more efficient
           git remote add linus https://github.com/torvalds/linux.git
-          git fetch linus
+          git remote add akpm-mm https://git.kernel.org/pub/scm/linux/kernel/git/akpm/mm.git
+          git fetch
 
-      - name: Merge kernel branch
+      - name: Merge linus/master
         run: |
+          git checkout github/linus/master
+          git merge linus/master --no-edit
+
+      - name: Merge mm-stable
+        run: |
+          git checkout github/akpm-mm/mm-stable
           git merge linus/master --no-edit
 
       - name: Configure git
