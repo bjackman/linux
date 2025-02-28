@@ -23,7 +23,7 @@ jobs:
       - name: Pull and merge kernel branch
         run: |
           # Using the Github mirror is probably more efficient
-          git submodule add linus git@github.com:torvalds/linux.git
+          git remote add linus git@github.com:torvalds/linux.git
           git fetch linus
           git merge linus/master
 
