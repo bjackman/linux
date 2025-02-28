@@ -1,0 +1,38 @@
+name: Update kernel branches
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # Nightly
+  workflow_dispatch: # Allows manual triggering
+
+
+jobs:
+  update-branches:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: github/linus/master
+
+      - name: Pull from kernel tree
+        run: |
+          # Using the Github mirror is probably more efficient
+          git remote add linus https://github.com/torvalds/linux.git
+          git fetch --verbose --depth=1 linus
+
+      - name: Merge kernel branch
+        run: |
+          git merge linus/master --no-edit
+
+      - name: Merge GitHub Actions config
+        run: |
+          git merge github-base
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet && git diff --staged --quiet || (git commit -am "Update kernel to latest master" && git push)

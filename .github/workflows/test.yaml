@@ -1,0 +1,92 @@
+on:
+  push:
+    branches:
+      - github/linus/master
+
+# TODO: Run build steps in parallel?
+# TODO: Nice way to reproduce.
+# TODO: Document how everything fits together.
+# TODO: Add more tests.
+# TODO: Parse KTAP and display something more readable using `$GITHUB_STEP_SUMMARY`.
+name: Linux mm selftests in virtme-ng
+jobs:
+  build-rootfs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install mkosi
+        id: apt-mkosi
+        run: |
+          sudo apt update && sudo apt install apparmor debian-archive-keyring
+          pipx install git+https://github.com/systemd/mkosi.git
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build rootfs
+        run: mkosi -C .github/scripts/rootfs --output-directory=$PWD
+
+      - name: Upload rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image.tar.zst
+          path: image.tar.zst
+
+  build-kernel:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install apt packages for kernel build
+        run: |
+          sudo apt update && sudo apt install \
+            build-essential ncurses-dev xz-utils libssl-dev bc flex libelf-dev bison virtme-ng
+
+      - name: Build kernel + kselftests
+        run: .github/scripts/build_kernel.sh
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel.tgz
+          path: kernel.tgz
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: [build-rootfs, build-kernel]
+    steps:
+      - name: Download rootfs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image.tar.zst
+
+      - name: Download kernel + kselftests
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel.tgz
+
+      - name: Download kselftests artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kselftests.tgz
+
+      - name: Install runtime dependencies
+        id: apt-vng
+        run: |
+          sudo apt update && sudo apt install \
+            qemu-kvm udev iproute2 qemu-system-x86 python3-requests \
+            coreutils libvirt-clients kbd kmod file rsync zstd udev virtme-ng
+
+      - name: Disable AppArmor noise
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Run selftests via virtme-ng
+        run: .github/scripts/test.sh
