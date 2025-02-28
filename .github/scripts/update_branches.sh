@@ -10,7 +10,7 @@ if ! git remote | grep '^linus$'; then
     git remote add linus https://github.com/torvalds/linux.git
 fi
 
-git fetch
+git fetch --all
 
 for upstream_branch in linus/master akpm-mm/mm-stable; do
     git checkout github/$upstream_branch
