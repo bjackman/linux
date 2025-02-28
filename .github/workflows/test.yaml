@@ -58,6 +58,13 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [build-rootfs, build-kernel]
     steps:
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/
+
       - name: Download rootfs artifact
         uses: actions/download-artifact@v4
         with:
