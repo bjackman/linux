@@ -28,6 +28,9 @@ jobs:
 
       - name: Merge kernel branch
         run: |
+          # https://github.com/actions/checkout/issues/659 - need to check out
+          # the branch even though we specified it above.
+          git checkout github/linus/master
           git merge linus/master --no-edit
 
       - name: Merge GitHub Actions config
