@@ -31,7 +31,7 @@ TODO:
 - [ ] Automate running tests regularly (I don't think the automated push to the
       shadow branches fires the `push` trigger in GHA, as a simple way to avoid
       recursive triggering).
-- [ ] Run tests on unstable branches like -next. This will require logic to rebase.
+- [x] Run tests on unstable branches like -next. This will require logic to rebase.
 - [ ] Figure out a way to make test results readable.
 
       I looked into trying to parse the `mm` selftests
