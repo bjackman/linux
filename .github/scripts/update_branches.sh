@@ -2,13 +2,17 @@
 
 set -eux
 
-if ! git remote | grep '^akpm-mm$'; then
-    git remote add akpm-mm https://git.kernel.org/pub/scm/linux/kernel/git/akpm/mm.git
-fi
+declare -A REMOTES
+REMOTES=(
+    ["akpm-mm"]="https://git.kernel.org/pub/scm/linux/kernel/git/akpm/mm.git"
+    ["linus"]="https://github.com/torvalds/linux.git"
+)
 
-if ! git remote | grep '^linus$'; then
-    git remote add linus https://github.com/torvalds/linux.git
-fi
+for remote in "${!REMOTES[@]}"; do
+    if ! git remote | grep "^${remote}$"; then
+        git remote add "$remote" "${REMOTES["$remote"]}"
+    fi
+done
 
 git fetch --all
 
