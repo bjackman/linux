@@ -16,9 +16,20 @@ done
 
 git fetch --all
 
-for upstream_branch in linus/master akpm-mm/mm-stable; do
-    git checkout github/$upstream_branch
-    git merge --no-edit $upstream_branch
+declare -A BRANCHES
+BRANCHES=(
+    ["linus/master"]=merge
+    ["akpm-mm/mm-stable"]=merge
+)
+
+for upstream_branch in "${!BRANCHES[@]}"; do
+    git checkout "github/$upstream_branch"
+    if [[ "${BRANCHES["$upstream_branch"]}" = merge ]]; then
+        git merge --no-edit "$upstream_branch"
+    else
+        echo "Invalid branch setting '${BRANCHES["$upstream_branch"]}' for $upstream_branch, must be 'merge'"
+        exit 1
+    fi
     git merge --no-edit github-base
-    git push origin github/$upstream_branch:github/$upstream_branch
+    git push origin "github/$upstream_branch:github/$upstream_branch"
 done
