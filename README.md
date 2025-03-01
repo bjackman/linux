@@ -33,4 +33,34 @@ TODO:
       recursive triggering).
 - [ ] Run tests on unstable branches like -next. This will require logic to rebase.
 - [ ] Figure out a way to make test results readable.
+
+      I looked into trying to parse the `mm` selftests
+      [KTAP](https://docs.kernel.org/dev-tools/ktap.html#test-case-result-lines).
+      I found that:
+
+      - There is an open source Python library called
+        [Tappy](https://github.com/pwcazenave/tappy), it cannot parse this data.
+        It may be partly because the data is bogus but it also handles it
+        poorly, e.g. it gets confused about seeing "Tap Version 13" lines even
+        when they are prefixed with `#`. It also has a wack API, so I think it's
+        probably just quite a bad library.
+
+      - There is a KTAP parser provided with `kunit.py`. When given the outpout
+        of my script (which, admittedly, is a bit tricky because it runs
+        `run_vmtests.sh` in a loop), it gets into an infinite loop.
+
+      - I noticed that one issue is that `run_vmtests.sh` does not produce valid
+        KTAP, it puts the 1..N line at the end instead of at the beginning,
+        maybe this is why `kunit.py` falls over.
+
+      So I guess before we do anything else here we probably do need a parser
+      for KTAP that isn't broken. So I guess the plan would be:
+
+      - [ ] Fix `kunit.py` to not go into infinite loops.
+      - [ ] Fix the `KTAP` outpuit from `run_vmtests.sh`.
+      - [ ] Try parsing fixed KTAP and show it in some readable format.
+
+      Note also that `run_vmtests.sh` doesn't use KTAP's nesting feature which
+      is a shame.
+
 - [ ] Figure out a way to make failures easy to reproduce locally.
