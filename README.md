@@ -62,5 +62,16 @@ TODO:
 
       Note also that `run_vmtests.sh` doesn't use KTAP's nesting feature which
       is a shame.
-
 - [ ] Figure out a way to make failures easy to reproduce locally.
+- Improvements to kernel scripts:
+  - [ ] Fix bug where `tools/testing/kunit.py parse` goes into an infinite loop
+        on this input:
+
+        ```
+        TAP version 13
+        ok 4 gup_longterm
+        1..4
+        ```
+
+  - [ ] Fix bug where `run_vmtests.sh` puts the plan line in the wrong place
+        (i.e. produces output like the one above).
