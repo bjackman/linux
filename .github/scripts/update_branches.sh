@@ -50,6 +50,7 @@ for upstream_branch in "${!BRANCHES[@]}"; do
     if [[ "$mode" = merge ]]; then
         git merge --no-edit "$upstream_branch"
         git merge --no-edit github-base
+        git push origin "github/$upstream_branch:github/$upstream_branch"
     elif [[ "$mode" = rebase ]]; then
         # This is called "rebase" because even though we don't invoke "git
         # rebase", we're "rebasing the merge commit of github-base onto the
@@ -59,11 +60,11 @@ for upstream_branch in "${!BRANCHES[@]}"; do
         # merge commits).
         git reset --hard "$upstream_branch"
         git merge --no-edit github-base --allow-unrelated-histories
+        git push --force origin "github/$upstream_branch:github/$upstream_branch"
     else
         echo "Invalid branch setting '$mode' for $upstream_branch, must be 'merge' or 'rebase'"
         exit 1
     fi
 
     # Now merge in github-base and we're done.
-    git push origin "github/$upstream_branch:github/$upstream_branch"
 done
