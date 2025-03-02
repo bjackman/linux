@@ -35,7 +35,7 @@ unshare -r vng --verbose \
 # the "1..N") at the end instead of at the beginning. And there's a bug in
 # kunit.py where that causes it to infinite loop. Work around by just removing
 # the (optional) plan line.
-grep -vE '^[0-9]+..[0-9]+$' guest.log | tools/testing/kunit/kunit.py parse  --json=summary.json >/dev/null || true
+grep -vE '^[0-9]+..[0-9]+$' guest.log | python3 tools/testing/kunit/kunit.py parse  --json=summary.json >/dev/null || true
 
 # ChatGPT magic to convert the JSON summary into Markdown
 jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]' summary.json \
