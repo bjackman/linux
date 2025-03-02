@@ -1,0 +1,26 @@
+name: Update kernel branches
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # Nightly
+  workflow_dispatch: # Allows manual triggering
+
+
+jobs:
+  update-branches:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update branches
+        run: .github/scripts/update_branches.sh
