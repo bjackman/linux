@@ -10,6 +10,7 @@ mkdir -p kernel-build
 vng --kconfig
 # Configure stuff needed by mm selftests
 scripts/config -e GUP_TEST -e USERFAULTFD
+make olddefconfig
 # Build kernel
 make -s -j $(( $(nproc) * 2 ))
 
