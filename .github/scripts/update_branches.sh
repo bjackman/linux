@@ -66,6 +66,4 @@ for upstream_branch in "${!BRANCHES[@]}"; do
         echo "Invalid branch setting '$mode' for $upstream_branch, must be 'merge' or 'rebase'"
         exit 1
     fi
-
-    # Now merge in github-base and we're done.
 done
