@@ -5,10 +5,14 @@
 set -eux -o pipefail
 
 mkdir -p kernel-build
-# Dunno how to point vng to the kernel tree so just cd in a subshell.
+
+# Configure stuff to boot in virtme-ng
 vng --kconfig
+# Configure stuff needed by mm selftests
+scripts/config -e GUP_TEST -e USERFAULTFD
 # Build kernel
 make -s -j $(( $(nproc) * 2 ))
+
 # Just extract the important bits, Github is dumb and will copy the whole
 # artifact between jobs every time which takes minutes if you include the whole
 # build result.
