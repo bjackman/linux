@@ -37,8 +37,9 @@ BRANCHES=(
 )
 
 for upstream_branch in "${!BRANCHES[@]}"; do
-    # If the branch exists, check it out, otherwise create it
-    if git branch | grep -q "$upstream_branch"; then
+    # If the branch exists (in origin), check it out, otherwise create it
+    if git branch -a | grep -q "\(origin/\)\?github/$upstream_branch"; then
+        # This will create the local branch if it doesn't already exist
         git checkout "github/$upstream_branch"
     else
         git checkout -b "github/$upstream_branch" "$upstream_branch"
