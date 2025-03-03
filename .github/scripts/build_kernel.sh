@@ -12,7 +12,7 @@ vng --kconfig
 scripts/config -e GUP_TEST -e USERFAULTFD
 make olddefconfig
 # Build kernel
-make -s -j $(( $(nproc) * 2 ))
+make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
 
 # Just extract the important bits, Github is dumb and will copy the whole
 # artifact between jobs every time which takes minutes if you include the whole
