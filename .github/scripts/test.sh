@@ -16,7 +16,7 @@ cp $(dirname "$0")/test.guest.sh kernel-build/kselftests
 
 unshare -r vng --verbose \
     --root image --user root --run kernel-build/vmlinuz \
-    --rwdir=/mnt=kernel-build/kselftests -- \
+    --rwdir=/mnt=kernel-build/kselftests --cpus 4 -- \
         "cd /mnt; ./test.guest.sh" | tee guest.log
 
 # Hack: Use kunit.py to parse the TAP output so we can generate something a bit
