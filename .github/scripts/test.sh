@@ -14,6 +14,7 @@ tar -C kernel-build  -zxf kernel.tgz
 # Dumb hack to get the script into the guest.
 cp $(dirname "$0")/test.guest.sh kernel-build/kselftests
 
+# If you change this, please also update bisect_helper.sh
 unshare -r vng --verbose \
     --root image --user root --run kernel-build/vmlinuz \
     --rwdir=/mnt=kernel-build/kselftests --cpus 4 -- \
