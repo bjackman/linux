@@ -80,3 +80,5 @@ I found that:
 
 Note also that `run_vmtests.sh` doesn't use KTAP's nesting feature which
 is a shame.
+
+Broonie pointed me here: https://github.com/Linaro/test-definitions/tree/master/automated/linux/kselftest
