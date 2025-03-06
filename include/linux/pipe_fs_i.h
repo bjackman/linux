@@ -65,6 +65,7 @@ union pipe_index {
  *	@wr_wait: writer wait point in case of full pipe
  *	@head: The point of buffer production
  *	@tail: The point of buffer consumption
+ *	@head_tail: unsigned long union of @head and @tail
  *	@note_loss: The next read() should insert a data-lost message
  *	@max_usage: The maximum number of slots that may be used in the ring
  *	@ring_size: total number of buffers (should be a power of 2)
@@ -192,7 +193,7 @@ static inline bool pipe_empty(unsigned int head, unsigned int tail)
  */
 static inline unsigned int pipe_occupancy(unsigned int head, unsigned int tail)
 {
-	return head - tail;
+	return (pipe_index_t)(head - tail);
 }
 
 /**
@@ -278,15 +279,6 @@ static inline bool pipe_buf_try_steal(struct pipe_inode_info *pipe,
 	if (!buf->ops->try_steal)
 		return false;
 	return buf->ops->try_steal(pipe, buf);
-}
-
-static inline void pipe_discard_from(struct pipe_inode_info *pipe,
-		unsigned int old_head)
-{
-	unsigned int mask = pipe->ring_size - 1;
-
-	while (pipe->head > old_head)
-		pipe_buf_release(pipe, &pipe->bufs[--pipe->head & mask]);
 }
 
 /* Differs from PIPE_BUF in that PIPE_SIZE is the length of the actual
