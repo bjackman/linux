@@ -286,11 +286,37 @@ const struct sensitivity_test_case sensitivity_test_cases[] = {
 };
 KUNIT_ARRAY_PARAM_DESC(sensitivity, sensitivity_test_cases, desc);
 
+/*
+ * Runs some defensive checks to see if the zone has the expected mappings for
+ * its pageblock types.
+ */
+static void check_pageblock_sensitivities(struct kunit *test, struct zone *zone)
+{
+	unsigned long pfn;
+	unsigned long zone_end_pfn = zone->zone_start_pfn + zone->spanned_pages;
+
+	for (pfn = zone->zone_start_pfn; pfn < zone_end_pfn; pfn += pageblock_nr_pages) {
+		int migratetype = get_pageblock_migratetype(pfn_to_page(pfn));
+		enum asi_mapped_state state =
+			region_asi_state(test, (ulong)__va(pfn << PAGE_SHIFT), pageblock_size);
+
+		if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE)
+			KUNIT_EXPECT_EQ_MSG(test, state, ASI_MAPPED, "pfn %lx not mapped", pfn);
+		else
+			KUNIT_EXPECT_EQ_MSG(test, state, ASI_UNMAPPED, "pfn %lx not unmapped", pfn);
+	}
+}
+
 /* Allocate a page, the sensitivity flag should be respected. */
 static void test_alloc_sensitivity(struct kunit *test)
 {
 	struct sensitivity_test_case *tc = (struct sensitivity_test_case *)test->param_value;
-	struct page *page = alloc_pages_force_nid(test, tc->gfp, tc->order, isolated_node);
+	pg_data_t *node = NODE_DATA(isolated_node);
+	struct page *page;
+
+	check_pageblock_sensitivities(test, &node->node_zones[ZONE_NORMAL]);
+
+	page = alloc_pages_force_nid(test, tc->gfp, tc->order, isolated_node);
 
 	KUNIT_ASSERT_NOT_NULL(test, page);
 
@@ -356,6 +382,8 @@ static void test_alloc_sensitivity_drain(struct kunit *test)
 	size_t node_span = node->node_spanned_pages << PAGE_SHIFT;
 	enum asi_mapped_state want_mapped_opposite;
 	kunit_action_t *free_pages_action;
+
+	check_pageblock_sensitivities(test, &node->node_zones[ZONE_NORMAL]);
 
 	if (tc->want_mapped == ASI_MAPPED)
 		want_mapped_opposite = ASI_UNMAPPED;
