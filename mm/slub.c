@@ -5808,7 +5808,11 @@ static int calculate_sizes(struct kmem_cache_args *args, struct kmem_cache *s)
 		s->allocflags |= GFP_DMA32;
 
 	if (s->flags & SLAB_RECLAIM_ACCOUNT)
-		s->allocflags |= __GFP_RECLAIMABLE;
+		/*
+		 * TODO: Cannot currently allocate reclaimable, nonsensitive
+		 * pages. For the moment, just add __GFP_SENSITIVE.
+		 */
+		s->allocflags |= __GFP_RECLAIMABLE | __GFP_SENSITIVE;
 
 	/*
 	 * Determine the number of objects per slab
