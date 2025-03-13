@@ -11,6 +11,7 @@
 #include <asm/page.h>		/* pgprot_t */
 #include <linux/rbtree.h>
 #include <linux/overflow.h>
+#include <linux/pgtable.h>
 
 #include <asm/vmalloc.h>
 
@@ -337,5 +338,8 @@ bool vmalloc_dump_obj(void *object);
 #else
 static inline bool vmalloc_dump_obj(void *object) { return false; }
 #endif
+
+void vunmap_pgd_range(pgd_t *pgd_table, unsigned long addr, unsigned long end,
+			pgtbl_mod_mask *mask);
 
 #endif /* _LINUX_VMALLOC_H */
