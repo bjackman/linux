@@ -23,6 +23,9 @@ static __always_inline pgd_t *asi_pgd(struct asi *asi)
 	return asi ? asi->pgd : NULL;
 }
 
+void asi_map(struct page *page, int numpages);
+void asi_unmap(struct page *page, int numpages);
+
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
 #endif /* _ASM_X86_ASI_H */
