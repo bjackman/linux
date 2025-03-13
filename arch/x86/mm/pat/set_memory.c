@@ -710,6 +710,40 @@ static inline pgprot_t verify_rwx(pgprot_t old, pgprot_t new, unsigned long star
 }
 
 /*
+ * Lookup the page table entry for a virtual address in a specific pgd. Return
+ * the pointer to the entry, without implying that any mapping actually exists
+ * (the returned value may be zero).
+ */
+pte_t *lookup_pgtable_in_pgd(pgd_t *pgd, unsigned long address, unsigned int *level)
+{
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+
+	*level = PG_LEVEL_256T;
+	if (pgd_none(*pgd))
+		return (pte_t *)pgd;
+
+	*level = PG_LEVEL_512G;
+	p4d = p4d_offset(pgd, address);
+	if (p4d_none(*p4d) || p4d_leaf(*p4d) || !p4d_present(*p4d))
+		return (pte_t *)p4d;
+
+	*level = PG_LEVEL_1G;
+	pud = pud_offset(p4d, address);
+	if (pud_none(*pud) || pud_leaf(*pud) || !pud_present(*pud))
+		return (pte_t *)pud;
+
+	*level = PG_LEVEL_2M;
+	pmd = pmd_offset(pud, address);
+	if (pmd_none(*pmd) || pmd_leaf(*pmd) || !pmd_present(*pmd))
+		return (pte_t *)pmd;
+
+	*level = PG_LEVEL_4K;
+	return pte_offset_kernel(pmd, address);
+}
+
+/*
  * Lookup the page table entry for a virtual address in a specific pgd.
  * Return a pointer to the entry (or NULL if the entry does not exist),
  * the level of the entry, and the effective NX and RW bits of all
