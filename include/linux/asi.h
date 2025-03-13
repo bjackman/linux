@@ -13,6 +13,8 @@
 struct asi {};
 
 static inline pgd_t *asi_pgd(struct asi *asi) { return NULL; }
+static inline void asi_map(struct page *page, int numpages) { }
+static inline void asi_unmap(struct page *page, int numpages) { }
 
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 #endif /* _INCLUDE_ASI_H */
