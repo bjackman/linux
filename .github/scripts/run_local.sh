@@ -15,5 +15,5 @@ mkosi -C "$SCRIPTS_DIR"/rootfs --output-directory=$PWD
 # use "image" as a working directory for the rootfs. This isn't an issue in
 # Github actions because those run in separate jobs so we just don't pass the
 # symlink in the artifacts between jobs.
-rm image
+rm -rf image
 "$SCRIPTS_DIR"/test.sh
