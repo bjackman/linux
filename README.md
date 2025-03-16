@@ -25,9 +25,32 @@ The goal is to keep minimal logic in the GHA YAML and instead put everything in
 shell scripts under `.github/scripts/`, so that to the greatest extent possible
 you can verify the logic locally.
 
-TODO:
+## Reproducing locally
 
-- [ ] Make sure the scripts can actually be run locally and document an example.
+Assuming you have an `apt`-based system, you can run the stuff under
+`.github/scripts` locally. You can either do this by checking out one of this
+repo's "shadow branches" (`github/*`), or you can just checkout `github-base` in
+this repo and then run the scripts from the root of a separate kernel tree.
+
+TODO: The reason for the `apt` dependency is for building the Debian guest
+rootfs. It should be possible to avoid that by running the build in a container,
+but even more practical would just be to provide an easy way to download it from
+the Github artifacts.
+
+`.github/scripts/run_local.sh` is intended to reproduce the whole test workflow
+end-to-end.
+
+`.github/scripts/bisect_helper.sh` is a modified version for when you want to
+run a specific test, presumably to bisect a failure. For example, to just run
+`gup_test`:
+
+```sh
+.github/scripts/bisect_helper.sh "cd mm/; ./run_vmtests.sh -t gup_test"
+```
+
+## TODOs
+
+- [x] Make sure the scripts can actually be run locally and document an example.
 - [ ] Automate running tests regularly (I don't think the automated push to the
       shadow branches fires the `push` trigger in GHA, as a simple way to avoid
       recursive triggering).
@@ -39,7 +62,8 @@ TODO:
 - [ ] Also include skipped tests.
 - [ ] Make the skipped mm tests run
 - [ ] Try to run some more tests in this setup.
-- [ ] Figure out a way to make failures easy to reproduce locally.
+- [ ] Figure out a way to make failures easy to reproduce locally by downloading
+      artifacts.
 - Improvements to kernel scripts:
   - [ ] Fix bug where `tools/testing/kunit.py parse` goes into an infinite loop
         on this input:
@@ -57,7 +81,7 @@ TODO:
   - [ ] Fix the `KTAP` outpuit from `run_vmtests.sh`.
 
 
-### Some notes on KTAP parsing
+## Some notes on KTAP parsing
 
 I looked into trying to parse the `mm` selftests
 [KTAP](https://docs.kernel.org/dev-tools/ktap.html#test-case-result-lines).
