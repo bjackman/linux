@@ -18,6 +18,8 @@ for remote in "${!REMOTES[@]}"; do
     fi
 done
 
+git remote -v
+
 git fetch --all
 
 # Map remote branches to update strategies.

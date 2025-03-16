@@ -19,6 +19,8 @@ jobs:
 
       - name: Configure git
         run: |
+          set -eux
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           # Normally pushing to a branch from an Action doesn't trigger push
