@@ -23,4 +23,11 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Update branches
+        # Normally pushing to a branch from an Action doesn't trigger push
+        # actions.  According to ChatGPT, using a "personal access PAT token"
+        # will change that, so these pushes should trigger the test actions.
+        # I created the PAT through the UI and then copied it into the
+        # "repository secrets" in the UI.
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: .github/scripts/update_branches.sh
