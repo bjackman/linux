@@ -45,7 +45,7 @@ jobs:
         run: |
           sudo apt update && sudo apt install \
             build-essential ncurses-dev xz-utils libssl-dev bc flex libelf-dev bison virtme-ng \
-            libnuma-dev libcap-dev libelf-dev
+            libnuma-dev libcap-dev libelf-dev ccache
 
       - name: Build kernel + kselftests
         run: .github/scripts/build_kernel.sh
