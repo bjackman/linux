@@ -71,12 +71,9 @@ I found that:
   probably just quite a bad library.
 
 - There is a KTAP parser provided with `kunit.py`. When given the outpout
-  of my script (which, admittedly, is a bit tricky because it runs
-  `run_vmtests.sh` in a loop), it gets into an infinite loop.
+  of my script it gets into an infinite loop, fixed by:
 
-- I noticed that one issue is that `run_vmtests.sh` does not produce valid
-  KTAP, it puts the 1..N line at the end instead of at the beginning,
-  maybe this is why `kunit.py` falls over.
+  https://lore.kernel.org/lkml/CABVgOS=Pfp2_ZvCtxy6X_xoM6pGVgT6bD_4VxGVZ_SNWVgesGQ@mail.gmail.com/
 
 Note also that `run_vmtests.sh` doesn't use KTAP's nesting feature which
 is a shame.
