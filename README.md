@@ -51,14 +51,16 @@ run a specific test, presumably to bisect a failure. For example, to just run
 ## TODOs
 
 - [x] Make sure the scripts can actually be run locally and document an example.
-- [ ] Automate running tests regularly (I don't think the automated push to the
+- [x] Automate running tests regularly (I don't think the automated push to the
       shadow branches fires the `push` trigger in GHA, as a simple way to avoid
       recursive triggering).
 - [x] Run tests on unstable branches like -next. This will require logic to rebase.
 - [x] Add basic logic to parse KTAP output. This now shows up in the summary of
   the Github Actions run.
 - [ ] Make the summary tables more readable, try to represent the nested
-  structure if possible?
+  structure if possible? ChatGPT says you can have arbitrary HTML in the
+  `$GITHUB_STEP_SUMMARY`, maybe with a `<details>` element you can make
+  something reasonably readable.
 - [ ] Also include skipped tests.
 - [ ] Make the skipped mm tests run
 - [ ] Try to run some more tests in this setup.
