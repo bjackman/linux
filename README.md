@@ -57,6 +57,13 @@ run a specific test, presumably to bisect a failure. For example, to just run
 - [x] Run tests on unstable branches like -next. This will require logic to rebase.
 - [x] Add basic logic to parse KTAP output. This now shows up in the summary of
   the Github Actions run.
+- [ ] Try
+  [this](https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html) to
+  make things faster. Because we are interested in create merge commits, we need
+  to clone the full history (at least, we don't know up front how much history
+  we need to clone, and I don't know of a good way to figure that out
+  on-the-fly). Apparently GitHub doesn't optimise this case, so it takes 10+
+  minutes to start the `update_branches` job.
 - [ ] Make the summary tables more readable, try to represent the nested
   structure if possible? ChatGPT says you can have arbitrary HTML in the
   `$GITHUB_STEP_SUMMARY`, maybe with a `<details>` element you can make
