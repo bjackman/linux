@@ -59,7 +59,7 @@ run a specific test, presumably to bisect a failure. For example, to just run
   the Github Actions run.
 - [ ] Resolve vmtests that get skipped completely
   - [ ] `vmalloc` -> requires `CONFIG_TEST_VMALLOC`
-  - [ ] `hmm` -> requires `CONFIG_TEST_HMM`
+  - [x] `hmm` -> requires `CONFIG_TEST_HMM`
   - [ ] `memfd_secret` -> dunno, doesn't print anything
   - [ ] (Probably others that just silently skip most of their logic. `mrelease_test`?)
   - [ ] `ksm`, `ksm_numa` -> "Config KSM not enabled" (I guess `CONFIG_KSM`?)
