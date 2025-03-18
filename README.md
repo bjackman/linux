@@ -63,6 +63,7 @@ run a specific test, presumably to bisect a failure. For example, to just run
   - [x] `ksm`, `ksm_numa` -> "Config KSM not enabled" (I guess `CONFIG_KSM`?)
   - [ ] `hugevm` -> requires 5-level paging and `PR_SET_VMA_ANON_NAME`
   - [ ] `memfd_secret` -> dunno, doesn't print anything
+  - [ ] KSM, but probably various: Requires NUMA
   - [ ] (Probably others that just silently skip most of their logic. `mrelease_test`?)
 - [ ] Look into obvious failures commented in `.github/scripts/test.guest.sh`
 - [ ] Try
