@@ -9,7 +9,7 @@ mkdir -p kernel-build
 # Configure stuff to boot in virtme-ng
 vng --kconfig
 # Configure stuff needed by mm selftests
-scripts/config -e GUP_TEST -e USERFAULTFD
+scripts/config -e GUP_TEST -e USERFAULTFD -m TEST_VMALLOC
 make olddefconfig
 # Build kernel
 make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
