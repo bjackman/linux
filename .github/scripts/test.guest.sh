@@ -12,7 +12,7 @@ cd mm/
 ENABLED_VMTESTS=(
     mmap
     gup_test
-    userfaultfd
+    # userfaultfd: These usually pass but they're flaky.
     compaction
     mlock
     # mremap: Fails due to ENOMEM

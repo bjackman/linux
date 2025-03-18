@@ -66,6 +66,7 @@ run a specific test, presumably to bisect a failure. For example, to just run
   - [ ] KSM, but probably various: Requires NUMA
   - [ ] (Probably others that just silently skip most of their logic. `mrelease_test`?)
 - [ ] Look into obvious failures commented in `.github/scripts/test.guest.sh`
+- [ ] `userfaultfd` tests are flaky. Think about how to address flaky tests.
 - [ ] Try
   [this](https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html) to
   make things faster. Because we are interested in create merge commits, we need
