@@ -18,6 +18,7 @@ make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
 # artifact between jobs every time which takes minutes if you include the whole
 # build result.
 make -j $(( $(nproc) * 2 )) INSTALL_PATH=$PWD/kernel-build install
+make -j $(( $(nproc) * 2 )) INSTALL_MOD_PATH=$PWD/kernel-build modules_install
 
 # Shouldn't happen in GHA but when running locally the file might exist
 if [ -e kernel-build/vmlinuz ]; then

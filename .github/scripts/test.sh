@@ -15,9 +15,10 @@ tar -C kernel-build  -zxf kernel.tgz
 cp $(dirname "$0")/test.guest.sh kernel-build/kselftests
 
 # If you change this, please also update bisect_helper.sh
-unshare -r vng --verbose \
+unshare -r vng --verbose --cpus 4  \
     --root image --user root --run kernel-build/vmlinuz \
-    --rwdir=/mnt=kernel-build/kselftests --cpus 4 -- \
+    --rwdir=/mnt=kernel-build/kselftests
+    --rodir=/lib/modules=kernel-build/lib/modules -- \
         "cd /mnt; ./test.guest.sh" | tee guest.log
 
 # Hack: Use kunit.py to parse the TAP output so we can generate something a bit
