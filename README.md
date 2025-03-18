@@ -62,7 +62,7 @@ run a specific test, presumably to bisect a failure. For example, to just run
   - [x] `hmm` -> requires `CONFIG_TEST_HMM`
   - [ ] `memfd_secret` -> dunno, doesn't print anything
   - [ ] (Probably others that just silently skip most of their logic. `mrelease_test`?)
-  - [ ] `ksm`, `ksm_numa` -> "Config KSM not enabled" (I guess `CONFIG_KSM`?)
+  - [x] `ksm`, `ksm_numa` -> "Config KSM not enabled" (I guess `CONFIG_KSM`?)
 - [ ] Look into obvious failures commented in `.github/scripts/test.guest.sh`
 - [ ] Try
   [this](https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html) to

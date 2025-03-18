@@ -11,6 +11,7 @@ vng --kconfig
 # Configure stuff needed by mm selftests
 scripts/config -e GUP_TEST -e USERFAULTFD -m TEST_VMALLOC
 scripts/config -e TRANSPARENT_HUGEPAGE -e DEVICE_PRIVATE -e TEST_HMM
+scripts/config -e KSM
 make olddefconfig
 # Build kernel
 make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
