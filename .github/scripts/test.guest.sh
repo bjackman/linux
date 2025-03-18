@@ -16,7 +16,7 @@ ENABLED_VMTESTS=(
     compaction
     mlock
     # mremap: Fails due to ENOMEM
-    # hugevm: Requires kconfig installed
+    hugevm
     vmalloc
     hmm
     # guard-regions.c:1812:truncation:Expected ptr (18446744073709551615) != MAP_FAILED (18446744073709551615)
