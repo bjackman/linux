@@ -57,6 +57,13 @@ run a specific test, presumably to bisect a failure. For example, to just run
 - [x] Run tests on unstable branches like -next. This will require logic to rebase.
 - [x] Add basic logic to parse KTAP output. This now shows up in the summary of
   the Github Actions run.
+- [ ] Resolve vmtests that get skipped completely
+  - [ ] `vmalloc` -> requires `CONFIG_TEST_VMALLOC`
+  - [ ] `hmm` -> requires `CONFIG_TEST_HMM`
+  - [ ] `memfd_secret` -> dunno, doesn't print anything
+  - [ ] (Probably others that just silently skip most of their logic. `mrelease_test`?)
+  - [ ] `ksm`, `ksm_numa` -> "Config KSM not enabled" (I guess `CONFIG_KSM`?)
+- [ ] Look into obvious failures commented in `.github/scripts/test.guest.sh`
 - [ ] Try
   [this](https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html) to
   make things faster. Because we are interested in create merge commits, we need
