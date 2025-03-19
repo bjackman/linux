@@ -12,7 +12,7 @@ mkdir -p kernel-build
 tar -C kernel-build  -zxf kernel.tgz
 
 # Dumb hack to get the script into the guest.
-cp $(dirname "$0")/test.guest.sh kernel-build/kselftests
+cp "$(dirname "$0")/test.guest.sh" kernel-build/kselftests
 
 # If you change this, please also update bisect_helper.sh
 unshare -r vng --verbose --cpus 4  \
