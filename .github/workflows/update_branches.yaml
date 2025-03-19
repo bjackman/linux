@@ -11,6 +11,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html
+      - name: Seed repository from Git bundle
+        run: |
+          set -eux
+
+          # Distilled from
+          # https://web.git.kernel.org/pub/scm/linux/kernel/git/mricon/korg-helpers.git/plain/linux-bundle-clone
+          CDNBUNDLE="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle"
+          BUNDLELOCAL=$(mktemp /tmp/linux-bundle.XXXXXXXXXX)
+          curl -L "${CDNBUNDLE}" -o "${BUNDLELOCAL}"
+          git clone "${BUNDLELOCAL}" "$GITHUB_WORKSPACE"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
