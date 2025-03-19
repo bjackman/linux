@@ -11,28 +11,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html
-      - name: Seed repository from Git bundle
-        run: |
-          set -eux
+      - name: Set week key
+        id: week
+        run: echo "week=$(date +'%Y-%W')" >> $GITHUB_OUTPUT
 
-          # Distilled from
-          # https://web.git.kernel.org/pub/scm/linux/kernel/git/mricon/korg-helpers.git/plain/linux-bundle-clone
-          CDNBUNDLE="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle"
-          BUNDLELOCAL=$(mktemp /tmp/linux-bundle.XXXXXXXXXX)
-          curl -L "${CDNBUNDLE}" -o "${BUNDLELOCAL}"
-          git clone "${BUNDLELOCAL}" "$GITHUB_WORKSPACE"
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Restore Git bundle cache (weekly)
+        uses: actions/cache@v3
         with:
-          # Normally pushing to a branch from an Action doesn't trigger push
-          # actions.  According to ChatGPT, using a "personal access PAT token"
-          # will change that, so these pushes should trigger the test actions.
-          # I created the PAT through the UI and then copied it into the
-          # "repository secrets" in the UI.
-          token: ${{ secrets.PAT_TOKEN }}
-          fetch-depth: 0
+          path: /tmp/bundle-cache
+          key: cdn-bundle-${{ steps.week.outputs.week }}
+
+      # We need the full git history, since we're gonna be doing merges.
+      # GitHub does not optimise this case at all, so try using the LF's CDN
+      # bundle to speed things up.
+      # https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html
+      - name: Download Git bundle if not cached
+        if: steps.restore-bundle.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/bundle-cache
+          CDNBUNDLE="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle"
+          curl -L "${CDNBUNDLE}" -o /tmp/bundle-cache/clone.bundle
+
+      - name: Seed repository from Git bundle
+        run: git clone /tmp/bundle-cache/clone.bundle "$GITHUB_WORKSPACE"
+
+      # Can't use actions/checkout for this because it deletes the seeded repo
+      # from above.
+      - name: Checkout the code
+        run: |
+          # Replace the bundle with the actual repository remote.
+          git remote set-url origin https://${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git reset --hard origin/${{ github.ref_name }}
 
       - name: Configure git
         run: |
