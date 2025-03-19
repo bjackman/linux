@@ -19,7 +19,8 @@ if [ ! -d image ]; then
     tar -C image  --zstd -xf image.tar.zst
 fi
 
-unshare -r vng --verbose \
+unshare -r vng --verbose --cpus 4 \
     --root image --user root --run kernel-build/vmlinuz \
-    --rwdir=/mnt=kernel-build/kselftests --cpus 4 -- \
+    --rwdir=/mnt=kernel-build/kselftests \
+    --rodir=/lib/modules=kernel-build/lib/modules -- \
     "cd /mnt; $@" | tee guest.log
