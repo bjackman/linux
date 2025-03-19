@@ -18,7 +18,7 @@ jobs:
       - name: Restore Git bundle cache (weekly)
         uses: actions/cache@v3
         with:
-          path: ./bundle-cache
+          path: /tmp/bundle-cache
           key: cdn-bundle-${{ steps.week.outputs.week }}
 
       # We need the full git history, since we're gonna be doing merges.
@@ -28,12 +28,12 @@ jobs:
       - name: Download Git bundle if not cached
         if: steps.restore-bundle.outputs.cache-hit != 'true'
         run: |
-          mkdir -p ./bundle-cache
+          mkdir -p /tmp/bundle-cache
           CDNBUNDLE="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle"
-          curl -L "${CDNBUNDLE}" -o ./bundle-cache/clone.bundle
+          curl -L "${CDNBUNDLE}" -o /tmp/bundle-cache/clone.bundle
 
       - name: Seed repository from Git bundle
-        run: git clone ./bundle-cache/clone.bundle "$GITHUB_WORKSPACE"
+        run: git clone /tmp/bundle-cache/clone.bundle "$GITHUB_WORKSPACE"
 
       # Can't use actions/checkout for this because it deletes the seeded repo
       # from above.
