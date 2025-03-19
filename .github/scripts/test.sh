@@ -15,9 +15,10 @@ tar -C kernel-build  -zxf kernel.tgz
 cp $(dirname "$0")/test.guest.sh kernel-build/kselftests
 
 # If you change this, please also update bisect_helper.sh
-unshare -r vng --verbose \
+unshare -r vng --verbose --cpus 4  \
     --root image --user root --run kernel-build/vmlinuz \
-    --rwdir=/mnt=kernel-build/kselftests --cpus 4 -- \
+    --rwdir=/mnt=kernel-build/kselftests \
+    --rodir=/lib/modules=kernel-build/lib/modules -- \
         "cd /mnt; ./test.guest.sh" | tee guest.log
 
 # Hack: Use kunit.py to parse the TAP output so we can generate something a bit
@@ -38,7 +39,11 @@ unshare -r vng --verbose \
 # the (optional) plan line.
 grep -vE '^[0-9]+..[0-9]+$' guest.log | python3 tools/testing/kunit/kunit.py parse  --json=summary.json >/dev/null || true
 
-# ChatGPT magic to convert the JSON summary into Markdown
-jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]' summary.json \
-    | sed '1i| Test Case | Status |' \
-    | sed '2i| ----------- | --------- |' > "$GITHUB_STEP_SUMMARY"
+# Convert the JSON summary into a Markdown table
+echo "| Test Case | Status |"
+echo "| --------- | ------ |"
+# First jq command adds style, pizazz, panache, empathy, lived experience,
+# equality, aspiration, wisdom and truth. Second jq command converts the JSON
+# into rows of a Markdown table.
+jq '.test_cases[] |= (.status += (if .status == "PASS" then " ✅" elif .status == "SKIP" then " ⏭️" else " ❌" end))'  summary.json \
+    | jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]'

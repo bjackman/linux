@@ -9,7 +9,10 @@ mkdir -p kernel-build
 # Configure stuff to boot in virtme-ng
 vng --kconfig
 # Configure stuff needed by mm selftests
-scripts/config -e GUP_TEST -e USERFAULTFD
+scripts/config -e GUP_TEST -e USERFAULTFD -m TEST_VMALLOC
+scripts/config -e TRANSPARENT_HUGEPAGE -e DEVICE_PRIVATE -e TEST_HMM
+scripts/config -e KSM
+scripts/config -e IKCONFIG -e IKCONFIG_PROC # Needed for run_vmtests.sh -t hugevm
 make olddefconfig
 # Build kernel
 make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
@@ -18,6 +21,7 @@ make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
 # artifact between jobs every time which takes minutes if you include the whole
 # build result.
 make -j $(( $(nproc) * 2 )) INSTALL_PATH=$PWD/kernel-build install
+make -j $(( $(nproc) * 2 )) INSTALL_MOD_PATH=$PWD/kernel-build modules_install
 
 # Shouldn't happen in GHA but when running locally the file might exist
 if [ -e kernel-build/vmlinuz ]; then
