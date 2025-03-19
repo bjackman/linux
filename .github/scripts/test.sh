@@ -46,4 +46,4 @@ echo "| --------- | ------ |"
 # equality, aspiration, wisdom and truth. Second jq command converts the JSON
 # into rows of a Markdown table.
 jq '.test_cases[] |= (.status += (if .status == "PASS" then " ✅" elif .status == "SKIP" then " ⏭️" else " ❌" end))'  summary.json \
-    | jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]'
+    | jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]' > "$GITHUB_STEP_SUMMARY"
