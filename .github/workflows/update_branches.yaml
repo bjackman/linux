@@ -21,6 +21,9 @@ jobs:
           path: ./bundle-cache
           key: cdn-bundle-${{ steps.week.outputs.week }}
 
+      # We need the full git history, since we're gonna be doing merges.
+      # GitHub does not optimise this case at all, so try using the LF's CDN
+      # bundle to speed things up.
       # https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html
       - name: Download Git bundle if not cached
         if: steps.restore-bundle.outputs.cache-hit != 'true'
@@ -32,16 +35,15 @@ jobs:
       - name: Seed repository from Git bundle
         run: git clone ./bundle-cache/clone.bundle "$GITHUB_WORKSPACE"
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          # Normally pushing to a branch from an Action doesn't trigger push
-          # actions.  According to ChatGPT, using a "personal access PAT token"
-          # will change that, so these pushes should trigger the test actions.
-          # I created the PAT through the UI and then copied it into the
-          # "repository secrets" in the UI.
-          token: ${{ secrets.PAT_TOKEN }}
-          fetch-depth: 0
+      # Can't use actions/checkout for this because it deletes the seeded repo
+      # from above.
+      - name: Checkout the code
+        run: |
+          # Replace the bundle with the actual repository remote.
+          git remote set-url origin https://${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git reset --hard origin/${{ github.ref_name }}
 
       - name: Configure git
         run: |
