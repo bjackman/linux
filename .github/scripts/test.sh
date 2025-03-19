@@ -12,7 +12,7 @@ mkdir -p kernel-build
 tar -C kernel-build  -zxf kernel.tgz
 
 # Dumb hack to get the script into the guest.
-cp $(dirname "$0")/test.guest.sh kernel-build/kselftests
+cp "$(dirname "$0")/test.guest.sh" kernel-build/kselftests
 
 # If you change this, please also update bisect_helper.sh
 unshare -r vng --verbose --cpus 4  \
@@ -46,4 +46,4 @@ echo "| --------- | ------ |"
 # equality, aspiration, wisdom and truth. Second jq command converts the JSON
 # into rows of a Markdown table.
 jq '.test_cases[] |= (.status += (if .status == "PASS" then " ✅" elif .status == "SKIP" then " ⏭️" else " ❌" end))'  summary.json \
-    | jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]'
+    | jq -r '.test_cases | map("| \(.name) | \(.status) |") | .[]' > "$GITHUB_STEP_SUMMARY"
