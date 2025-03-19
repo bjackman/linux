@@ -11,17 +11,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html
-      - name: Seed repository from Git bundle
-        run: |
-          set -eux
+      - name: Set week key
+        id: week
+        run: echo "week=$(date +'%Y-%W')" >> $GITHUB_OUTPUT
 
-          # Distilled from
-          # https://web.git.kernel.org/pub/scm/linux/kernel/git/mricon/korg-helpers.git/plain/linux-bundle-clone
+      - name: Restore Git bundle cache (weekly)
+        uses: actions/cache@v3
+        with:
+          path: ./bundle-cache
+          key: cdn-bundle-${{ steps.week.outputs.week }}
+
+      # https://www.kernel.org/best-way-to-do-linux-clones-for-your-ci.html
+      - name: Download Git bundle if not cached
+        if: steps.restore-bundle.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ./bundle-cache
           CDNBUNDLE="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle"
-          BUNDLELOCAL=$(mktemp /tmp/linux-bundle.XXXXXXXXXX)
-          curl -L "${CDNBUNDLE}" -o "${BUNDLELOCAL}"
-          git clone "${BUNDLELOCAL}" "$GITHUB_WORKSPACE"
+          curl -L "${CDNBUNDLE}" -o ./bundle-cache/clone.bundle
+
+      - name: Seed repository from Git bundle
+        run: git clone ./bundle-cache/clone.bundle "$GITHUB_WORKSPACE"
 
       - name: Checkout repository
         uses: actions/checkout@v4
