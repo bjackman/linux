@@ -47,6 +47,8 @@
 #include <linux/splice.h>
 #include <linux/rcupdate_wait.h>
 #include <linux/sched/mm.h>
+#include <linux/vmalloc.h>
+#include <asm/asi.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include "internal.h"
@@ -2594,6 +2596,33 @@ static inline bool pos_same_folio(loff_t pos1, loff_t pos2, struct folio *folio)
 	return (pos1 >> shift == pos2 >> shift);
 }
 
+static inline void *vmap_folio(struct folio *folio)
+{
+	struct vm_struct *area = get_vm_area(folio_size(folio), VM_MAP);
+	unsigned long addr = (unsigned long)area->addr;
+	int err;
+
+	if (!area)
+		return NULL;
+
+	err = vmap_page_range(addr, addr + folio_size(folio),
+			      PFN_PHYS(folio_pfn(folio)), PAGE_KERNEL);
+	if (WARN(err, "%d", err))
+		return NULL;
+
+	return area->addr;
+}
+
+static inline void vunmap_folio(struct folio *folio, void *virt)
+{
+	unsigned long addr = (unsigned long)virt;
+	/* TODO look up is dumb */
+	struct vm_struct *area = find_vm_area(virt);
+
+	vunmap_range(addr, addr + folio_size(folio));
+	free_vm_area(area);
+}
+
 /**
  * filemap_read - Read data from the page cache.
  * @iocb: The iocb to read.
@@ -2680,6 +2709,7 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 			size_t bytes = min_t(loff_t, end_offset - iocb->ki_pos,
 					     fsize - offset);
 			size_t copied;
+			void *folio_vm = NULL;
 
 			if (end_offset < folio_pos(folio))
 				break;
@@ -2693,7 +2723,26 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 			if (writably_mapped)
 				flush_dcache_folio(folio);
 
-			copied = copy_folio_to_iter(folio, offset, bytes, iter);
+			/*
+			 * If in the ASI restricted addres space, read via a
+			 * virtual mapping to avoid an ASI exit.
+			 * TODO: this should be in a process-local mapping.
+			 * TODO: need to ensure TLB is flushed before file gets
+			 * closed or pages get evicted.
+			 * TODO: Is it really slow to mess with vmalloc in this
+			 * path?
+			 * TODOO: Anyway, we should probably at least map the
+			 * whole folio batch at once instead of messing with
+			 * vmalloc for every individual folio.
+			 */
+			if (asi_is_restricted())
+				folio_vm = vmap_folio(folio);
+			if (folio_vm) {
+				copied = copy_to_iter(folio_vm + offset, bytes, iter);
+				vunmap_folio(folio, folio_vm);
+			} else {
+				copied = copy_folio_to_iter(folio, offset, bytes, iter);
+			}
 
 			already_read += copied;
 			iocb->ki_pos += copied;
