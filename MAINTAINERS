@@ -4014,10 +4014,10 @@ F:	include/vdso/bits.h
 F:	lib/bitmap-str.c
 F:	lib/bitmap.c
 F:	lib/cpumask.c
-F:	lib/cpumask_kunit.c
 F:	lib/find_bit.c
 F:	lib/find_bit_benchmark.c
 F:	lib/test_bitmap.c
+F:	lib/tests/cpumask_kunit.c
 F:	tools/include/linux/bitfield.h
 F:	tools/include/linux/bitmap.h
 F:	tools/include/linux/bits.h
@@ -8903,6 +8903,9 @@ F:	include/linux/fs.h
 F:	include/linux/fs_types.h
 F:	include/uapi/linux/fs.h
 F:	include/uapi/linux/openat2.h
+F:	Documentation/driver-api/early-userspace/buffer-format.rst
+F:	init/do_mounts*
+F:	init/*initramfs*
 
 FILESYSTEMS [EXPORTFS]
 M:	Chuck Lever <chuck.lever@oracle.com>
@@ -9072,9 +9075,9 @@ L:	linux-hardening@vger.kernel.org
 S:	Supported
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/kees/linux.git for-next/hardening
 F:	include/linux/fortify-string.h
-F:	lib/fortify_kunit.c
-F:	lib/memcpy_kunit.c
 F:	lib/test_fortify/*
+F:	lib/tests/fortify_kunit.c
+F:	lib/tests/memcpy_kunit.c
 K:	\bunsafe_memcpy\b
 K:	\b__NO_FORTIFY\b
 
@@ -9759,9 +9762,9 @@ F:	include/linux/string.h
 F:	include/linux/string_choices.h
 F:	include/linux/string_helpers.h
 F:	lib/string.c
-F:	lib/string_kunit.c
 F:	lib/string_helpers.c
-F:	lib/string_helpers_kunit.c
+F:	lib/tests/string_helpers_kunit.c
+F:	lib/tests/string_kunit.c
 F:	scripts/coccinelle/api/string_choices.cocci
 
 GENERIC UIO DRIVER FOR PCI DEVICES
@@ -12588,8 +12591,9 @@ F:	Documentation/ABI/testing/sysfs-kernel-warn_count
 F:	arch/*/configs/hardening.config
 F:	include/linux/overflow.h
 F:	include/linux/randomize_kstack.h
+F:	include/linux/ucopysize.h
 F:	kernel/configs/hardening.config
-F:	lib/usercopy_kunit.c
+F:	lib/tests/usercopy_kunit.c
 F:	mm/usercopy.c
 F:	security/Kconfig.hardening
 K:	\b(add|choose)_random_kstack_offset\b
@@ -12987,7 +12991,7 @@ F:	Documentation/trace/kprobes.rst
 F:	include/asm-generic/kprobes.h
 F:	include/linux/kprobes.h
 F:	kernel/kprobes.c
-F:	lib/test_kprobes.c
+F:	lib/tests/test_kprobes.c
 F:	samples/kprobes
 
 KS0108 LCD CONTROLLER DRIVER
@@ -13317,7 +13321,7 @@ M:	Mark Brown <broonie@kernel.org>
 R:	Matti Vaittinen <mazziesaccount@gmail.com>
 F:	include/linux/linear_range.h
 F:	lib/linear_ranges.c
-F:	lib/test_linear_ranges.c
+F:	lib/tests/test_linear_ranges.c
 
 LINUX FOR POWER MACINTOSH
 L:	linuxppc-dev@lists.ozlabs.org
@@ -13445,7 +13449,7 @@ M:	David Gow <davidgow@google.com>
 L:	linux-kselftest@vger.kernel.org
 L:	kunit-dev@googlegroups.com
 S:	Maintained
-F:	lib/list-test.c
+F:	lib/tests/list-test.c
 
 LITEX PLATFORM
 M:	Karol Gugala <kgugala@antmicro.com>
@@ -21192,8 +21196,7 @@ S:	Maintained
 W:	https://github.com/sched-ext/scx
 T:	git://git.kernel.org/pub/scm/linux/kernel/git/tj/sched_ext.git
 F:	include/linux/sched/ext.h
-F:	kernel/sched/ext.h
-F:	kernel/sched/ext.c
+F:	kernel/sched/ext*
 F:	tools/sched_ext/
 F:	tools/testing/selftests/sched_ext
 
@@ -21775,7 +21778,7 @@ M:	Jason A. Donenfeld <Jason@zx2c4.com>
 S:	Maintained
 F:	include/linux/siphash.h
 F:	lib/siphash.c
-F:	lib/siphash_kunit.c
+F:	lib/tests/siphash_kunit.c
 
 SIS 190 ETHERNET DRIVER
 M:	Francois Romieu <romieu@fr.zoreil.com>
@@ -23118,12 +23121,6 @@ M:	System76 Product Development <productdev@system76.com>
 L:	platform-driver-x86@vger.kernel.org
 S:	Maintained
 F:	drivers/platform/x86/system76_acpi.c
-
-SYSV FILESYSTEM
-S:	Orphan
-F:	Documentation/filesystems/sysv-fs.rst
-F:	fs/sysv/
-F:	include/linux/sysv_fs.h
 
 TASKSTATS STATISTICS INTERFACE
 M:	Balbir Singh <bsingharora@gmail.com>
@@ -25456,8 +25453,8 @@ R:	Sergey Senozhatsky <senozhatsky@chromium.org>
 S:	Maintained
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/printk/linux.git
 F:	Documentation/core-api/printk-formats.rst
-F:	lib/test_printf.c
-F:	lib/test_scanf.c
+F:	lib/tests/printf_kunit.c
+F:	lib/tests/scanf_kunit.c
 F:	lib/vsprintf.c
 
 VT1211 HARDWARE MONITOR DRIVER
@@ -25990,7 +25987,6 @@ F:	include/xen/swiotlb-xen.h
 
 XFS FILESYSTEM
 M:	Carlos Maiolino <cem@kernel.org>
-R:	Darrick J. Wong <djwong@kernel.org>
 L:	linux-xfs@vger.kernel.org
 S:	Supported
 W:	http://xfs.org/
