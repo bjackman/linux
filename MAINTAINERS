@@ -356,7 +356,7 @@ ACPI PMIC DRIVERS
 M:	"Rafael J. Wysocki" <rafael@kernel.org>
 M:	Len Brown <lenb@kernel.org>
 R:	Andy Shevchenko <andy@kernel.org>
-R:	Mika Westerberg <mika.westerberg@linux.intel.com>
+R:	Mika Westerberg <westeri@kernel.org>
 L:	linux-acpi@vger.kernel.org
 S:	Supported
 Q:	https://patchwork.kernel.org/project/linux-acpi/list/
@@ -4026,6 +4026,11 @@ F:	tools/include/vdso/bits.h
 F:	tools/lib/bitmap.c
 F:	tools/lib/find_bit.c
 
+BITMAP API BINDINGS [RUST]
+M:	Yury Norov <yury.norov@gmail.com>
+S:	Maintained
+F:	rust/helpers/cpumask.c
+
 BITOPS API
 M:	Yury Norov <yury.norov@gmail.com>
 R:	Rasmus Villemoes <linux@rasmusvillemoes.dk>
@@ -5402,6 +5407,8 @@ F:	Documentation/dev-tools/checkpatch.rst
 CHINESE DOCUMENTATION
 M:	Alex Shi <alexs@kernel.org>
 M:	Yanteng Si <siyanteng@loongson.cn>
+R:	Dongliang Mu <dzm91@hust.edu.cn>
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/alexs/linux.git
 S:	Maintained
 F:	Documentation/translations/zh_CN/
 
@@ -6146,6 +6153,16 @@ M:	Bastien Nocera <hadess@hadess.net>
 L:	linux-input@vger.kernel.org
 S:	Maintained
 F:	drivers/hid/hid-creative-sb0540.c
+
+CREDENTIALS
+M:	Paul Moore <paul@paul-moore.com>
+R:	Serge Hallyn <sergeh@kernel.org>
+L:	linux-security-module@vger.kernel.org
+S:	Supported
+T:	git https://git.kernel.org/pub/scm/linux/kernel/git/pcmoore/lsm.git
+F:	include/linux/cred.h
+F:	kernel/cred.c
+F:	Documentation/security/credentials.rst
 
 INTEL CRPS COMMON REDUNDANT PSU DRIVER
 M:	Ninad Palsule <ninad@linux.ibm.com>
@@ -6918,6 +6935,7 @@ L:	dri-devel@lists.freedesktop.org
 L:	linaro-mm-sig@lists.linaro.org (moderated for non-subscribers)
 S:	Maintained
 T:	git https://gitlab.freedesktop.org/drm/misc/kernel.git
+F:	Documentation/userspace-api/dma-buf-heaps.rst
 F:	drivers/dma-buf/dma-heap.c
 F:	drivers/dma-buf/heaps/*
 F:	include/linux/dma-heap.h
@@ -8228,6 +8246,7 @@ F:	drivers/edac/aspeed_edac.c
 
 EDAC-BLUEFIELD
 M:	Shravan Kumar Ramani <shravankr@nvidia.com>
+M:	David Thompson <davthompson@nvidia.com>
 S:	Supported
 F:	drivers/edac/bluefield_edac.c
 
@@ -8531,6 +8550,15 @@ ENE KB2426 (ENE0100/ENE020XX) INFRARED RECEIVER
 M:	Maxim Levitsky <maximlevitsky@gmail.com>
 S:	Maintained
 F:	drivers/media/rc/ene_ir.*
+
+ENERGY MODEL
+M:	Lukasz Luba <lukasz.luba@arm.com>
+M:	"Rafael J. Wysocki" <rafael@kernel.org>
+L:	linux-pm@vger.kernel.org
+S:	Maintained
+F:	kernel/power/energy_model.c
+F:	include/linux/energy_model.h
+F:	Documentation/power/energy-model.rst
 
 EPAPR HYPERVISOR BYTE CHANNEL DEVICE DRIVER
 M:	Laurentiu Tudor <laurentiu.tudor@nxp.com>
@@ -9784,6 +9812,7 @@ F:	include/asm-generic/vdso/vsyscall.h
 F:	include/vdso/
 F:	kernel/time/vsyscall.c
 F:	lib/vdso/
+F:	tools/testing/selftests/vDSO/
 
 GENWQE (IBM Generic Workqueue Card)
 M:	Frank Haverkamp <haver@linux.ibm.com>
@@ -11680,12 +11709,14 @@ F:	Documentation/driver-api/crypto/iaa/iaa-crypto.rst
 F:	drivers/crypto/intel/iaa/*
 
 INTEL IDLE DRIVER
-M:	Jacob Pan <jacob.jun.pan@linux.intel.com>
-M:	Len Brown <lenb@kernel.org>
+M:	Rafael J. Wysocki <rafael@kernel.org>
+M:	Artem Bityutskiy <artem.bityutskiy@linux.intel.com>
+M:	Artem Bityutskiy <dedekind1@gmail.com>
+R:	Len Brown <lenb@kernel.org>
 L:	linux-pm@vger.kernel.org
 S:	Supported
 B:	https://bugzilla.kernel.org
-T:	git git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux.git
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/rafael/linux-pm.git
 F:	drivers/idle/intel_idle.c
 
 INTEL IDXD DRIVER
@@ -19925,6 +19956,7 @@ S:	Supported
 F:	Documentation/arch/x86/resctrl*
 F:	arch/x86/include/asm/resctrl.h
 F:	arch/x86/kernel/cpu/resctrl/
+F:	include/linux/resctrl*.h
 F:	tools/testing/selftests/resctrl/
 
 READ-COPY UPDATE (RCU)
