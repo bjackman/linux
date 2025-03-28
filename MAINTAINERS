@@ -727,7 +727,7 @@ L:	linux-mediatek@lists.infradead.org (moderated for non-subscribers)
 L:	netdev@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/net/airoha,en7581-eth.yaml
-F:	drivers/net/ethernet/mediatek/airoha_eth.c
+F:	drivers/net/ethernet/airoha/
 
 AIROHA PCIE PHY DRIVER
 M:	Lorenzo Bianconi <lorenzo@kernel.org>
@@ -2481,6 +2481,7 @@ X:	arch/arm64/boot/dts/freescale/qoriq-*
 X:	drivers/media/i2c/
 N:	imx
 N:	mxs
+N:	\bmxc[^\d]
 
 ARM/FREESCALE LAYERSCAPE ARM ARCHITECTURE
 M:	Shawn Guo <shawnguo@kernel.org>
@@ -2756,6 +2757,13 @@ S:	Maintained
 F:	arch/arm/boot/dts/socionext/milbeaut*
 F:	arch/arm/mach-milbeaut/
 N:	milbeaut
+
+ARM/MORELLO PLATFORM
+M:	Vincenzo Frascino <vincenzo.frascino@arm.com>
+L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
+S:	Maintained
+F:	Documentation/devicetree/bindings/arm/arm,morello.yaml
+F:	arch/arm64/boot/dts/arm/morello*
 
 ARM/MOXA ART SOC
 M:	Krzysztof Kozlowski <krzk@kernel.org>
@@ -3076,6 +3084,7 @@ F:	drivers/*/*s3c24*
 F:	drivers/*/*s3c64xx*
 F:	drivers/*/*s5pv210*
 F:	drivers/clocksource/samsung_pwm_timer.c
+F:	drivers/firmware/samsung/
 F:	drivers/mailbox/exynos-mailbox.c
 F:	drivers/memory/samsung/
 F:	drivers/pwm/pwm-samsung.c
@@ -6354,15 +6363,6 @@ F:	drivers/misc/cxl/
 F:	include/misc/cxl*
 F:	include/uapi/misc/cxl.h
 
-CXLFLASH (IBM Coherent Accelerator Processor Interface CAPI Flash) SCSI DRIVER
-M:	Manoj N. Kumar <manoj@linux.ibm.com>
-M:	Uma Krishnan <ukrishn@linux.ibm.com>
-L:	linux-scsi@vger.kernel.org
-S:	Obsolete
-F:	Documentation/arch/powerpc/cxlflash.rst
-F:	drivers/scsi/cxlflash/
-F:	include/uapi/scsi/cxlflash_ioctl.h
-
 CYBERPRO FB DRIVER
 M:	Russell King <linux@armlinux.org.uk>
 L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
@@ -8632,12 +8632,14 @@ F:	Documentation/networking/devlink/etas_es58x.rst
 F:	drivers/net/can/usb/etas_es58x/
 
 ETHERNET BRIDGE
-M:	Roopa Prabhu <roopa@nvidia.com>
 M:	Nikolay Aleksandrov <razor@blackwall.org>
+M:	Ido Schimmel <idosch@nvidia.com>
 L:	bridge@lists.linux.dev
 L:	netdev@vger.kernel.org
 S:	Maintained
 W:	http://www.linuxfoundation.org/en/Net:Bridge
+F:	include/linux/if_bridge.h
+F:	include/uapi/linux/if_bridge.h
 F:	include/linux/netfilter_bridge/
 F:	net/bridge/
 
@@ -11951,6 +11953,7 @@ L:	platform-driver-x86@vger.kernel.org
 S:	Maintained
 F:	Documentation/ABI/testing/sysfs-platform-intel-pmc
 F:	drivers/platform/x86/intel/pmc/
+F:	include/linux/platform_data/x86/intel_pmc_ipc.h
 
 INTEL PMIC GPIO DRIVERS
 M:	Andy Shevchenko <andy@kernel.org>
@@ -13988,6 +13991,7 @@ L:	netdev@vger.kernel.org
 S:	Maintained
 F:	Documentation/networking/mctp.rst
 F:	drivers/net/mctp/
+F:	include/linux/usb/mctp-usb.h
 F:	include/net/mctp.h
 F:	include/net/mctpdevice.h
 F:	include/net/netns/mctp.h
@@ -19090,9 +19094,10 @@ S:	Maintained
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/sysctl/sysctl.git sysctl-next
 F:	fs/proc/proc_sysctl.c
 F:	include/linux/sysctl.h
-F:	kernel/sysctl-test.c
-F:	kernel/sysctl.c
-F:	tools/testing/selftests/sysctl/
+F:	kernel/sysctl*
+F:	tools/testing/selftests/sysctl/*
+F:	lib/test_sysctl.c
+F:	scripts/check-sysctl-docs
 
 PS3 NETWORK SUPPORT
 M:	Geoff Levand <geoff@infradead.org>
@@ -20532,7 +20537,10 @@ F:	drivers/perf/riscv_pmu_sbi.c
 RISC-V SPACEMIT SoC Support
 M:	Yixun Lan <dlan@gentoo.org>
 L:	linux-riscv@lists.infradead.org
+L:	spacemit@lists.linux.dev
 S:	Maintained
+W:	https://github.com/spacemit-com/linux/wiki
+C:	irc://irc.libera.chat/spacemit
 T:	git https://github.com/spacemit-com/linux
 F:	arch/riscv/boot/dts/spacemit/
 N:	spacemit
@@ -21081,6 +21089,15 @@ F:	Documentation/devicetree/bindings/clock/samsung,exynos850-clock.yaml
 F:	arch/arm64/boot/dts/exynos/exynos850*
 F:	drivers/clk/samsung/clk-exynos850.c
 F:	include/dt-bindings/clock/exynos850.h
+
+SAMSUNG EXYNOS ACPM MAILBOX PROTOCOL
+M:	Tudor Ambarus <tudor.ambarus@linaro.org>
+L:	linux-kernel@vger.kernel.org
+L:	linux-samsung-soc@vger.kernel.org
+S:	Supported
+F:	Documentation/devicetree/bindings/firmware/google,gs101-acpm-ipc.yaml
+F:	drivers/firmware/samsung/exynos-acpm*
+F:	include/linux/firmware/samsung/exynos-acpm-protocol.h
 
 SAMSUNG EXYNOS MAILBOX DRIVER
 M:	Tudor Ambarus <tudor.ambarus@linaro.org>
@@ -22289,7 +22306,9 @@ F:	include/linux/sony-laptop.h
 
 SOPHGO DEVICETREES and DRIVERS
 M:	Chen Wang <unicorn_wang@outlook.com>
-M:	Inochi Amaoto <inochiama@outlook.com>
+M:	Inochi Amaoto <inochiama@gmail.com>
+L:	sophgo@lists.linux.dev
+W:	https://github.com/sophgo/linux/wiki
 T:	git https://github.com/sophgo/linux.git
 S:	Maintained
 N:	sophgo
@@ -24214,6 +24233,7 @@ F:	fs/tracefs/
 F:	include/linux/trace*.h
 F:	include/trace/
 F:	kernel/trace/
+F:	kernel/tracepoint.c
 F:	scripts/tracing/
 F:	tools/testing/selftests/ftrace/
 
@@ -24314,7 +24334,7 @@ W:	http://vtun.sourceforge.net/tun
 F:	Documentation/networking/tuntap.rst
 F:	arch/um/os-Linux/drivers/
 F:	drivers/net/tap.c
-F:	drivers/net/tun.c
+F:	drivers/net/tun*
 
 TURBOCHANNEL SUBSYSTEM
 M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
@@ -24397,6 +24417,7 @@ S:	Maintained
 F:	Documentation/block/ublk.rst
 F:	drivers/block/ublk_drv.c
 F:	include/uapi/linux/ublk_cmd.h
+F:	tools/testing/selftests/ublk/
 
 UBSAN
 M:	Kees Cook <kees@kernel.org>
