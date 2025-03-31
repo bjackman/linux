@@ -2457,7 +2457,8 @@ repeat:
 	fault_mm = vma ? vma->vm_mm : NULL;
 
 	folio = filemap_get_entry(inode->i_mapping, index);
-	if (folio && vma && userfaultfd_minor(vma)) {
+	if (folio && vma && userfaultfd_minor(vma) &&
+	    !(vmf->flags & FAULT_FLAG_USERFAULT_CONTINUE)) {
 		if (!xa_is_value(folio))
 			folio_put(folio);
 		*fault_type = handle_userfault(vmf, VM_UFFD_MINOR);
@@ -2717,6 +2718,8 @@ static vm_fault_t shmem_falloc_wait(struct vm_fault *vmf, struct inode *inode)
 static vm_fault_t shmem_fault(struct vm_fault *vmf)
 {
 	struct inode *inode = file_inode(vmf->vma->vm_file);
+	enum sgp_type sgp = vmf->flags & FAULT_FLAG_USERFAULT_CONTINUE ?
+	    SGP_NOALLOC : SGP_CACHE;
 	gfp_t gfp = mapping_gfp_mask(inode->i_mapping);
 	struct folio *folio = NULL;
 	vm_fault_t ret = 0;
@@ -2733,8 +2736,8 @@ static vm_fault_t shmem_fault(struct vm_fault *vmf)
 	}
 
 	WARN_ON_ONCE(vmf->page != NULL);
-	err = shmem_get_folio_gfp(inode, vmf->pgoff, 0, &folio, SGP_CACHE,
-				  gfp, vmf, &ret);
+	err = shmem_get_folio_gfp(inode, vmf->pgoff, 0, &folio, sgp, gfp, vmf,
+				  &ret);
 	if (err)
 		return vmf_error(err);
 	if (folio) {
