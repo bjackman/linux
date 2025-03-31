@@ -1660,6 +1660,9 @@ enum tlb_flush_reason {
  * @FAULT_FLAG_ORIG_PTE_VALID: whether the fault has vmf->orig_pte cached.
  *                        We should only access orig_pte if this flag set.
  * @FAULT_FLAG_VMA_LOCK: The fault is handled under VMA lock.
+ * @FAULT_FLAG_USERFAULT_CONTINUE: The fault handler must not call userfaultfd
+ *                                 minor handler as it is being called by the
+ *                                 userfaultfd code itself.
  *
  * About @FAULT_FLAG_ALLOW_RETRY and @FAULT_FLAG_TRIED: we can specify
  * whether we would allow page faults to retry by specifying these two
@@ -1698,6 +1701,7 @@ enum fault_flag {
 	FAULT_FLAG_UNSHARE =		1 << 10,
 	FAULT_FLAG_ORIG_PTE_VALID =	1 << 11,
 	FAULT_FLAG_VMA_LOCK =		1 << 12,
+	FAULT_FLAG_USERFAULT_CONTINUE = 1 << 13,
 };
 
 typedef unsigned int __bitwise zap_flags_t;
