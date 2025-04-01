@@ -8,6 +8,7 @@
 #include <linux/pseudo_fs.h>
 #include <linux/pagemap.h>
 #include <linux/set_memory.h>
+#include <linux/userfaultfd_k.h>
 
 #include <asm/tlbflush.h>
 
@@ -468,6 +469,12 @@ static vm_fault_t kvm_gmem_fault_user_mapping(struct vm_fault *vmf)
 	if (err) {
 		ret = vmf_error(err);
 		goto out_folio;
+	}
+
+	if (userfaultfd_minor(vmf->vma) &&
+	    !(vmf->flags & FAULT_FLAG_USERFAULT_CONTINUE)) {
+		folio_unlock(folio);
+		return handle_userfault(vmf, VM_UFFD_MINOR);
 	}
 
 	vmf->page = folio_file_page(folio, vmf->pgoff);
