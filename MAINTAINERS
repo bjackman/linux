@@ -5967,9 +5967,10 @@ S:	Maintained
 F:	Documentation/security/snp-tdx-threat-model.rst
 
 CONFIGFS
-M:	Joel Becker <jlbec@evilplan.org>
+M:	Andreas Hindborg <a.hindborg@kernel.org>
+R:	Breno Leitao <leitao@debian.org>
 S:	Supported
-T:	git git://git.infradead.org/users/hch/configfs.git
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/a.hindborg/linux.git configfs-next
 F:	fs/configfs/
 F:	include/linux/configfs.h
 F:	samples/configfs/
@@ -6434,18 +6435,6 @@ L:	netdev@vger.kernel.org
 S:	Maintained
 W:	http://www.chelsio.com
 F:	drivers/net/ethernet/chelsio/cxgb4vf/
-
-CXL (IBM Coherent Accelerator Processor Interface CAPI) DRIVER
-M:	Frederic Barrat <fbarrat@linux.ibm.com>
-M:	Andrew Donnellan <ajd@linux.ibm.com>
-L:	linuxppc-dev@lists.ozlabs.org
-S:	Obsolete
-F:	Documentation/ABI/obsolete/sysfs-class-cxl
-F:	Documentation/arch/powerpc/cxl.rst
-F:	arch/powerpc/platforms/powernv/pci-cxl.c
-F:	drivers/misc/cxl/
-F:	include/misc/cxl*
-F:	include/uapi/misc/cxl.h
 
 CYBERPRO FB DRIVER
 M:	Russell King <linux@armlinux.org.uk>
@@ -9118,7 +9107,7 @@ F:	include/linux/iomap.h
 
 FILESYSTEMS [NETFS LIBRARY]
 M:	David Howells <dhowells@redhat.com>
-R:	Jeff Layton <jlayton@kernel.org>
+M:	Paulo Alcantara <pc@manguebit.com>
 L:	netfs@lists.linux.dev
 L:	linux-fsdevel@vger.kernel.org
 S:	Supported
@@ -16805,6 +16794,13 @@ M:	Vladimir Oltean <vladimir.oltean@nxp.com>
 F:	net/ethtool/mm.c
 F:	tools/testing/selftests/drivers/net/hw/ethtool_mm.sh
 K:	ethtool_mm
+
+NETWORKING [ETHTOOL PHY TOPOLOGY]
+M:	Maxime Chevallier <maxime.chevallier@bootlin.com>
+F:	Documentation/networking/phy-link-topology.rst
+F:	drivers/net/phy/phy_link_topology.c
+F:	include/linux/phy_link_topology.h
+F:	net/ethtool/phy.c
 
 NETWORKING [GENERAL]
 M:	"David S. Miller" <davem@davemloft.net>
