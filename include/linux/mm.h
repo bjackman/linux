@@ -655,6 +655,11 @@ struct vm_operations_struct {
 	 */
 	struct page *(*find_special_page)(struct vm_area_struct *vma,
 					  unsigned long addr);
+	/*
+	 * True if the VMA supports userfault at least for one of the vm_flags
+	 */
+	bool (*can_userfault)(struct vm_area_struct *vma,
+			      unsigned long vm_flags);
 };
 
 #ifdef CONFIG_NUMA_BALANCING
