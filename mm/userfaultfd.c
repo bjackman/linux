@@ -731,6 +731,7 @@ static __always_inline ssize_t mfill_atomic(struct userfaultfd_ctx *ctx,
 	unsigned long src_addr, dst_addr;
 	long copied;
 	struct folio *folio;
+	bool can_userfault;
 
 	/*
 	 * Sanitize the command parameters:
@@ -790,10 +791,13 @@ retry:
 		return  mfill_atomic_hugetlb(ctx, dst_vma, dst_start,
 					     src_start, len, flags);
 
-	if (!vma_is_anonymous(dst_vma) && !vma_is_shmem(dst_vma))
+	can_userfault = dst_vma->vm_ops->can_userfault &&
+	    dst_vma->vm_ops->can_userfault(dst_vma, __VM_UFFD_FLAGS);
+
+	if (!vma_is_anonymous(dst_vma) && !can_userfault)
 		goto out_unlock;
-	if (!vma_is_shmem(dst_vma) &&
-	    uffd_flags_mode_is(flags, MFILL_ATOMIC_CONTINUE))
+
+	if (!can_userfault && uffd_flags_mode_is(flags, MFILL_ATOMIC_CONTINUE))
 		goto out_unlock;
 
 	while (src_addr < src_start + len) {
