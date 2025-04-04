@@ -2883,6 +2883,12 @@ static struct mempolicy *shmem_get_policy(struct vm_area_struct *vma,
 	return mpol_shared_policy_lookup(&SHMEM_I(inode)->policy, index);
 }
 
+static bool shmem_can_userfault(struct vm_area_struct *vma,
+				unsigned long vm_flags)
+{
+	return true;
+}
+
 static struct mempolicy *shmem_get_pgoff_policy(struct shmem_inode_info *info,
 			pgoff_t index, unsigned int order, pgoff_t *ilx)
 {
@@ -5283,6 +5289,7 @@ static const struct vm_operations_struct shmem_vm_ops = {
 	.set_policy     = shmem_set_policy,
 	.get_policy     = shmem_get_policy,
 #endif
+	.can_userfault  = shmem_can_userfault,
 };
 
 static const struct vm_operations_struct shmem_anon_vm_ops = {
@@ -5292,6 +5299,7 @@ static const struct vm_operations_struct shmem_anon_vm_ops = {
 	.set_policy     = shmem_set_policy,
 	.get_policy     = shmem_get_policy,
 #endif
+	.can_userfault  = shmem_can_userfault,
 };
 
 int shmem_init_fs_context(struct fs_context *fc)
