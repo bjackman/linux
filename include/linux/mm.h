@@ -690,6 +690,9 @@ struct vm_operations_struct {
 	struct page *(*find_normal_page)(struct vm_area_struct *vma,
 					 unsigned long addr);
 #endif /* CONFIG_FIND_NORMAL_PAGE */
+
+	bool (*can_userfault)(struct vm_area_struct *vma,
+			      unsigned long vm_flags);
 };
 
 #ifdef CONFIG_NUMA_BALANCING
