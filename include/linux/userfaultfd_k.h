@@ -217,9 +217,11 @@ static inline bool vma_can_userfault(struct vm_area_struct *vma,
 	if (vma->vm_flags & VM_DROPPABLE)
 		return false;
 
-	if (!vma->vm_ops->can_userfault ||
-	    !vma->vm_ops->can_userfault(vma, VM_UFFD_MINOR))
-		return false;
+       if ((vm_flags & VM_UFFD_MINOR) &&
+            (!vma->vm_ops ||
+             !vma->vm_ops->can_userfault ||
+             !vma->vm_ops->can_userfault(vma, VM_UFFD_MINOR)))
+                return false;
 
 	/*
 	 * If wp async enabled, and WP is the only mode enabled, allow any

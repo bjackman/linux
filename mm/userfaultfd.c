@@ -784,7 +784,9 @@ retry:
 		return  mfill_atomic_hugetlb(ctx, dst_vma, dst_start,
 					     src_start, len, flags);
 
-	can_userfault = dst_vma->vm_ops->can_userfault &&
+       can_userfault =
+           dst_vma->vm_ops &&
+           dst_vma->vm_ops->can_userfault &&
 	    dst_vma->vm_ops->can_userfault(dst_vma, __VM_UFFD_FLAGS);
 
 	if (!vma_is_anonymous(dst_vma) && !can_userfault)

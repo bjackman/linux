@@ -389,8 +389,15 @@ out_folio:
 	return ret;
 }
 
+static bool kvm_gmem_can_userfault(struct vm_area_struct *vma,
+                                  unsigned long vm_flags)
+{
+       return vm_flags & VM_UFFD_MINOR;
+}
+
 static const struct vm_operations_struct kvm_gmem_vm_ops = {
 	.fault = kvm_gmem_fault_user_mapping,
+	.can_userfault = kvm_gmem_can_userfault,
 };
 
 static int kvm_gmem_mmap(struct file *file, struct vm_area_struct *vma)
