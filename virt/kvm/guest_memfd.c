@@ -526,12 +526,19 @@ static struct mempolicy *kvm_gmem_get_policy(struct vm_area_struct *vma,
 }
 #endif /* CONFIG_NUMA */
 
+static bool kvm_gmem_can_userfault(struct vm_area_struct *vma,
+                                  unsigned long vm_flags)
+{
+       return vm_flags & VM_UFFD_MINOR;
+}
+
 static const struct vm_operations_struct kvm_gmem_vm_ops = {
-	.fault		= kvm_gmem_fault_user_mapping,
+	.fault          = kvm_gmem_fault_user_mapping,
 #ifdef CONFIG_NUMA
-	.get_policy	= kvm_gmem_get_policy,
-	.set_policy	= kvm_gmem_set_policy,
+	.get_policy     = kvm_gmem_get_policy,
+	.set_policy     = kvm_gmem_set_policy,
 #endif
+	.can_userfault  = kvm_gmem_can_userfault,
 };
 
 static int kvm_gmem_mmap(struct file *file, struct vm_area_struct *vma)
