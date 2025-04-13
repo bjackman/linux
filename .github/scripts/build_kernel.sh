@@ -15,7 +15,7 @@ scripts/config -e KSM
 scripts/config -e IKCONFIG -e IKCONFIG_PROC # Needed for run_vmtests.sh -t hugevm
 make olddefconfig
 # Build kernel
-make -s -j $(( $(nproc) * 2 )) CC="ccache gcc"
+make -s -j $(( $(nproc) * 2 )) CC="ccache gcc" all headers
 
 # Just extract the important bits, Github is dumb and will copy the whole
 # artifact between jobs every time which takes minutes if you include the whole
