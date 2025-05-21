@@ -1295,7 +1295,8 @@ void __init preallocate_sub_pgd_pages(pgd_t *pgd_table, ulong start,
 	unsigned long addr;
 	const char *lvl;
 
-	for (addr = start; addr <= end; addr = ALIGN(addr + 1, PGDIR_SIZE)) {
+	/* HACK: break when addr==0 to account for wrap when preallocating highest PGD (module area) */
+	for (addr = start; addr && addr <= end; addr = ALIGN(addr + 1, PGDIR_SIZE)) {
 		pgd_t *pgd = pgd_offset_pgd(pgd_table, addr);
 		p4d_t *p4d;
 		pud_t *pud;

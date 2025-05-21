@@ -368,6 +368,9 @@ static int __init asi_global_init(void)
 	preallocate_sub_pgd_pages(asi_global_nonsensitive_pgd,
 				  VMALLOC_START, VMALLOC_END,
 				  "ASI Global Non-sensitive vmalloc");
+	preallocate_sub_pgd_pages(asi_global_nonsensitive_pgd,
+				  MODULES_VADDR, MODULES_END,
+				  "ASI Global Non-sensitive module mappings");
 
 	/* Map all kernel text and static data */
 	err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)__START_KERNEL,
