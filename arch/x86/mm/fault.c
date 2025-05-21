@@ -1593,8 +1593,6 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 	if (kvm_handle_async_pf(regs, (u32)address))
 		return;
 
-	BUG();
-
 	/*
 	 * Entry handling for valid #PF from kernel mode is slightly
 	 * different: RCU is already watching and ct_irq_enter() must not
