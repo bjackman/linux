@@ -1609,7 +1609,7 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 	if (maybe_asi_pf) {
 		pgd_t *pgd;
 
-		BUG_ON((u32)(address >> 32) == 0xfffffffff);
+		BUG_ON((u32)(address >> 32) == 0xffffffff);
 
 		/*
 		 * We only trace if asi_exit() reports that it actually did an
