@@ -3438,12 +3438,12 @@ static __always_inline void *__vmap(struct page **pages, unsigned int count,
 
 	addr = (unsigned long)area->addr;
 	if (contig) {
-		if (vmap_pages_range(addr, addr + size, pgprot_nx(prot),
-				     pages, PAGE_SHIFT) < 0)
-			goto err;
-	} else {
 		if (vmap_page_range(addr, addr + size, page_to_phys(pages[0]),
 				    pgprot_nx(prot)))
+			goto err;
+	} else {
+		if (vmap_pages_range(addr, addr + size, pgprot_nx(prot),
+				     pages, PAGE_SHIFT) < 0)
 			goto err;
 	}
 
