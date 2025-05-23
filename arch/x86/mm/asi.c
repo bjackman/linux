@@ -1008,19 +1008,7 @@ int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
 }
 EXPORT_SYMBOL_IF_KUNIT(asi_map);
 
-/*
- * Unmap a kernel address range previously mapped into the ASI page tables.
- *
- * The area being unmapped must be a whole previously mapped region (or regions)
- * Unmapping a partial subset of a previously mapped region is not supported.
- * That will work, but may end up unmapping more than what was asked for, if
- * the mapping contained huge pages. A later patch will remove this limitation
- * by splitting the huge mapping in the ASI page table in such a case. For now,
- * vunmap_pgd_range() will just emit a warning if this situation is detected.
- *
- * This might sleep, and cannot be called with interrupts disabled.
- */
-void asi_unmap(struct asi *asi, void *addr, size_t len)
+void asi_unmap_noflush(struct asi *asi, void *addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end = start + len;
@@ -1049,7 +1037,23 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 		VM_WARN_ON(!IS_ALIGNED((ulong)addr, PMD_SIZE));
 		VM_WARN_ON(!IS_ALIGNED((ulong)len, PMD_SIZE));
 	}
+}
 
+/*
+ * Unmap a kernel address range previously mapped into the ASI page tables.
+ *
+ * The area being unmapped must be a whole previously mapped region (or regions)
+ * Unmapping a partial subset of a previously mapped region is not supported.
+ * That will work, but may end up unmapping more than what was asked for, if
+ * the mapping contained huge pages. A later patch will remove this limitation
+ * by splitting the huge mapping in the ASI page table in such a case. For now,
+ * vunmap_pgd_range() will just emit a warning if this situation is detected.
+ *
+ * This might sleep, and cannot be called with interrupts disabled.
+ */
+void asi_unmap(struct asi *asi, void *addr, size_t len)
+{
+	asi_unmap_noflush(asi, addr, len);
 	asi_flush_tlb_range(asi, addr, len);
 }
 EXPORT_SYMBOL_IF_KUNIT(asi_unmap);
