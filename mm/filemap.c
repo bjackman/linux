@@ -2607,8 +2607,11 @@ static inline void *vmap_folio(struct folio *folio)
 
 	err = vmap_page_range(addr, addr + folio_size(folio),
 			      PFN_PHYS(folio_pfn(folio)), PAGE_KERNEL);
-	if (WARN(err, "%d", err))
+	if (WARN(err, "%d", err)) {
+		/* Um, not sure about this, hack to avoid leaving behind partial ASI maps. */
+		vunmap_range(addr, addr + folio_size(folio));
 		return NULL;
+	}
 
 	return area->addr;
 }
