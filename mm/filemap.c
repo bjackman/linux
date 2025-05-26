@@ -4077,6 +4077,7 @@ ssize_t generic_perform_write(struct kiocb *iocb, struct iov_iter *i)
 		size_t bytes;		/* Bytes to write to folio */
 		size_t copied;		/* Bytes copied from user */
 		void *fsdata = NULL;
+		void *folio_vm = NULL;
 
 		bytes = iov_iter_count(i);
 retry:
@@ -4112,7 +4113,21 @@ retry:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_folio(folio);
 
-		copied = copy_folio_from_iter_atomic(folio, offset, bytes, i);
+		if (asi_is_restricted())
+			folio_vm = vmap_folio(folio);
+		if (folio_vm) {
+			/*
+			 * TODO: preempt_disable() is my random guess at
+			 * something equivalent to copy_from_iter_atomic(), I
+			 * have not researched this properly.
+			 */
+			preempt_disable();
+			copied = copy_from_iter(folio_vm + offset, bytes, i);
+			preempt_enable();
+			vunmap_folio(folio, folio_vm);
+		} else {
+			copied = copy_folio_from_iter_atomic(folio, offset, bytes, i);
+		}
 		flush_dcache_folio(folio);
 
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
