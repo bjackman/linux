@@ -310,7 +310,15 @@ static int vmap_range_noflush(unsigned long addr, unsigned long end,
 		arch_sync_kernel_mappings(start, end);
 
 	if (!err)
-		err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)start, end - start);
+	 	/*
+		 * Hack: to be able to use vmap() from the page allocator we
+		 * need to avoid infinite recursion, so mark the pagetables as
+		 * sensitive. We don't wanna use vmap() here anyway this is just
+		 * a dumb way to try and see how perf might behave with a more
+		 * realistic soution.
+		 */
+		err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, (void *)start, end - start,
+				  GFP_KERNEL | __GFP_SENSITIVE);
 
 	/*
 	 * TODO: error handling is messy here. Need to asi_unmap().
@@ -610,7 +618,8 @@ static int vmap_small_pages_range_noflush(unsigned long addr, unsigned long end,
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)
 		arch_sync_kernel_mappings(start, end);
 
-	err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)start, end - start);
+	err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, (void *)start, end - start,
+				GFP_KERNEL | __GFP_SENSITIVE);
 
 	return 0;
 }
