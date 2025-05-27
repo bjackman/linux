@@ -279,7 +279,11 @@ static inline void clear_highpage_kasan_tagged(struct page *page)
 {
 	void *kaddr = kmap_local_page(page);
 
-	clear_page(kasan_reset_tag(kaddr));
+	/* TODO: Figure this out, lol */
+	BUILD_BUG_ON(IS_ENABLED(CONFIG_KASAN_SW_TAGS || IS_ENABLED(CONFIG_KASAN_HW_TAGS)));
+	kaddr = kasan_reset_tag(kaddr);
+
+	clear_highpage(page);
 	kunmap_local(kaddr);
 }
 
