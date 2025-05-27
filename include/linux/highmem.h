@@ -10,6 +10,7 @@
 #include <linux/mm.h>
 #include <linux/uaccess.h>
 #include <linux/hardirq.h>
+#include <linux/vmalloc.h>
 
 #include "highmem-internal.h"
 
@@ -237,7 +238,40 @@ struct folio *vma_alloc_zeroed_movable_folio(struct vm_area_struct *vma,
 static inline void clear_highpage(struct page *page)
 {
 	void *kaddr = kmap_local_page(page);
-	clear_page(kaddr);
+	void *vaddr = NULL;
+
+	/*
+	 * We don't want to an ASI exit when we touch this page, but we can't
+	 * generally map it into the restricted address space as it might
+	 * currently contain secrets. But a non-cacheable mapping can't be
+	 * accessed speculatively so from an ASI PoV it's just as good as a
+	 * non-present entry. The inevitable cache miss this causes is probably
+	 * less costly than an ASI exit.
+	 *
+	 * Note the asi_is_restricted() check is racy.
+	 *
+	 * TODO: Batch the mapping operations when clearing multiple pages e.g.
+	 * from kernel_init_pages() and shmem_get_folio_gfp().
+	 *
+	 * TODO: We don't need the full vmap() here. We should probably do
+	 * something like kmap_local_page() but with a non-cacheable bit, and
+	 * which is independent of highmem. The TLB maintenance cost of vmap()
+	 * is probably nicely amortised but we're still calling into a big fat
+	 * allocator with locks and stuff.
+	 *
+	 * TODO: If this isn't really slow, we should also use this for reading
+	 * and writing file pages!
+	 */
+	if (asi_is_restricted()) {
+		vaddr = vmap(&page, 1, VM_MAP, PAGE_KERNEL_NOCACHE);
+	}
+	if (vaddr) {
+		clear_page(vaddr);
+		vunmap(vaddr);
+	} else {
+		clear_page(kaddr);
+	}
+
 	kunmap_local(kaddr);
 }
 
