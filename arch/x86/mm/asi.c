@@ -171,7 +171,7 @@ static level##_t * asi_##level##_alloc(struct asi *asi,			\
 		gfp_t pgtbl_gfp = flags | __GFP_SENSITIVE;		\
 		ulong pgtbl = get_zeroed_page(pgtbl_gfp);		\
 		phys_addr_t pgtbl_pa;					\
-		int err = 0;						\
+		int err;						\
 									\
 		if (!pgtbl)						\
 			return NULL;					\
@@ -186,16 +186,14 @@ static level##_t * asi_##level##_alloc(struct asi *asi,			\
 									\
 		mm_inc_nr_##level##s(asi->mm);				\
 									\
-		if (!(flags & __GFP_SENSITIVE)) {				\
-			err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE,	\
-					(void *)pgtbl, PAGE_SIZE, flags);\
-			if (err)						\
-				/* Should be rare. Spooky. */			\
-				pr_warn_ratelimited("Created sensitive ASI %s (%pK, maps %luK).\n",\
-					#level, (void *)pgtbl, addr);		\
-			else							\
-				__SetPageGlobalNonSensitive(virt_to_page(pgtbl));\
-		}							\
+		err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE,		\
+				  (void *)pgtbl, PAGE_SIZE, flags);	\
+		if (err)						\
+			/* Should be rare. Spooky. */			\
+			pr_warn_ratelimited("Created sensitive ASI %s (%pK, maps %luK).\n",\
+				#level, (void *)pgtbl, addr);		\
+		else							\
+			__SetPageGlobalNonSensitive(virt_to_page(pgtbl));\
 									\
 	}								\
 out:									\
@@ -935,7 +933,7 @@ int __must_check asi_map_gfp(struct asi *asi, void *addr, unsigned long len, gfp
 	/* RFC: fault_in_kernel_space should be renamed. */
 	VM_BUG_ON(!fault_in_kernel_space(start));
 
-	gfp_flags &= (GFP_RECLAIM_MASK | __GFP_SENSITIVE);
+	gfp_flags &= GFP_RECLAIM_MASK;
 
 	if (asi->mm != &init_mm)
 		gfp_flags |= __GFP_ACCOUNT;
