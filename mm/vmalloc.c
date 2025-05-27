@@ -610,6 +610,8 @@ static int vmap_small_pages_range_noflush(unsigned long addr, unsigned long end,
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)
 		arch_sync_kernel_mappings(start, end);
 
+	err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)start, end - start);
+
 	return 0;
 }
 
