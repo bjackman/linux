@@ -24,7 +24,6 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/vfs.h>
-#include <linux/vmalloc.h>
 #include <linux/mount.h>
 #include <linux/ramfs.h>
 #include <linux/pagemap.h>
@@ -3141,8 +3140,6 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		nr -= offset;
 
 		if (folio) {
-			void *vmapped = NULL;
-
 			/*
 			 * If users can be writing to this page using arbitrary
 			 * virtual addresses, take care about potential aliasing
@@ -3159,14 +3156,7 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			 * Ok, we have the page, and it's up-to-date, so
 			 * now we can copy it to user space...
 			 */
-			if (vmap_files != VMAP_FILES_NO || asi_is_restricted())
-				vmapped = vmap_contig(page, DIV_ROUND_UP(nr, PAGE_SIZE), VM_MAP, PAGE_KERNEL);
-			if (vmap_files == VMAP_FILES_YES && vmapped)
-				ret = copy_to_iter(vmapped + offset, nr, to);
-			else
-				ret = copy_page_to_iter(page, offset, nr, to);
-			if (vmapped)
-				vunmap(vmapped);
+			ret = copy_page_to_iter(page, offset, nr, to);
 			folio_put(folio);
 
 		} else if (user_backed_iter(to)) {

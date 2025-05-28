@@ -309,16 +309,6 @@ static int vmap_range_noflush(unsigned long addr, unsigned long end,
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)
 		arch_sync_kernel_mappings(start, end);
 
-	if (!err)
-		err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)start, end - start);
-
-	/*
-	 * TODO: error handling is messy here. Need to asi_unmap().
-	 * Currently leaving it to callers to figure this out.
-	 * In reality this code needs to be thrown away anyway. (I think
-	 * we can just clone the vmalloc pagetables).
-	 */
-
 	return err;
 }
 
@@ -475,8 +465,6 @@ void __vunmap_range_noflush(unsigned long start, unsigned long end)
 
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)
 		arch_sync_kernel_mappings(start, end);
-
-	asi_unmap_noflush(ASI_GLOBAL_NONSENSITIVE, (void *)start, (end - start));
 }
 
 void vunmap_range_noflush(unsigned long start, unsigned long end)
@@ -3366,6 +3354,7 @@ void vfree(const void *addr)
 				addr);
 		return;
 	}
+	asi_unmap(ASI_GLOBAL_NONSENSITIVE, vm->addr, get_vm_area_size(vm));
 
 	if (unlikely(vm->flags & VM_FLUSH_RESET_PERMS))
 		vm_reset_perms(vm);
@@ -3411,17 +3400,28 @@ void vunmap(const void *addr)
 				addr);
 		return;
 	}
-	asi_unmap_noflush(ASI_GLOBAL_NONSENSITIVE, vm->addr, get_vm_area_size(vm));
+	asi_unmap(ASI_GLOBAL_NONSENSITIVE, vm->addr, get_vm_area_size(vm));
 	kfree(vm);
 }
 EXPORT_SYMBOL(vunmap);
 
-/*
- * Must be inlined for __builtin_return_address to work. If @contig, pages
- * points to a single page at the beginning of a contiguous region.
+/**
+ * vmap - map an array of pages into virtually contiguous space
+ * @pages: array of page pointers
+ * @count: number of pages to map
+ * @flags: vm_area->flags
+ * @prot: page protection for the mapping
+ *
+ * Maps @count pages from @pages into contiguous kernel virtual space.
+ * If @flags contains %VM_MAP_PUT_PAGES the ownership of the pages array itself
+ * (which must be kmalloc or vmalloc memory) and one reference per pages in it
+ * are transferred from the caller to vmap(), and will be freed / dropped when
+ * vfree() is called on the return value.
+ *
+ * Return: the address of the area or %NULL on failure
  */
-static __always_inline void *__vmap(struct page **pages, unsigned int count,
-				    unsigned long flags, pgprot_t prot, bool contig)
+void *vmap(struct page **pages, unsigned int count,
+	   unsigned long flags, pgprot_t prot)
 {
 	struct vm_struct *area;
 	unsigned long addr;
@@ -3448,15 +3448,13 @@ static __always_inline void *__vmap(struct page **pages, unsigned int count,
 		return NULL;
 
 	addr = (unsigned long)area->addr;
-	if (contig) {
-		if (vmap_page_range(addr, addr + size, page_to_phys(pages[0]),
-				    pgprot_nx(prot)))
-			goto err;
-	} else {
-		if (vmap_pages_range(addr, addr + size, pgprot_nx(prot),
-				     pages, PAGE_SHIFT) < 0)
-			goto err;
-	}
+	if (vmap_pages_range(addr, addr + size, pgprot_nx(prot),
+				pages, PAGE_SHIFT) < 0)
+		goto err;
+
+	if (asi_map(ASI_GLOBAL_NONSENSITIVE, area->addr,
+		    get_vm_area_size(area)))
+		goto err; /* The necessary asi_unmap() is in vunmap. */
 
 	if (flags & VM_MAP_PUT_PAGES) {
 		area->pages = pages;
@@ -3467,47 +3465,7 @@ err:
 	vunmap(area->addr);
 	return NULL;
 }
-
-/**
- * vmap - map an array of pages into virtually contiguous space
- * @pages: array of page pointers
- * @count: number of pages to map
- * @flags: vm_area->flags
- * @prot: page protection for the mapping
- *
- * Maps @count pages from @pages into contiguous kernel virtual space.
- * If @flags contains %VM_MAP_PUT_PAGES the ownership of the pages array itself
- * (which must be kmalloc or vmalloc memory) and one reference per pages in it
- * are transferred from the caller to vmap(), and will be freed / dropped when
- * vfree() is called on the return value.
- *
- * Return: the address of the area or %NULL on failure
- */
-void *vmap(struct page **pages, unsigned int count,
-	   unsigned long flags, pgprot_t prot)
-{
-	return __vmap(pages, count, flags, prot, false);
-}
 EXPORT_SYMBOL(vmap);
-
-/**
- * vmap_contig - map a contiguous set of pages into virtually contiguous space
- * @pages: pointer to first page
- * @count: number of pages to map
- * @flags: vm_area->flags
- * @prot: page protection for the mapping
- *
- * Like vmap(), but requires that source pages are contigous, enabling a more
- * efficient mechanism.. Why would we need this when there's already a perfectly
- * good contiguous mapping in the physmap? ASI bay beeeeeeee!!
- *
- * Return: the address of the area or %NULL on failure
- */
-void *vmap_contig(struct page *pages, unsigned int count,
-		  unsigned long flags, pgprot_t prot)
-{
-	return __vmap(&pages, count, flags, prot, true);
-}
 
 #ifdef CONFIG_VMAP_PFN
 struct vmap_pfn_data {

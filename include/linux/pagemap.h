@@ -16,14 +16,6 @@
 #include <linux/hardirq.h> /* for in_interrupt() */
 #include <linux/hugetlb_inline.h>
 
-enum vmap_files {
-	VMAP_FILES_NO,
-	VMAP_FILES_ONLY,
-	VMAP_FILES_YES,
-};
-
-extern enum vmap_files vmap_files;
-
 struct folio_batch;
 
 unsigned long invalidate_mapping_pages(struct address_space *mapping,

@@ -4649,9 +4649,8 @@ static int asi_map_alloced_pages(struct page *page, size_t size, gfp_t gfp_mask)
 		 * want_init_on_alloc() because zeroing is required by ASI
 		 * regardless.
 		 */
-		// LOL OLY JKIN zeroing is espenxive don't do that shit!!1
-		// if (!want_init_on_free())
-		// 	kernel_init_pages(page, nr_pages);
+		if (!want_init_on_free())
+			kernel_init_pages(page, nr_pages);
 
 		for (i = 0; i < nr_pages; i++)
 			__SetPageGlobalNonSensitive(page + i);
@@ -4667,7 +4666,7 @@ static int asi_map_alloced_pages(struct page *page, size_t size, gfp_t gfp_mask)
  */
 static inline int asi_defer_init_on_alloc(gfp_t gfp)
 {
-	return false;
+	return static_asi_enabled() && !(gfp & __GFP_SENSITIVE);
 }
 
 #else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */

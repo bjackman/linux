@@ -127,29 +127,6 @@
  *    ->private_lock		(zap_pte_range->block_dirty_folio)
  */
 
-enum vmap_files vmap_files;
-
-static int __init set_vmap_files(char *str)
-{
-	if (str && !strncmp(str, "no", sizeof("no"))) {
-		printk("vmap_files: Not doing it");
-		vmap_files = VMAP_FILES_NO;
-	} else if (str && !strncmp(str, "only", sizeof("only"))) {
-		printk("vmap_files: Only vmapping it, not using the result");
-		vmap_files = VMAP_FILES_ONLY;
-	} else if (str && !strncmp(str, "yes", sizeof("yes"))) {
-		printk("vmap_files: vmapping file pages");
-		vmap_files = VMAP_FILES_YES;
-	} else {
-		printk("vmap_files: no understando: %s\n", str);
-		return 1;
-	}
-
-	return 0;
-}
-
-early_param("vmap_files", set_vmap_files);
-
 static void mapping_set_update(struct xa_state *xas,
 		struct address_space *mapping)
 {
@@ -2630,11 +2607,8 @@ static inline void *vmap_folio(struct folio *folio)
 
 	err = vmap_page_range(addr, addr + folio_size(folio),
 			      PFN_PHYS(folio_pfn(folio)), PAGE_KERNEL);
-	if (WARN(err, "%d", err)) {
-		/* Um, not sure about this, hack to avoid leaving behind partial ASI maps. */
-		vunmap_range(addr, addr + folio_size(folio));
+	if (WARN(err, "%d", err))
 		return NULL;
-	}
 
 	return area->addr;
 }
@@ -2749,24 +2723,7 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 			if (writably_mapped)
 				flush_dcache_folio(folio);
 
-			/*
-			 * If in the ASI restricted addres space, read via a
-			 * virtual mapping to avoid an ASI exit.
-			 * TODO: this should be in a process-local mapping.
-			 * TODO: need to ensure TLB is flushed before file gets
-			 * closed or pages get evicted.
-			 * TODO: Is it really slow to mess with vmalloc in this
-			 * path?
-			 * TODOO: Anyway, we should probably at least map the
-			 * whole folio batch at once instead of messing with
-			 * vmalloc for every individual folio.
-			 */
-			if (vmap_files != VMAP_FILES_NO || asi_is_restricted())
-				folio_vm = vmap_folio(folio);
-			if (vmap_files == VMAP_FILES_YES && folio_vm)
-				copied = copy_to_iter(folio_vm + offset, bytes, iter);
-			else
-				copied = copy_folio_to_iter(folio, offset, bytes, iter);
+			copied = copy_folio_to_iter(folio, offset, bytes, iter);
 			if (folio_vm)
 				vunmap_folio(folio, folio_vm);
 
@@ -4103,7 +4060,6 @@ ssize_t generic_perform_write(struct kiocb *iocb, struct iov_iter *i)
 		size_t bytes;		/* Bytes to write to folio */
 		size_t copied;		/* Bytes copied from user */
 		void *fsdata = NULL;
-		void *folio_vm = NULL;
 
 		bytes = iov_iter_count(i);
 retry:
@@ -4139,21 +4095,7 @@ retry:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_folio(folio);
 
-		if (vmap_files || asi_is_restricted())
-			folio_vm = vmap_folio(folio);
-		if (folio_vm) {
-			/*
-			 * TODO: preempt_disable() is my random guess at
-			 * something equivalent to copy_from_iter_atomic(), I
-			 * have not researched this properly.
-			 */
-			preempt_disable();
-			copied = copy_from_iter(folio_vm + offset, bytes, i);
-			preempt_enable();
-			vunmap_folio(folio, folio_vm);
-		} else {
-			copied = copy_folio_from_iter_atomic(folio, offset, bytes, i);
-		}
+		copied = copy_folio_from_iter_atomic(folio, offset, bytes, i);
 		flush_dcache_folio(folio);
 
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
