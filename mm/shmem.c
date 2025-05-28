@@ -3159,15 +3159,14 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			 * Ok, we have the page, and it's up-to-date, so
 			 * now we can copy it to user space...
 			 */
-			if (vmap_files || asi_is_restricted()) {
+			if (vmap_files != VMAP_FILES_NO || asi_is_restricted())
 				vmapped = vmap_contig(page, DIV_ROUND_UP(nr, PAGE_SIZE), VM_MAP, PAGE_KERNEL);
-			}
-			if (vmapped)  {
+			if (vmap_files == VMAP_FILES_YES && vmapped)
 				ret = copy_to_iter(vmapped + offset, nr, to);
-				vunmap(vmapped);
-			} else {
+			else
 				ret = copy_page_to_iter(page, offset, nr, to);
-			}
+			if (vmapped)
+				vunmap(vmapped);
 			folio_put(folio);
 
 		} else if (user_backed_iter(to)) {

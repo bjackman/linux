@@ -127,13 +127,27 @@
  *    ->private_lock		(zap_pte_range->block_dirty_folio)
  */
 
-bool vmap_files;
+enum vmap_files vmap_files;
 
 static int __init set_vmap_files(char *str)
 {
-	vmap_files = true;
+	if (str && !strncmp(str, "no", sizeof("no"))) {
+		printk("vmap_files: Not doing it");
+		vmap_files = VMAP_FILES_NO;
+	} else if (str && !strncmp(str, "only", sizeof("only"))) {
+		printk("vmap_files: Only vmapping it, not using the result");
+		vmap_files = VMAP_FILES_ONLY;
+	} else if (str && !strncmp(str, "yes", sizeof("yes"))) {
+		printk("vmap_files: vmapping file pages");
+		vmap_files = VMAP_FILES_YES;
+	} else {
+		printk("vmap_files: no understando: %s\n", str);
+		return 1;
+	}
+
 	return 0;
 }
+
 early_param("vmap_files", set_vmap_files);
 
 static void mapping_set_update(struct xa_state *xas,
@@ -2747,14 +2761,14 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 			 * whole folio batch at once instead of messing with
 			 * vmalloc for every individual folio.
 			 */
-			if (vmap_files || asi_is_restricted())
+			if (vmap_files != VMAP_FILES_NO || asi_is_restricted())
 				folio_vm = vmap_folio(folio);
-			if (folio_vm) {
+			if (vmap_files == VMAP_FILES_YES && folio_vm)
 				copied = copy_to_iter(folio_vm + offset, bytes, iter);
-				vunmap_folio(folio, folio_vm);
-			} else {
+			else
 				copied = copy_folio_to_iter(folio, offset, bytes, iter);
-			}
+			if (folio_vm)
+				vunmap_folio(folio, folio_vm);
 
 			already_read += copied;
 			iocb->ki_pos += copied;
