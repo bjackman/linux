@@ -3159,7 +3159,7 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			 * Ok, we have the page, and it's up-to-date, so
 			 * now we can copy it to user space...
 			 */
-			if (asi_is_restricted()) {
+			if (vmap_files || asi_is_restricted()) {
 				vmapped = vmap_contig(page, DIV_ROUND_UP(nr, PAGE_SIZE), VM_MAP, PAGE_KERNEL);
 			}
 			if (vmapped)  {

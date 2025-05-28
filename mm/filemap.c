@@ -127,6 +127,15 @@
  *    ->private_lock		(zap_pte_range->block_dirty_folio)
  */
 
+bool vmap_files;
+
+static int __init set_vmap_files(char *str)
+{
+	vmap_files = true;
+	return 0;
+}
+early_param("vmap_files", set_vmap_files);
+
 static void mapping_set_update(struct xa_state *xas,
 		struct address_space *mapping)
 {
@@ -2738,7 +2747,7 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 			 * whole folio batch at once instead of messing with
 			 * vmalloc for every individual folio.
 			 */
-			if (asi_is_restricted())
+			if (vmap_files || asi_is_restricted())
 				folio_vm = vmap_folio(folio);
 			if (folio_vm) {
 				copied = copy_to_iter(folio_vm + offset, bytes, iter);
@@ -4116,7 +4125,7 @@ retry:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_folio(folio);
 
-		if (asi_is_restricted())
+		if (vmap_files || asi_is_restricted())
 			folio_vm = vmap_folio(folio);
 		if (folio_vm) {
 			/*

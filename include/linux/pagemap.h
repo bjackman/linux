@@ -16,6 +16,8 @@
 #include <linux/hardirq.h> /* for in_interrupt() */
 #include <linux/hugetlb_inline.h>
 
+extern bool vmap_files;
+
 struct folio_batch;
 
 unsigned long invalidate_mapping_pages(struct address_space *mapping,
