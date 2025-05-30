@@ -210,8 +210,6 @@ static void do_sanity_check(struct mm_struct *mm,
 	}
 }
 
-#ifdef CONFIG_X86_PAE
-
 static pmd_t *pgd_to_pmd_walk(pgd_t *pgd, unsigned long va)
 {
 	p4d_t *p4d;
@@ -258,27 +256,6 @@ static void sanity_check_ldt_mapping(struct mm_struct *mm)
 
 	do_sanity_check(mm, had_kernel, had_user);
 }
-
-#else /* !CONFIG_X86_PAE */
-
-static void map_ldt_struct_to_user(struct mm_struct *mm)
-{
-	pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
-
-	if (boot_cpu_has(X86_FEATURE_PTI) && !mm->context.ldt)
-		set_pgd(kernel_to_user_pgdp(pgd), *pgd);
-}
-
-static void sanity_check_ldt_mapping(struct mm_struct *mm)
-{
-	pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
-	bool had_kernel = (pgd->pgd != 0);
-	bool had_user   = (kernel_to_user_pgdp(pgd)->pgd != 0);
-
-	do_sanity_check(mm, had_kernel, had_user);
-}
-
-#endif /* CONFIG_X86_PAE */
 
 /*
  * If PTI is enabled, this maps the LDT into the kernelmode and
