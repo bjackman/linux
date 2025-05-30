@@ -21,6 +21,8 @@
  * This file is released under the GPL.
  */
 
+#include "linux/lockdep.h"
+#include "linux/percpu-defs.h"
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/vfs.h>
@@ -36,10 +38,12 @@
 #include <linux/shmem_fs.h>
 #include <linux/swap.h>
 #include <linux/uio.h>
+#include <linux/vmalloc.h>
 #include <linux/hugetlb.h>
 #include <linux/fs_parser.h>
 #include <linux/swapfile.h>
 #include <linux/iversion.h>
+#include <asm/io.h>
 #include "swap.h"
 
 static struct vfsmount *shm_mnt __ro_after_init;
@@ -3075,6 +3079,115 @@ shmem_write_end(struct file *file, struct address_space *mapping,
 	return copied;
 }
 
+void *ephemeral_filemap;
+
+static void __init init_ephemeral_filemap(void)
+{
+	unsigned long size = mapping_max_folio_size_supported() * NR_CPUS;
+	struct vm_struct *area;
+	unsigned long addr;
+
+	/* TODO: can max folio size change? */
+	/* TODO: this should be mm-local. */
+	/* TODO: Need to clone this into the ASI pagetables! */
+	area = get_vm_area(size, VM_ALLOC);
+	if (!area)
+		return;
+
+	ephemeral_filemap = area->addr;
+
+	/*
+	 * Hack to preallocate pagetables so we know that vmap_page_range()
+	 * won't sleep. Create and then teardown pages. Because we set
+	 * max_page_shift to 0 this will allocate down to the PTE. vmalloc
+	 * doesn't free pagetables so this just sets up a maximally fragmented
+	 * area.
+	 *
+	 * Alternatives here would be to just use GFP atomic in
+	 * get_ephemeral_filemap() (note it's fine for it to fail occasionally),
+	 * or to set up some new pagetable magic where we can preallocate down
+	 * to PTE but still use huge pages over the top, i.e. set up some
+	 * software data structure to track the preallocated lower-level tables.
+	 * Anyway this is still just garbage throwaway code.
+	 */
+	addr = (unsigned long)ephemeral_filemap;
+	vmap_range_noflush(addr, addr + size, 0, PAGE_NONE, 0);
+	vunmap_range(addr, addr + size);
+}
+
+// struct cpu_ephemeral_filemap {
+// 	unsigned long mapped_pfn;
+// 	unsigned long pfns_mapped;
+// };
+// DEFINE_PER_CPU_ALIGNED(struct cpu_ephemeral_filemap, cpu_ephemeral_filemap);
+
+static void *get_ephemeral_filemap(struct page *page, unsigned long size)
+{
+	unsigned long addr = (unsigned long) ephemeral_filemap +
+		(mapping_max_folio_size_supported() * smp_processor_id());
+
+	size = PAGE_ALIGN(size);
+
+	/*
+	 * TODO: when ephemeral_mapping is mm-local, we
+	 * only need migrate_disable()
+	 */
+	// lockdep_assert(is_migration_disabled());
+	lockdep_assert(!in_hardirq() && !in_softirq());
+	BUG_ON(size > mapping_max_folio_size_supported());
+
+	vmap_page_range(addr, addr + size, page_to_phys(page), PAGE_KERNEL);
+	/*
+	 * TODO: Instead of ASI mapping here, once this is an mm-local region it
+	 * can just be a cloned PGD entry.
+	 */
+	asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)addr, size);
+
+	return (void *)addr;
+
+}
+
+static void put_ephemeral_filemap(void *vaddr, unsigned long size)
+{
+	unsigned long addr = (unsigned long)vaddr;
+
+	size = PAGE_ALIGN(size);
+
+	asi_unmap_noflush(ASI_GLOBAL_NONSENSITIVE, (void *)addr, size);
+	vunmap_range_noflush(addr, addr + size);
+
+	/*
+	 * TODO: Could reuse the mapping if it's the same folio as last time. We
+	 * could also allocate from a larger buffer and only TLB flush when it's
+	 * full (or pages get evited etc), batching them up.
+	 * Actually, some sort of complexity like this is required for security,
+	 * because we need to ensure other CPUs in the mm flush their TLBs
+	 * before they lose logical access to the page.
+	 */
+	/* TODO: create a proper API for this type of flush. */
+	/*
+	 * Need to flush restricted and unrestricted address space. Do not need
+	 * to flush user address space if that exists, and do not need to
+	 * invalidate any others.
+	 *
+	 * In this simplistic code, ASI address transitions never set
+	 * CR3.noflush so we don't need to account for the "other" address
+	 * space, just ensure we flush whatever we're currently in.
+	 */
+	if (size >> PAGE_SHIFT < 33) {
+		for (unsigned long offset = 0; offset < size; offset += PAGE_SIZE)
+			asm volatile("invlpg (%0)" ::"r" (addr + offset) : "memory");
+	} else {
+		/*
+		 * TODO: Um, I think there has to be a way to avoid flushing
+		 * other PCIDs here. Just need to flush "both" PCIDs for the
+		 * current ASI domain (bearing in mind the current lack of
+		 * CR3.noflush). But anyway this is throwaway code.
+		 */
+		invpcid_flush_all();
+	}
+}
+
 static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct file *file = iocb->ki_filp;
@@ -3156,7 +3269,25 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			 * Ok, we have the page, and it's up-to-date, so
 			 * now we can copy it to user space...
 			 */
-			ret = copy_page_to_iter(page, offset, nr, to);
+
+			if (asi_is_restricted()) {
+				void *ephemeral;
+
+				/*
+				 * TODO: migrate_disable() only actually works if
+				 * ephemeral mapping is mm-local
+				 *
+				 * TODO: How bad is it if we fault in
+				 * migrate_disable()?
+				 */
+				migrate_disable();
+				ephemeral = get_ephemeral_filemap(page, offset + nr);
+				ret = copy_to_iter(ephemeral + offset, nr, to);
+				put_ephemeral_filemap(ephemeral, offset + nr);
+				migrate_disable();
+			} else {
+				ret = copy_page_to_iter(page, offset, nr, to);
+			}
 			folio_put(folio);
 
 		} else if (user_backed_iter(to)) {
@@ -4949,6 +5080,8 @@ static struct file_system_type shmem_fs_type = {
 void __init shmem_init(void)
 {
 	int error;
+
+	init_ephemeral_filemap();
 
 	shmem_init_inodecache();
 

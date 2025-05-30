@@ -1020,7 +1020,7 @@ EXPORT_SYMBOL_IF_KUNIT(asi_map);
  *
  * This might sleep, and cannot be called with interrupts disabled.
  */
-void asi_unmap(struct asi *asi, void *addr, size_t len)
+void asi_unmap_noflush(struct asi *asi, void *addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end = start + len;
@@ -1049,7 +1049,11 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 		VM_WARN_ON(!IS_ALIGNED((ulong)addr, PMD_SIZE));
 		VM_WARN_ON(!IS_ALIGNED((ulong)len, PMD_SIZE));
 	}
+}
 
+void asi_unmap(struct asi *asi, void *addr, size_t len)
+{
+	asi_unmap_noflush(asi, addr, len);
 	asi_flush_tlb_range(asi, addr, len);
 }
 EXPORT_SYMBOL_IF_KUNIT(asi_unmap);

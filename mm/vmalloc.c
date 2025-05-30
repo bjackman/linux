@@ -283,7 +283,7 @@ static int vmap_p4d_range(pgd_t *pgd, unsigned long addr, unsigned long end,
 	return 0;
 }
 
-static int vmap_range_noflush(unsigned long addr, unsigned long end,
+int vmap_range_noflush(unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
 			unsigned int max_page_shift)
 {
@@ -293,7 +293,8 @@ static int vmap_range_noflush(unsigned long addr, unsigned long end,
 	int err;
 	pgtbl_mod_mask mask = 0;
 
-	might_sleep();
+	// TODO: Put this back. Need a proper atomic mapping func.
+	// might_sleep();
 	BUG_ON(addr >= end);
 
 	start = addr;
