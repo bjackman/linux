@@ -31,6 +31,8 @@
 
 #include <xen/xen.h>
 
+/* LDTs are double-buffered, the buffers are called slots. */
+#define LDT_NUM_SLOTS		2
 /* This is a multiple of PAGE_SIZE. */
 #define LDT_SLOT_STRIDE (LDT_ENTRIES * LDT_ENTRY_SIZE)
 
@@ -238,6 +240,7 @@ static void map_ldt_struct_to_user(struct mm_struct *mm)
 	k_pmd = pgd_to_pmd_walk(k_pgd, LDT_BASE_ADDR);
 	u_pmd = pgd_to_pmd_walk(u_pgd, LDT_BASE_ADDR);
 
+	BUILD_BUG_ON(LDT_SLOT_STRIDE * LDT_NUM_SLOTS > PMD_SIZE);
 	if (boot_cpu_has(X86_FEATURE_PTI) && !mm->context.ldt)
 		set_pmd(u_pmd, *k_pmd);
 }
