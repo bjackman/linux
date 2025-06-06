@@ -107,6 +107,8 @@ static inline int asi_map(struct asi *asi, void *addr, size_t len)
 static inline bool asi_is_mapped(struct asi *asi, void *addr) { return false; }
 
 static inline
+void asi_unmap_noflush(struct asi *asi, void *addr, size_t len) { }
+static inline
 void asi_unmap(struct asi *asi, void *addr, size_t len) { }
 
 static inline
