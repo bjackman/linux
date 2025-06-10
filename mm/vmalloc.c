@@ -293,8 +293,7 @@ int vmap_range_noflush(unsigned long addr, unsigned long end,
 	int err;
 	pgtbl_mod_mask mask = 0;
 
-	// TODO: Put this back. Need a proper atomic mapping func.
-	// might_sleep();
+	might_sleep();
 	BUG_ON(addr >= end);
 
 	start = addr;

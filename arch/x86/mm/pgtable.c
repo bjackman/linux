@@ -7,6 +7,8 @@
 #include <asm/fixmap.h>
 #include <asm/mtrr.h>
 
+#include "mm_internal.h"
+
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
 EXPORT_SYMBOL(physical_mask);
@@ -435,6 +437,7 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	pgd_t *pgd;
 	pmd_t *u_pmds[MAX_PREALLOCATED_USER_PMDS];
 	pmd_t *pmds[MAX_PREALLOCATED_PMDS];
+	struct ptdesc *mm_local_pt;
 
 	pgd = _pgd_alloc();
 
@@ -454,6 +457,19 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	if (paravirt_pgd_alloc(mm) != 0)
 		goto out_free_user_pmds;
 
+	mm_local_pt = pagetable_alloc(GFP_PGTABLE_USER, 0);
+	if (!mm_local_pt)
+		goto out_pv_free_pgd;
+
+	/*
+	 * So that ASI's restricted pagetables can just clone the mm-local PGD
+	 * entry (sharing lower-level structures), pre-populate it now.
+	 */
+	if (static_asi_enabled())
+		/* TODO: Make MM_LOCAL_END non-inclusive like VMEMORY_END? */
+		preallocate_sub_pgd_pages(pgd, MM_LOCAL_BASE_ADDR,
+					  MM_LOCAL_END - 1, "mm-local");
+
 	/*
 	 * Make sure that pre-populating the pmds is atomic with
 	 * respect to anything walking the pgd_list, so that they
@@ -472,6 +488,8 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 
 	return pgd;
 
+out_pv_free_pgd:
+	paravirt_pgd_free(mm, pgd);
 out_free_user_pmds:
 	if (sizeof(u_pmds) != 0)
 		free_pmds(mm, u_pmds, PREALLOCATED_USER_PMDS);

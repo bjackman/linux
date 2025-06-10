@@ -1609,6 +1609,20 @@ struct task_struct {
 	 */
 };
 
+/*
+ * TODO: think I'm doing something wrong here. Nobody else ever uses migration
+ * disabled for synchronization. And also this returns false on !SMP which
+ * suggests it is really not intended for this usecase.
+ */
+static inline bool is_migration_disabled(struct task_struct *p)
+{
+#ifdef CONFIG_SMP
+	return p->migration_disabled;
+#else
+	return false;
+#endif
+}
+
 #define TASK_REPORT_IDLE	(TASK_REPORT + 1)
 #define TASK_REPORT_MAX		(TASK_REPORT_IDLE << 1)
 

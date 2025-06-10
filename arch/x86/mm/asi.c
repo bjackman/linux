@@ -503,6 +503,17 @@ int asi_init(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_
 	asi->class_id = class_id;
 	spin_lock_init(&asi->pgd_lock);
 
+	/*
+	 * The mm-local region is shared with the process' unrestricted addres
+	 * space. It's assumed that we don't keep anything in there that is
+	 * important to keep from the process that owns it.
+	 *
+	 * The lower level table should have been pre-allocated and installed in
+	 * the unrestricted address space in the fork path.
+	 */
+	BUG_ON(pgd_none(*pgd_offset(mm, MM_LOCAL_BASE_ADDR)));
+	asi_clone_pgd(asi->pgd, mm->pgd, MM_LOCAL_BASE_ADDR);
+
 	for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
 		set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 

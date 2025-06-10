@@ -21,8 +21,10 @@
  * This file is released under the GPL.
  */
 
+#include "asm/pgtable_64_types.h"
 #include "linux/lockdep.h"
 #include "linux/percpu-defs.h"
+#include "linux/sched.h"
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/vfs.h>
@@ -3079,82 +3081,20 @@ shmem_write_end(struct file *file, struct address_space *mapping,
 	return copied;
 }
 
-void *ephemeral_filemap;
-
-static void __init init_ephemeral_filemap(void)
-{
-	unsigned long size = mapping_max_folio_size_supported() * NR_CPUS;
-	struct vm_struct *area;
-	unsigned long addr;
-
-	/* TODO: can max folio size change? */
-	/* TODO: this should be mm-local. */
-	/* TODO: Need to clone this into the ASI pagetables! */
-	area = get_vm_area(size, VM_ALLOC);
-	if (!area)
-		return;
-
-	ephemeral_filemap = area->addr;
-
-	/*
-	 * Hack to preallocate pagetables so we know that vmap_page_range()
-	 * won't sleep. Create and then teardown pages. Because we set
-	 * max_page_shift to 0 this will allocate down to the PTE. vmalloc
-	 * doesn't free pagetables so this just sets up a maximally fragmented
-	 * area.
-	 *
-	 * Alternatives here would be to just use GFP atomic in
-	 * get_ephemeral_filemap() (note it's fine for it to fail occasionally),
-	 * or to set up some new pagetable magic where we can preallocate down
-	 * to PTE but still use huge pages over the top, i.e. set up some
-	 * software data structure to track the preallocated lower-level tables.
-	 * Anyway this is still just garbage throwaway code.
-	 */
-	addr = (unsigned long)ephemeral_filemap;
-	vmap_range_noflush(addr, addr + size, 0, PAGE_NONE, 0);
-	vunmap_range(addr, addr + size);
-}
-
-// struct cpu_ephemeral_filemap {
-// 	unsigned long mapped_pfn;
-// 	unsigned long pfns_mapped;
-// };
-// DEFINE_PER_CPU_ALIGNED(struct cpu_ephemeral_filemap, cpu_ephemeral_filemap);
-
-static void *get_ephemeral_filemap(struct page *page, unsigned long size)
-{
-	unsigned long addr = (unsigned long) ephemeral_filemap +
-		(mapping_max_folio_size_supported() * smp_processor_id());
-
-	size = PAGE_ALIGN(size);
-
-	/*
-	 * TODO: when ephemeral_mapping is mm-local, we
-	 * only need migrate_disable()
-	 */
-	// lockdep_assert(is_migration_disabled());
-	lockdep_assert(!in_hardirq() && !in_softirq());
-	BUG_ON(size > mapping_max_folio_size_supported());
-
-	vmap_page_range(addr, addr + size, page_to_phys(page), PAGE_KERNEL);
-	/*
-	 * TODO: Instead of ASI mapping here, once this is an mm-local region it
-	 * can just be a cloned PGD entry.
-	 */
-	asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)addr, size);
-
-	return (void *)addr;
-
-}
+/*
+ * Each CPU gets a chunk of the ephemeral mapping the size of the maximum folio
+ * size.
+ */
+#define EPHMAP_CPU_REGION_SIZE (PAGE_SIZE << MAX_PAGECACHE_ORDER)
 
 static void put_ephemeral_filemap(void *vaddr, unsigned long size)
 {
 	unsigned long addr = (unsigned long)vaddr;
+	pgtbl_mod_mask mask_unused;
 
 	size = PAGE_ALIGN(size);
 
-	asi_unmap_noflush(ASI_GLOBAL_NONSENSITIVE, (void *)addr, size);
-	vunmap_range_noflush(addr, addr + size);
+	vunmap_pgd_range(current->mm->pgd, addr, addr + size, &mask_unused);
 
 	/*
 	 * TODO: Could reuse the mapping if it's the same folio as last time. We
@@ -3186,6 +3126,151 @@ static void put_ephemeral_filemap(void *vaddr, unsigned long size)
 		 */
 		invpcid_flush_all();
 	}
+
+	this_cpu_write(current->mm->mml_cpu->in_use, false);
+}
+
+/*
+ * TODO: ERRRR this is copied from vmalloc.c but it handles being in an mm-local
+ * region. Need to figure out how to best structure this.  I just deleted the
+ * kmsan and hugepage stuff. I assume the accounting is wrong here.
+ */
+static int map_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+			phys_addr_t phys_addr, pgprot_t prot)
+{
+	pte_t *pte;
+	u64 pfn;
+	struct page *page;
+	unsigned long size = PAGE_SIZE;
+
+	pfn = phys_addr >> PAGE_SHIFT;
+	pte = pte_alloc_map(current->mm, pmd, addr);
+	if (!pte)
+		return -ENOMEM;
+	do {
+		if (unlikely(!pte_none(ptep_get(pte)))) {
+			if (pfn_valid(pfn)) {
+				page = pfn_to_page(pfn);
+				dump_page(page, "remapping already mapped page");
+			}
+			BUG();
+		}
+
+		set_pte_at(current->mm, addr, pte, pfn_pte(pfn, prot));
+		pfn++;
+	} while (pte += PFN_DOWN(size), addr += size, addr != end);
+	pte_unmap(pte);
+	return 0;
+}
+static int map_pmd_range(pud_t *pud, unsigned long addr, unsigned long end,
+			phys_addr_t phys_addr, pgprot_t prot)
+{
+	pmd_t *pmd;
+	unsigned long next;
+
+	pmd = pmd_alloc(current->mm, pud, addr);
+	if (!pmd)
+		return -ENOMEM;
+	do {
+		next = pmd_addr_end(addr, end);
+
+		if (map_pte_range(pmd, addr, next, phys_addr, prot))
+			return -ENOMEM;
+	} while (pmd++, phys_addr += (next - addr), addr = next, addr != end);
+	return 0;
+}
+static int map_pud_range(p4d_t *p4d, unsigned long addr, unsigned long end,
+			phys_addr_t phys_addr, pgprot_t prot)
+{
+	pud_t *pud;
+	unsigned long next;
+
+	pud = pud_alloc(current->mm, p4d, addr);
+	if (!pud)
+		return -ENOMEM;
+	do {
+		next = pud_addr_end(addr, end);
+
+		if (map_pmd_range(pud, addr, next, phys_addr, prot))
+			return -ENOMEM;
+	} while (pud++, phys_addr += (next - addr), addr = next, addr != end);
+	return 0;
+}
+static inline int map_p4d_range(pgd_t *pgd, unsigned long addr, unsigned long end,
+			phys_addr_t phys_addr, pgprot_t prot)
+{
+	p4d_t *p4d;
+	unsigned long next;
+
+	p4d = p4d_alloc(current->mm, pgd, addr);
+	if (!p4d)
+		return -ENOMEM;
+	do {
+		next = p4d_addr_end(addr, end);
+
+		if (map_pud_range(p4d, addr, next, phys_addr, prot))
+			return -ENOMEM;
+	} while (p4d++, phys_addr += (next - addr), addr = next, addr != end);
+	return 0;
+}
+static inline int map_page_range(unsigned long addr, unsigned long end,
+		    phys_addr_t phys_addr, pgprot_t prot)
+{
+	pgd_t *pgd;
+	unsigned long start;
+	unsigned long next;
+	int err;
+
+	might_sleep();
+	BUG_ON(addr >= end);
+
+	start = addr;
+	pgd = pgd_offset_pgd(current->mm->pgd, addr);
+	do {
+		next = pgd_addr_end(addr, end);
+		err = map_p4d_range(pgd, addr, next, phys_addr, prot);
+		if (err)
+			break;
+	} while (pgd++, phys_addr += (next - addr), addr = next, addr != end);
+
+	return err;
+}
+
+
+static void *get_ephemeral_filemap(struct page *page, unsigned long size)
+{
+	unsigned long addr;
+	void *ptr;
+
+	lockdep_assert(is_migration_disabled(current));
+
+	if (this_cpu_xchg(current->mm->mml_cpu->in_use, true)) {
+		/* Another thread in this mm is using it */
+		return NULL;
+	}
+
+	/* TODO: Make it a BUILD_BUG_ON (annoying because PGD size is variable). */
+	BUG_ON(EPHEMERAL_FILEMAP_BASE_ADDR + (NR_CPUS * EPHMAP_CPU_REGION_SIZE) > MM_LOCAL_END);
+
+	addr = EPHEMERAL_FILEMAP_BASE_ADDR + (smp_processor_id() * EPHMAP_CPU_REGION_SIZE);
+	size = PAGE_ALIGN(size);
+	ptr = (void *)addr;
+
+	/*
+	 * This contends for mm->page_table_lock during allocation but
+	 * after that it just relies on the caller not to race with overlapping
+	 * ranges.
+	 *
+	 * We don't need to asi_map() this region as it's already cloned into
+	 * the restricted address space.
+	 */
+	if (map_page_range(addr, addr + size, page_to_phys(page), PAGE_KERNEL)) {
+		put_ephemeral_filemap(ptr, size);
+		return NULL;
+	}
+
+	return ptr;
+
 }
 
 static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
@@ -3274,18 +3359,24 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 				void *ephemeral;
 
 				/*
-				 * TODO: migrate_disable() only actually works if
-				 * ephemeral mapping is mm-local
-				 *
 				 * TODO: How bad is it if we fault in
 				 * migrate_disable()?
+				 *
+				 * TODO: this is honestly the worst code I've
+				 * ever written in my life, and I am trained in
+				 * Visual Basic 6.
 				 */
 				migrate_disable();
 				ephemeral = get_ephemeral_filemap(page, offset + nr);
+				if (!ephemeral) {
+					migrate_enable();
+					goto non_ephemeral;
+				}
 				ret = copy_to_iter(ephemeral + offset, nr, to);
 				put_ephemeral_filemap(ephemeral, offset + nr);
-				migrate_disable();
+				migrate_enable();
 			} else {
+non_ephemeral:
 				ret = copy_page_to_iter(page, offset, nr, to);
 			}
 			folio_put(folio);
@@ -5080,8 +5171,6 @@ static struct file_system_type shmem_fs_type = {
 void __init shmem_init(void)
 {
 	int error;
-
-	init_ephemeral_filemap();
 
 	shmem_init_inodecache();
 

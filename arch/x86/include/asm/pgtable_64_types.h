@@ -51,6 +51,8 @@ extern unsigned int ptrs_per_p4d;
 #define LDT_REMAP_SIZE		PMD_SIZE
 #define LDT_END_ADDR		(LDT_BASE_ADDR + LDT_REMAP_SIZE)
 
+#define EPHEMERAL_FILEMAP_BASE_ADDR	LDT_END_ADDR
+
 #endif	/* !__ASSEMBLY__ */
 
 #define SHARED_KERNEL_PMD	0
@@ -126,7 +128,7 @@ extern unsigned int ptrs_per_p4d;
 
 #define MM_LOCAL_PGD_ENTRY	-240UL
 #define MM_LOCAL_BASE_ADDR	(MM_LOCAL_PGD_ENTRY << PGDIR_SHIFT)
-#define MM_LOCAL_END		(MM_LOCAL_PGD_ENTRY << PGDIR_SHIFT)
+#define MM_LOCAL_END		((MM_LOCAL_PGD_ENTRY + 1) << PGDIR_SHIFT)
 
 #define __VMALLOC_BASE_L4	0xffffc90000000000UL
 #define __VMALLOC_BASE_L5 	0xffa0000000000000UL

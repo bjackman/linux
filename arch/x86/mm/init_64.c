@@ -1289,8 +1289,8 @@ static void __init register_page_bootmem_info(void)
 }
 
 /* Initialize empty pagetables at the level below PGD.  */
-void __init preallocate_sub_pgd_pages(pgd_t *pgd_table, ulong start,
-				      ulong end, const char *name)
+void preallocate_sub_pgd_pages(pgd_t *pgd_table, ulong start,
+			       ulong end, const char *name)
 {
 	unsigned long addr;
 	const char *lvl;

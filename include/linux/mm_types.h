@@ -787,6 +787,11 @@ struct mm_cid {
 };
 #endif
 
+/* TODO: this doesn't belong here. */
+struct mml_cpu {
+	bool in_use;
+};
+
 struct kioctx_table;
 struct iommu_mm_data;
 struct mm_struct {
@@ -832,6 +837,7 @@ struct mm_struct {
 		struct asi asi[ASI_MAX_NUM_CLASSES];
 		struct mutex asi_init_lock;
 #endif
+		struct mml_cpu __percpu *mml_cpu;
 
 		/**
 		 * @mm_users: The number of users including userspace.
