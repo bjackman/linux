@@ -27,5 +27,6 @@ extern unsigned long tlb_single_page_flush_ceiling;
 
 extern void preallocate_sub_pgd_pages(pgd_t *pgd_table, ulong start,
 				      ulong end, const char *name);
+extern void free_sub_pgd_pages(pgd_t *pgd_table, ulong start, ulong end);
 
 #endif	/* __X86_MM_INTERNAL_H */

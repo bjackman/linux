@@ -1336,6 +1336,68 @@ failed:
 }
 
 /*
+ * Free pages allocated by preallocate_sub_pgd_pages(). Frees them
+ * unconditionally, so this is only correct if you're sure the region was
+ * pgd_none() before you called preallocate_sub_pgd_pages().
+ * This will warn if you haven't already cleared the range.
+ */
+void free_sub_pgd_pages(pgd_t *pgd_table, ulong start, ulong end)
+{
+	unsigned long addr;
+
+	for (addr = start; addr <= end; addr = ALIGN(addr + 1, PGDIR_SIZE)) {
+		pgd_t *pgd = pgd_offset_pgd(pgd_table, addr);
+		p4d_t *p4d;
+		pud_t *pud;
+
+		if (WARN_ON_ONCE(pgd_none(*pgd))) {
+			/* Not allocated/double freed? */
+			continue;
+		}
+		/*
+		 * Grab the base of the P4D regardless of the address alignment.
+		 * Freeing the P4D is safe because this function is only
+		 * specified to work in the case that
+		 * preallocate_sub_pgd_pages() allocated it.
+		 */
+		p4d = p4d_offset(pgd, 0);
+
+		if (pgtable_l5_enabled()) {
+
+			/* c.f. free_p4d() in ident_map.c */
+			for (int i = 0; i < PTRS_PER_P4D; i++) {
+				if (WARN_ON_ONCE(!p4d_none(p4d[i]))) {
+					/* Lower-level not freed. */
+					goto leak_p4d;
+				}
+			}
+			/*
+			 * TODO: This API is in flux, probably need to rewrite
+			 * it for latest version anyway. We should free the page
+			 * via a ptdesc API.
+			 */
+			 __folio_clear_pgtable(virt_to_folio(p4d));
+			free_page((unsigned long)p4d);
+leak_p4d:
+			continue;
+		}
+
+		pud = pud_offset(p4d, 0);
+		for (int i = 0; i < PTRS_PER_PUD; i++) {
+			if (WARN_ON_ONCE(!pud_none(pud[i]))) {
+				/* Lower-level not freed. */
+				goto leak_pud;
+			}
+		}
+		__folio_clear_pgtable(virt_to_folio(pud));
+		free_page((unsigned long)pud);
+leak_pud:
+		continue;
+	}
+}
+
+
+/*
  * Pre-allocates page-table pages for the vmalloc area in the kernel page-table.
  * Only the level which needs to be synchronized between all page-tables is
  * allocated because the synchronization can be expensive.

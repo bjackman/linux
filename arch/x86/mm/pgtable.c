@@ -504,6 +504,7 @@ out:
 
 void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 {
+	free_sub_pgd_pages(mm->pgd, MM_LOCAL_BASE_ADDR, MM_LOCAL_END - 1);
 	pgd_mop_up_pmds(mm, pgd);
 	pgd_dtor(pgd);
 	paravirt_pgd_free(mm, pgd);

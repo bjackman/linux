@@ -1906,6 +1906,7 @@ void exit_mmap(struct mm_struct *mm)
 
 	mmap_read_lock(mm);
 	arch_exit_mmap(mm);
+	cleanup_ephemeral_filemap(mm);
 
 	vma = vma_next(&vmi);
 	if (!vma || unlikely(xa_is_zero(vma))) {

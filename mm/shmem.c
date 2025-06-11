@@ -46,6 +46,7 @@
 #include <linux/swapfile.h>
 #include <linux/iversion.h>
 #include <asm/io.h>
+#include <asm/tlb.h>
 #include "swap.h"
 
 static struct vfsmount *shm_mnt __ro_after_init;
@@ -3086,6 +3087,7 @@ shmem_write_end(struct file *file, struct address_space *mapping,
  * size.
  */
 #define EPHMAP_CPU_REGION_SIZE (PAGE_SIZE << MAX_PAGECACHE_ORDER)
+#define EPHMAP_END_ADDR (EPHEMERAL_FILEMAP_BASE_ADDR + (NR_CPUS * EPHMAP_CPU_REGION_SIZE))
 
 static void put_ephemeral_filemap(void *vaddr, unsigned long size)
 {
@@ -3193,7 +3195,7 @@ static void *get_ephemeral_filemap(struct page *page, unsigned long size)
 	}
 
 	/* TODO: Make it a BUILD_BUG_ON (annoying because PGD size is variable). */
-	BUG_ON(EPHEMERAL_FILEMAP_BASE_ADDR + (NR_CPUS * EPHMAP_CPU_REGION_SIZE) > MM_LOCAL_END);
+	BUG_ON(EPHMAP_END_ADDR > MM_LOCAL_END);
 
 	addr = EPHEMERAL_FILEMAP_BASE_ADDR + (smp_processor_id() * EPHMAP_CPU_REGION_SIZE);
 	size = PAGE_ALIGN(size);
@@ -3214,6 +3216,23 @@ static void *get_ephemeral_filemap(struct page *page, unsigned long size)
 
 	return ptr;
 
+}
+
+void cleanup_ephemeral_filemap(struct mm_struct *mm)
+{
+	struct mmu_gather tlb;
+	unsigned long start = EPHEMERAL_FILEMAP_BASE_ADDR;
+	/*
+	 * TODO: Aligning the region boundaries is a hack to make
+	 * free_pgd_range() free the pagetables. Actually this pagetable
+	 * management just needs to be designed properly! Yikes.
+	 */
+	unsigned long end = ALIGN(EPHMAP_END_ADDR, PUD_SIZE);
+
+	/* Cribbed from free_ldt_pagetables() */
+	tlb_gather_mmu_fullmm(&tlb, mm);
+	free_pgd_range(&tlb, start, end, start, end);
+	tlb_finish_mmu(&tlb);
 }
 
 static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)

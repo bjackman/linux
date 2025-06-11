@@ -4220,4 +4220,6 @@ static inline void pgalloc_tag_copy(struct folio *new, struct folio *old)
 }
 #endif /* CONFIG_MEM_ALLOC_PROFILING */
 
+void cleanup_ephemeral_filemap(struct mm_struct *mm);
+
 #endif /* _LINUX_MM_H */
