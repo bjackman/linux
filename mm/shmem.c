@@ -3090,11 +3090,22 @@ shmem_write_end(struct file *file, struct address_space *mapping,
 static void put_ephemeral_filemap(void *vaddr, unsigned long size)
 {
 	unsigned long addr = (unsigned long)vaddr;
-	pgtbl_mod_mask mask_unused;
+	unsigned long start = addr;
+	unsigned long end = addr + size;
 
 	size = PAGE_ALIGN(size);
 
-	vunmap_pgd_range(current->mm->pgd, addr, addr + size, &mask_unused);
+	for (; addr < end; addr += PAGE_SIZE) {
+		struct mm_struct *mm = current->mm;
+		spinlock_t *ptl;
+		pte_t *ptep;
+
+		ptep = get_locked_pte(mm, addr, &ptl);
+		if (!WARN_ON_ONCE(!ptep)) {
+			pte_clear(mm, addr, ptep);
+			pte_unmap_unlock(ptep, ptl);
+		}
+	};
 
 	/*
 	 * TODO: Could reuse the mapping if it's the same folio as last time. We
@@ -3116,7 +3127,7 @@ static void put_ephemeral_filemap(void *vaddr, unsigned long size)
 	 */
 	if (size >> PAGE_SHIFT < 33) {
 		for (unsigned long offset = 0; offset < size; offset += PAGE_SIZE)
-			asm volatile("invlpg (%0)" ::"r" (addr + offset) : "memory");
+			asm volatile("invlpg (%0)" ::"r" (start + offset) : "memory");
 	} else {
 		/*
 		 * TODO: Um, I think there has to be a way to avoid flushing
@@ -3130,110 +3141,42 @@ static void put_ephemeral_filemap(void *vaddr, unsigned long size)
 	this_cpu_write(current->mm->mml_cpu->in_use, false);
 }
 
-/*
- * TODO: ERRRR this is copied from vmalloc.c but it handles being in an mm-local
- * region. Need to figure out how to best structure this.  I just deleted the
- * kmsan and hugepage stuff. I assume the accounting is wrong here.
- */
-static int map_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
-			phys_addr_t phys_addr, pgprot_t prot)
-{
-	pte_t *pte;
-	u64 pfn;
-	struct page *page;
-	unsigned long size = PAGE_SIZE;
-
-	pfn = phys_addr >> PAGE_SHIFT;
-	pte = pte_alloc_map(current->mm, pmd, addr);
-	if (!pte)
-		return -ENOMEM;
-	do {
-		if (unlikely(!pte_none(ptep_get(pte)))) {
-			if (pfn_valid(pfn)) {
-				page = pfn_to_page(pfn);
-				dump_page(page, "remapping already mapped page");
-			}
-			BUG();
-		}
-
-		set_pte_at(current->mm, addr, pte, pfn_pte(pfn, prot));
-		pfn++;
-	} while (pte += PFN_DOWN(size), addr += size, addr != end);
-	pte_unmap(pte);
-	return 0;
-}
-static int map_pmd_range(pud_t *pud, unsigned long addr, unsigned long end,
-			phys_addr_t phys_addr, pgprot_t prot)
-{
-	pmd_t *pmd;
-	unsigned long next;
-
-	pmd = pmd_alloc(current->mm, pud, addr);
-	if (!pmd)
-		return -ENOMEM;
-	do {
-		next = pmd_addr_end(addr, end);
-
-		if (map_pte_range(pmd, addr, next, phys_addr, prot))
-			return -ENOMEM;
-	} while (pmd++, phys_addr += (next - addr), addr = next, addr != end);
-	return 0;
-}
-static int map_pud_range(p4d_t *p4d, unsigned long addr, unsigned long end,
-			phys_addr_t phys_addr, pgprot_t prot)
-{
-	pud_t *pud;
-	unsigned long next;
-
-	pud = pud_alloc(current->mm, p4d, addr);
-	if (!pud)
-		return -ENOMEM;
-	do {
-		next = pud_addr_end(addr, end);
-
-		if (map_pmd_range(pud, addr, next, phys_addr, prot))
-			return -ENOMEM;
-	} while (pud++, phys_addr += (next - addr), addr = next, addr != end);
-	return 0;
-}
-static inline int map_p4d_range(pgd_t *pgd, unsigned long addr, unsigned long end,
-			phys_addr_t phys_addr, pgprot_t prot)
-{
-	p4d_t *p4d;
-	unsigned long next;
-
-	p4d = p4d_alloc(current->mm, pgd, addr);
-	if (!p4d)
-		return -ENOMEM;
-	do {
-		next = p4d_addr_end(addr, end);
-
-		if (map_pud_range(p4d, addr, next, phys_addr, prot))
-			return -ENOMEM;
-	} while (p4d++, phys_addr += (next - addr), addr = next, addr != end);
-	return 0;
-}
 static inline int map_page_range(unsigned long addr, unsigned long end,
 		    phys_addr_t phys_addr, pgprot_t prot)
 {
-	pgd_t *pgd;
-	unsigned long start;
-	unsigned long next;
-	int err;
+	for (; addr < end; addr += PAGE_SIZE) {
+		struct mm_struct *mm = current->mm;
+		pgprot_t pte_prot;
+		pte_t pte, *ptep;
+		spinlock_t *ptl;
 
-	might_sleep();
-	BUG_ON(addr >= end);
+		/*
+		 * Cribbed map_ldt_struct(). Treat the pagetables like userspace
+		 * ones.
+		 *
+		 * There is lock contention here when first populating the
+		 * pagetable tree but the leaf pagetables have a split lock.
+		 * I guess that means there is no contention for the PTEs but we
+		 * are still taking a spinlock. If that's an issue we might need
+		 * to be more aggressive and take advantage of the fact we know
+		 * nobody is racing on overlapping ranges (I think
+		 * vmap_page_range() etc does this but need to read more
+		 * carefully to be sure).
+		 *
+		 * TODO: Would be nice to use huge pages for this where possible.
+		 */
+		ptep = get_locked_pte(mm, addr, &ptl);
+		if (!ptep)
+			return -ENOMEM;
+		pte_prot = __pgprot(__PAGE_KERNEL_RO & ~_PAGE_GLOBAL);
+		pgprot_val(pte_prot) &= __supported_pte_mask;
+		pte = pfn_pte(phys_addr >> PAGE_SHIFT, pte_prot);
+		set_pte_at(mm, addr, ptep, pte);
+		pte_unmap_unlock(ptep, ptl);
 
-	start = addr;
-	pgd = pgd_offset_pgd(current->mm->pgd, addr);
-	do {
-		next = pgd_addr_end(addr, end);
-		err = map_p4d_range(pgd, addr, next, phys_addr, prot);
-		if (err)
-			break;
-	} while (pgd++, phys_addr += (next - addr), addr = next, addr != end);
+	}
 
-	return err;
+	return 0;
 }
 
 
