@@ -87,7 +87,6 @@ static inline int map_page_range(struct mm_struct *mm,
 		    phys_addr_t phys_addr, pgprot_t prot)
 {
 	for (; addr < end; addr += PAGE_SIZE) {
-		pgprot_t pte_prot;
 		pte_t pte, *ptep;
 		spinlock_t *ptl;
 
@@ -115,9 +114,7 @@ static inline int map_page_range(struct mm_struct *mm,
 		ptep = get_locked_pte(mm, addr, &ptl);
 		if (!ptep)
 			return -ENOMEM;
-		pte_prot = __pgprot(__PAGE_KERNEL_RO & ~_PAGE_GLOBAL);
-		pgprot_val(pte_prot) &= __supported_pte_mask;
-		pte = pfn_pte(phys_addr >> PAGE_SHIFT, pte_prot);
+		pte = pfn_pte(phys_addr >> PAGE_SHIFT, prot);
 		set_pte_at(mm, addr, ptep, pte);
 		pte_unmap_unlock(ptep, ptl);
 
