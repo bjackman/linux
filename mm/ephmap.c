@@ -121,6 +121,7 @@ static inline int map_page_range(struct mm_struct *mm,
 		set_pte_at(mm, addr, ptep, pte);
 		pte_unmap_unlock(ptep, ptl);
 
+		phys_addr += PAGE_SIZE;
 	}
 
 	return 0;
