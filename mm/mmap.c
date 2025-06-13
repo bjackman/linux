@@ -1907,7 +1907,6 @@ void exit_mmap(struct mm_struct *mm)
 
 	mmap_read_lock(mm);
 	arch_exit_mmap(mm);
-	ephmap_cleanup(mm);
 
 	vma = vma_next(&vmi);
 	if (!vma || unlikely(xa_is_zero(vma))) {
@@ -1923,6 +1922,7 @@ void exit_mmap(struct mm_struct *mm)
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
 	/* Use ULONG_MAX here to ensure all VMAs in the mm are unmapped */
 	unmap_vmas(&tlb, &vmi.mas, vma, 0, ULONG_MAX, ULONG_MAX, false);
+	ephmap_cleanup(&tlb);
 	mmap_read_unlock(mm);
 
 	/*

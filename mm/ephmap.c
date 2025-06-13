@@ -185,9 +185,8 @@ void ephmap_setup(struct mm_struct *mm)
 }
 
 /* Clean up ephmap stuff on mm teardown. */
-void ephmap_cleanup(struct mm_struct *mm)
+void ephmap_cleanup(struct mmu_gather *tlb)
 {
-	struct mmu_gather tlb;
 	unsigned long start = EPHEMERAL_FILEMAP_BASE_ADDR;
 	/*
 	 * TODO: Aligning the region boundaries is a hack to make
@@ -197,7 +196,5 @@ void ephmap_cleanup(struct mm_struct *mm)
 	unsigned long end = ALIGN(EPHMAP_END_ADDR, PUD_SIZE);
 
 	/* Cribbed from free_ldt_pagetables() */
-	tlb_gather_mmu_fullmm(&tlb, mm);
-	free_pgd_range(&tlb, start, end, start, end);
-	tlb_finish_mmu(&tlb);
+	free_pgd_range(tlb, start, end, start, end);
 }
