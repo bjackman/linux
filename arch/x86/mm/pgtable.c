@@ -467,6 +467,11 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	 */
 	if (static_asi_enabled())
 		/* TODO: Make MM_LOCAL_END non-inclusive like VMEMORY_END? */
+		/*
+		 * TODO: Make allocating and freing of pagetables cleaner. It's
+		 * divided in two because the PGD is shared but the lower levels
+		 * are split between the LDT and the ephmap.
+		 */
 		preallocate_sub_pgd_pages(pgd, MM_LOCAL_BASE_ADDR,
 					  MM_LOCAL_END - 1, "mm-local");
 

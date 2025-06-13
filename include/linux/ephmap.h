@@ -4,6 +4,7 @@
 
 #include <linux/mm.h>
 
+void ephmap_setup(struct mm_struct *mm);
 void ephmap_cleanup(struct mm_struct *mm);
 
 void *ephmap_get(struct page *page, unsigned long size);

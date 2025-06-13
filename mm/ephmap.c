@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+#include "asm/pgtable_64_types.h"
 #include <linux/ephmap.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
@@ -17,7 +18,24 @@
  * size.
  */
 #define EPHMAP_CPU_REGION_SIZE (PAGE_SIZE << MAX_PAGECACHE_ORDER)
+#define EPHMAP_SIZE (EPHMAP_CPU_REGION_SIZE * NR_CPUS)
 #define EPHMAP_END_ADDR (EPHEMERAL_FILEMAP_BASE_ADDR + (NR_CPUS * EPHMAP_CPU_REGION_SIZE))
+
+static inline void unmap_page_range_noflush(struct mm_struct *mm,
+					    unsigned long addr,
+					    unsigned long end)
+{
+	for (; addr < end; addr += PAGE_SIZE) {
+		spinlock_t *ptl;
+		pte_t *ptep;
+
+		ptep = get_locked_pte(mm, addr, &ptl);
+		if (!WARN_ON_ONCE(!ptep)) {
+			pte_clear(mm, addr, ptep);
+			pte_unmap_unlock(ptep, ptl);
+		}
+	};
+}
 
 /* Return a region allocated by ephmap_get(). */
 void ephmap_put(void *vaddr, unsigned long size)
@@ -28,17 +46,7 @@ void ephmap_put(void *vaddr, unsigned long size)
 
 	size = PAGE_ALIGN(size);
 
-	for (; addr < end; addr += PAGE_SIZE) {
-		struct mm_struct *mm = current->mm;
-		spinlock_t *ptl;
-		pte_t *ptep;
-
-		ptep = get_locked_pte(mm, addr, &ptl);
-		if (!WARN_ON_ONCE(!ptep)) {
-			pte_clear(mm, addr, ptep);
-			pte_unmap_unlock(ptep, ptl);
-		}
-	};
+	unmap_page_range_noflush(current->mm, addr, end);
 
 	/*
 	 * TODO: Could reuse the mapping if it's the same folio as last time. We
@@ -74,11 +82,11 @@ void ephmap_put(void *vaddr, unsigned long size)
 	this_cpu_write(current->mm->mml_cpu->in_use, false);
 }
 
-static inline int map_page_range(unsigned long addr, unsigned long end,
+static inline int map_page_range(struct mm_struct *mm,
+		    unsigned long addr, unsigned long end,
 		    phys_addr_t phys_addr, pgprot_t prot)
 {
 	for (; addr < end; addr += PAGE_SIZE) {
-		struct mm_struct *mm = current->mm;
 		pgprot_t pte_prot;
 		pte_t pte, *ptep;
 		spinlock_t *ptl;
@@ -88,15 +96,21 @@ static inline int map_page_range(unsigned long addr, unsigned long end,
 		 * ones.
 		 *
 		 * There is lock contention here when first populating the
-		 * pagetable tree but the leaf pagetables have a split lock.
-		 * I guess that means there is no contention for the PTEs but we
+		 * pagetable tree but the leaf pagetables have a split lock. I
+		 * guess that means there is no contention for the PTEs but we
 		 * are still taking a spinlock. If that's an issue we might need
 		 * to be more aggressive and take advantage of the fact we know
 		 * nobody is racing on overlapping ranges (I think
 		 * vmap_page_range() etc does this but need to read more
 		 * carefully to be sure).
 		 *
-		 * TODO: Would be nice to use huge pages for this where possible.
+		 * TODO: Would be nice to use huge pages for this where
+		 * possible.
+		 *
+		 * TODO: This is not the right way to do this, we need to do it
+		 * in a way that is safe from the page allocator. This kinda
+		 * works because of the pgtbl prealloc so it's good enough for
+		 * experimentation.
 		 */
 		ptep = get_locked_pte(mm, addr, &ptl);
 		if (!ptep)
@@ -148,7 +162,8 @@ void *ephmap_get(struct page *page, unsigned long size)
 	 * We don't need to asi_map() this region as it's already cloned into
 	 * the restricted address space.
 	 */
-	if (map_page_range(addr, addr + size, page_to_phys(page), PAGE_KERNEL)) {
+	if (map_page_range(current->mm, addr, addr + size,
+			   page_to_phys(page), PAGE_KERNEL)) {
 		ephmap_put(ptr, size);
 		return NULL;
 	}
@@ -157,6 +172,19 @@ void *ephmap_get(struct page *page, unsigned long size)
 
 }
 
+/* Set up ephmap for a new mm. */
+void ephmap_setup(struct mm_struct *mm)
+{
+	/*
+	 * So we can use this from the page allocator, preallocate pagetables.
+	 * Easiest way to do this is just map some random address (NC to prevent
+	 * CPU vuln leaks) and then unmap it again, leaving the tables behind.
+	 */
+	map_page_range(mm, EPHEMERAL_FILEMAP_BASE_ADDR,
+		       EPHMAP_END_ADDR, __START_KERNEL_map, PAGE_KERNEL_NOCACHE);
+	unmap_page_range_noflush(mm, EPHEMERAL_FILEMAP_BASE_ADDR,
+				 EPHMAP_END_ADDR);
+}
 
 /* Clean up ephmap stuff on mm teardown. */
 void ephmap_cleanup(struct mm_struct *mm)
