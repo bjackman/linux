@@ -7,7 +7,7 @@
 void ephmap_setup(struct mm_struct *mm);
 void ephmap_cleanup(struct mm_struct *mm);
 
-void *ephmap_get(struct page *page, unsigned long size);
+void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot);
 void ephmap_put(void *vaddr, unsigned long size);
 
 #endif /* _LINUX_EPHMAP_H */

@@ -133,7 +133,7 @@ static inline int map_page_range(struct mm_struct *mm,
  * local to the current CPU (so you must disable migration) but this is not
  * enforced by hardware so it can't be exploited to mitigate CPU vulns.
  */
-void *ephmap_get(struct page *page, unsigned long size)
+void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 {
 	unsigned long addr;
 	void *ptr;
@@ -161,7 +161,7 @@ void *ephmap_get(struct page *page, unsigned long size)
 	 * the restricted address space.
 	 */
 	if (map_page_range(current->mm, addr, addr + size,
-			   page_to_phys(page), PAGE_KERNEL)) {
+			   page_to_phys(page), prot)) {
 		ephmap_put(ptr, size);
 		return NULL;
 	}

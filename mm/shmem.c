@@ -3176,7 +3176,8 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 				 * Visual Basic 6.
 				 */
 				migrate_disable();
-				ephemeral = ephmap_get(page, offset + nr);
+				ephemeral = ephmap_get(page, offset + nr,
+						       PAGE_KERNEL_RO);
 				if (!ephemeral) {
 					migrate_enable();
 					goto non_ephemeral;
