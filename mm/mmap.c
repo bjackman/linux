@@ -9,6 +9,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/ephmap.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/backing-dev.h>
@@ -1906,7 +1907,7 @@ void exit_mmap(struct mm_struct *mm)
 
 	mmap_read_lock(mm);
 	arch_exit_mmap(mm);
-	cleanup_ephemeral_filemap(mm);
+	ephmap_cleanup(mm);
 
 	vma = vma_next(&vmi);
 	if (!vma || unlikely(xa_is_zero(vma))) {
