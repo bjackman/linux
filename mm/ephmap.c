@@ -323,15 +323,19 @@ void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 /* Set up ephmap for a new mm. */
 void ephmap_setup(struct mm_struct *mm)
 {
+	int cpu;
 	/*
 	 * So we can use this from the page allocator, preallocate pagetables.
 	 * Easiest way to do this is just map some random address (NC to prevent
 	 * CPU vuln leaks) and then unmap it again, leaving the tables behind.
 	 */
-	map_page_range(mm, EPHEMERAL_FILEMAP_BASE_ADDR,
-		       EPHMAP_END_ADDR, __START_KERNEL_map, PAGE_KERNEL_NOCACHE);
-	unmap_page_range_noflush(mm, EPHEMERAL_FILEMAP_BASE_ADDR,
-				 EPHMAP_END_ADDR);
+	for_each_possible_cpu(cpu) {
+		unsigned long addr = EPHEMERAL_FILEMAP_BASE_ADDR + (smp_processor_id() * EPHMAP_CPU_REGION_SIZE);
+		unsigned long end = addr + EPHMAP_CPU_REGION_SIZE;
+
+		map_page_range(mm, addr, end, __START_KERNEL_map, PAGE_KERNEL_NOCACHE);
+		unmap_page_range_noflush(mm, addr, end);
+	}
 }
 
 /*
