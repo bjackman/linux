@@ -615,8 +615,6 @@ static __always_inline void maybe_flush_data(struct asi *next_asi)
 
 void asi_destroy_userspace(struct mm_struct *mm)
 {
-	VM_BUG_ON(!asi_class_initialized(ASI_CLASS_USERSPACE));
-
 	if (!boot_cpu_has(X86_FEATURE_ASI))
 		return;
 
