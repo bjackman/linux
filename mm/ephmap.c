@@ -43,18 +43,25 @@ static int map_pte_range(struct mm_struct *mm, pmd_t *pmd, unsigned long addr, u
 	pte_table = pte;
 	if (WARN_ON_ONCE(!pte))
 		return -ENOMEM;
-	do {
-		if (unlikely(!pte_none(ptep_get(pte)))) {
-			if (pfn_valid(pfn)) {
-				page = pfn_to_page(pfn);
-				dump_page(page, "remapping already mapped page");
+	/*
+	 * Hack: Only reason we set prot=0 is when preallocating. Assume we
+	 * just allocate the table in which case it's already zero hence we have
+	 * nothing to do.
+	 */
+	if (pgprot_val(prot)) {
+		do {
+			if (unlikely(!pte_none(ptep_get(pte)))) {
+				if (pfn_valid(pfn)) {
+					page = pfn_to_page(pfn);
+					dump_page(page, "remapping already mapped page");
+				}
+				BUG();
 			}
-			BUG();
-		}
 
-		set_pte_at(&init_mm, addr, pte, pfn_pte(pfn, prot));
-		pfn++;
-	} while (pte += PFN_DOWN(size), addr += size, addr != end);
+			set_pte_at(&init_mm, addr, pte, pfn_pte(pfn, prot));
+			pfn++;
+		} while (pte += PFN_DOWN(size), addr += size, addr != end);
+	}
 	pte_unmap(pte_table);
 	return 0;
 }
@@ -333,8 +340,11 @@ void ephmap_setup(struct mm_struct *mm)
 		unsigned long addr = EPHEMERAL_FILEMAP_BASE_ADDR + (smp_processor_id() * EPHMAP_CPU_REGION_SIZE);
 		unsigned long end = addr + EPHMAP_CPU_REGION_SIZE;
 
-		map_page_range(mm, addr, end, __START_KERNEL_map, PAGE_KERNEL_NOCACHE);
-		unmap_page_range_noflush(mm, addr, end);
+		map_page_range(mm, addr, end, __START_KERNEL_map, __pgprot(0));
+		/*
+		 * Because we set __pgprot(0) everything should be pte_none() so
+		 * no need to unmap.
+		 */
 	}
 }
 
