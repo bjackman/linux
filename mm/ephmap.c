@@ -21,30 +21,186 @@
 #define EPHMAP_SIZE (EPHMAP_CPU_REGION_SIZE * NR_CPUS)
 #define EPHMAP_END_ADDR (EPHEMERAL_FILEMAP_BASE_ADDR + (NR_CPUS * EPHMAP_CPU_REGION_SIZE))
 
-static inline void unmap_page_range_noflush(struct mm_struct *mm,
+/*
+ * Page table functions yoinked from vmalloc.c with modification tracking,
+ * max_page_shift, and hugepage support ripped out. It allocates pagetables but
+ * we assume this only happens during init due to preallocation... yikes.
+ */
+
+static int map_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+			 phys_addr_t phys_addr, pgprot_t prot)
+{
+	pte_t *pte;
+	u64 pfn;
+	struct page *page;
+	unsigned long size = PAGE_SIZE;
+
+	pfn = phys_addr >> PAGE_SHIFT;
+	// Note this takes unnecessary locks if allocating.
+	pte = pte_alloc_kernel(pmd, addr);
+	if (WARN_ON_ONCE(!pte))
+		return -ENOMEM;
+	// For debug
+	__folio_set_pgtable(virt_to_folio(pte));
+	do {
+		if (unlikely(!pte_none(ptep_get(pte)))) {
+			if (pfn_valid(pfn)) {
+				page = pfn_to_page(pfn);
+				dump_page(page, "remapping already mapped page");
+			}
+			BUG();
+		}
+
+		set_pte_at(&init_mm, addr, pte, pfn_pte(pfn, prot));
+		pfn++;
+	} while (pte += PFN_DOWN(size), addr += size, addr != end);
+	return 0;
+}
+
+static int map_pmd_range(pud_t *pud, unsigned long addr, unsigned long end,
+			  phys_addr_t phys_addr, pgprot_t prot)
+{
+	pmd_t *pmd;
+	unsigned long next;
+
+	pmd = pmd_alloc(&init_mm, pud, addr);
+	if (WARN_ON_ONCE(!pmd))
+		return -ENOMEM;
+	do {
+		next = pmd_addr_end(addr, end);
+
+		if (map_pte_range(pmd, addr, next, phys_addr, prot))
+			return -ENOMEM;
+	} while (pmd++, phys_addr += (next - addr), addr = next, addr != end);
+	return 0;
+}
+
+static int map_pud_range(p4d_t *p4d, unsigned long addr, unsigned long end,
+			  phys_addr_t phys_addr, pgprot_t prot)
+{
+	pud_t *pud;
+	unsigned long next;
+
+	pud = pud_alloc(&init_mm, p4d, addr);
+	if (WARN_ON_ONCE(!pud))
+		return -ENOMEM;
+	do {
+		next = pud_addr_end(addr, end);
+
+		if (map_pmd_range(pud, addr, next, phys_addr, prot))
+			return -ENOMEM;
+	} while (pud++, phys_addr += (next - addr), addr = next, addr != end);
+	return 0;
+}
+
+static int map_p4d_range(pgd_t *pgd, unsigned long addr, unsigned long end,
+			phys_addr_t phys_addr, pgprot_t prot)
+{
+	p4d_t *p4d;
+	unsigned long next;
+
+	p4d = p4d_alloc(&init_mm, pgd, addr);
+	if (WARN_ON_ONCE(!p4d))
+		return -ENOMEM;
+	do {
+		next = p4d_addr_end(addr, end);
+
+		if (map_pud_range(p4d, addr, next, phys_addr, prot))
+			return -ENOMEM;
+	} while (p4d++, phys_addr += (next - addr), addr = next, addr != end);
+	return 0;
+}
+
+static noinline void unmap_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end)
+{
+	pte_t *pte;
+
+	pte = pte_offset_kernel(pmd, addr);
+	WARN_ON(!folio_test_pgtable(virt_to_folio(pte)));
+	do {
+		pte_t ptent = native_ptep_get_and_clear(pte);
+		WARN_ON(!pte_none(ptent) && !pte_present(ptent));
+	} while (pte++, addr += PAGE_SIZE, addr != end);
+}
+
+static noinline void unmap_pmd_range(pud_t *pud, unsigned long addr, unsigned long end)
+{
+	pmd_t *pmd;
+	unsigned long next;
+	int cleared;
+
+	pmd = pmd_offset(pud, addr);
+	do {
+		next = pmd_addr_end(addr, end);
+
+		cleared = pmd_clear_huge(pmd);
+
+		if (cleared)
+			continue;
+		if (pmd_none_or_clear_bad(pmd))
+			continue;
+		unmap_pte_range(pmd, addr, next);
+	} while (pmd++, addr = next, addr != end);
+}
+
+static noinline void unmap_pud_range(p4d_t *p4d, unsigned long addr, unsigned long end)
+{
+	pud_t *pud;
+	unsigned long next;
+	int cleared;
+
+	pud = pud_offset(p4d, addr);
+	do {
+		next = pud_addr_end(addr, end);
+
+		cleared = pud_clear_huge(pud);
+
+		if (cleared)
+			continue;
+		if (pud_none_or_clear_bad(pud))
+			continue;
+		unmap_pmd_range(pud, addr, next);
+	} while (pud++, addr = next, addr != end);
+}
+
+static noinline void unmap_p4d_range(pgd_t *pgd, unsigned long addr, unsigned long end)
+{
+	p4d_t *p4d;
+	unsigned long next;
+
+	p4d = p4d_offset(pgd, addr);
+	do {
+		next = p4d_addr_end(addr, end);
+
+		p4d_clear_huge(p4d);
+		if (p4d_none_or_clear_bad(p4d))
+			continue;
+		unmap_pud_range(p4d, addr, next);
+	} while (p4d++, addr = next, addr != end);
+}
+
+static noinline void unmap_page_range_noflush(struct mm_struct *mm,
 					    unsigned long addr,
 					    unsigned long end)
 {
-	for (; addr < end; addr += PAGE_SIZE) {
-		spinlock_t *ptl;
-		pte_t *ptep;
+	unsigned long next;
+	pgd_t *pgd = pgd_offset(mm, addr);
 
-		ptep = get_locked_pte(mm, addr, &ptl);
-		if (!WARN_ON_ONCE(!ptep)) {
-			pte_clear(mm, addr, ptep);
-			pte_unmap_unlock(ptep, ptl);
-		}
-	};
+	BUG_ON(addr >= end);
+
+	do {
+		next = pgd_addr_end(addr, end);
+		if (pgd_none_or_clear_bad(pgd))
+			continue;
+		unmap_p4d_range(pgd, addr, next);
+	} while (pgd++, addr = next, addr != end);
 }
 
 /* Return a region allocated by ephmap_get(). */
 void ephmap_put(void *vaddr, unsigned long size)
 {
 	unsigned long addr = (unsigned long)vaddr;
-	unsigned long start = addr;
-	unsigned long end = addr + size;
-
-	size = PAGE_ALIGN(size);
+	unsigned long end = addr + PAGE_ALIGN(size);
 
 	unmap_page_range_noflush(current->mm, addr, end);
 
@@ -68,7 +224,7 @@ void ephmap_put(void *vaddr, unsigned long size)
 	 */
 	if (size >> PAGE_SHIFT < 33) {
 		for (unsigned long offset = 0; offset < size; offset += PAGE_SIZE)
-			asm volatile("invlpg (%0)" ::"r" (start + offset) : "memory");
+			asm volatile("invlpg (%0)" ::"r" (addr + offset) : "memory");
 	} else {
 		/*
 		 * TODO: Um, I think there has to be a way to avoid flushing
@@ -82,46 +238,27 @@ void ephmap_put(void *vaddr, unsigned long size)
 	this_cpu_write(current->mm->mml_cpu->in_use, false);
 }
 
-static inline int map_page_range(struct mm_struct *mm,
-		    unsigned long addr, unsigned long end,
-		    phys_addr_t phys_addr, pgprot_t prot)
+
+static int map_page_range(struct mm_struct *mm, unsigned long addr,
+			  unsigned long end, phys_addr_t phys_addr, pgprot_t prot)
 {
-	for (; addr < end; addr += PAGE_SIZE) {
-		pte_t pte, *ptep;
-		spinlock_t *ptl;
+	pgd_t *pgd;
+	unsigned long start;
+	unsigned long next;
+	int err;
 
-		/*
-		 * Cribbed map_ldt_struct(). Treat the pagetables like userspace
-		 * ones.
-		 *
-		 * There is lock contention here when first populating the
-		 * pagetable tree but the leaf pagetables have a split lock. I
-		 * guess that means there is no contention for the PTEs but we
-		 * are still taking a spinlock. If that's an issue we might need
-		 * to be more aggressive and take advantage of the fact we know
-		 * nobody is racing on overlapping ranges (I think
-		 * vmap_page_range() etc does this but need to read more
-		 * carefully to be sure).
-		 *
-		 * TODO: Would be nice to use huge pages for this where
-		 * possible.
-		 *
-		 * TODO: This is not the right way to do this, we need to do it
-		 * in a way that is safe from the page allocator. This kinda
-		 * works because of the pgtbl prealloc so it's good enough for
-		 * experimentation.
-		 */
-		ptep = get_locked_pte(mm, addr, &ptl);
-		if (!ptep)
-			return -ENOMEM;
-		pte = pfn_pte(phys_addr >> PAGE_SHIFT, prot);
-		set_pte_at(mm, addr, ptep, pte);
-		pte_unmap_unlock(ptep, ptl);
+	BUG_ON(addr >= end);
 
-		phys_addr += PAGE_SIZE;
-	}
+	start = addr;
+	pgd = pgd_offset(mm, addr);
+	do {
+		next = pgd_addr_end(addr, end);
+		err = map_p4d_range(pgd, addr, next, phys_addr, prot);
+		if (err)
+			break;
+	} while (pgd++, phys_addr += (next - addr), addr = next, addr != end);
 
-	return 0;
+	return err;
 }
 
 /*
@@ -194,6 +331,214 @@ void ephmap_setup(struct mm_struct *mm)
 				 EPHMAP_END_ADDR);
 }
 
+/*
+ * Page table freeing functions, copied from memory.c but adapted not to free
+ * locks or update accounting. Also dropps paravirt support.
+ */
+
+/*
+ * Note: this doesn't free the actual pages themselves. That
+ * has been handled earlier when unmapping all the memory regions.
+ */
+static noinline void free_pte_range(struct mmu_gather *tlb, pmd_t *pmd,
+			   unsigned long addr)
+{
+	pgtable_t token = pmd_pgtable(*pmd);
+	pmd_clear(pmd);
+	tlb_flush_pmd_range(tlb, addr, PAGE_SIZE);
+	tlb->freed_tables = 1;
+	__folio_clear_pgtable(ptdesc_folio(page_ptdesc(token)));
+	// lruvec_stat_sub_folio(folio, NR_PAGETABLE);
+}
+
+static inline void free_pmd_range(struct mmu_gather *tlb, pud_t *pud,
+				unsigned long addr, unsigned long end,
+				unsigned long floor, unsigned long ceiling)
+{
+	pmd_t *pmd;
+	unsigned long next;
+	unsigned long start;
+	struct ptdesc *ptdesc;
+	struct folio *folio;
+
+	start = addr;
+	pmd = pmd_offset(pud, addr);
+	do {
+		next = pmd_addr_end(addr, end);
+		if (pmd_none_or_clear_bad(pmd))
+			continue;
+		free_pte_range(tlb, pmd, addr);
+	} while (pmd++, addr = next, addr != end);
+
+	start &= PUD_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PUD_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		return;
+
+	pmd = pmd_offset(pud, start);
+  	ptdesc = virt_to_ptdesc(pmd);
+	folio = ptdesc_folio(ptdesc);
+	pud_clear(pud);
+	tlb_flush_pud_range(tlb, addr, PAGE_SIZE);
+	tlb->freed_tables = 1;
+	__folio_clear_pgtable(folio);
+	lruvec_stat_sub_folio(folio, NR_PAGETABLE);
+	// mm_dec_nr_pmds(tlb->mm);
+	// lruvec_stat_sub_folio(folio, NR_PAGETABLE);
+}
+
+static inline void free_pud_range(struct mmu_gather *tlb, p4d_t *p4d,
+				unsigned long addr, unsigned long end,
+				unsigned long floor, unsigned long ceiling)
+{
+	pud_t *pud;
+	unsigned long next;
+	unsigned long start;
+	struct ptdesc *ptdesc;
+	struct folio *folio;
+
+	start = addr;
+	pud = pud_offset(p4d, addr);
+	do {
+		next = pud_addr_end(addr, end);
+		if (pud_none_or_clear_bad(pud))
+			continue;
+		free_pmd_range(tlb, pud, addr, next, floor, ceiling);
+	} while (pud++, addr = next, addr != end);
+
+	start &= P4D_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= P4D_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		return;
+
+	pud = pud_offset(p4d, start);
+  	ptdesc = virt_to_ptdesc(pud);
+	folio = ptdesc_folio(ptdesc);
+	p4d_clear(p4d);
+	tlb_flush_p4d_range(tlb, addr, PAGE_SIZE);
+	tlb->freed_tables = 1;
+	__folio_clear_pgtable(folio);
+	// mm_dec_nr_puds(tlb->mm);
+	// lruvec_stat_sub_folio(folio, NR_PAGETABLE);
+}
+
+static inline void free_p4d_range(struct mmu_gather *tlb, pgd_t *pgd,
+				unsigned long addr, unsigned long end,
+				unsigned long floor, unsigned long ceiling)
+{
+	p4d_t *p4d;
+	unsigned long next;
+	unsigned long start;
+	struct ptdesc *ptdesc;
+	struct folio *folio;
+
+	start = addr;
+	p4d = p4d_offset(pgd, addr);
+	do {
+		next = p4d_addr_end(addr, end);
+		if (p4d_none_or_clear_bad(p4d))
+			continue;
+		free_pud_range(tlb, p4d, addr, next, floor, ceiling);
+	} while (p4d++, addr = next, addr != end);
+
+	start &= PGDIR_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PGDIR_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		return;
+
+	p4d = p4d_offset(pgd, start);
+  	ptdesc = virt_to_ptdesc(p4d);
+	folio = ptdesc_folio(ptdesc);
+	pgd_clear(pgd);
+	__tlb_adjust_range(tlb, addr, PAGE_SIZE);
+	tlb->freed_tables = 1;
+	// mm_dec_nr_p4ds(tlb->mm);
+	// lruvec_stat_sub_folio(folio, NR_PAGETABLE);
+}
+
+/*
+ * This function frees user-level page tables of a process.
+ */
+static noinline void ephmap_free_pgd_range(struct mmu_gather *tlb,
+			unsigned long addr, unsigned long end,
+			unsigned long floor, unsigned long ceiling)
+{
+	pgd_t *pgd;
+	unsigned long next;
+
+	/*
+	 * The next few lines have given us lots of grief...
+	 *
+	 * Why are we testing PMD* at this top level?  Because often
+	 * there will be no work to do at all, and we'd prefer not to
+	 * go all the way down to the bottom just to discover that.
+	 *
+	 * Why all these "- 1"s?  Because 0 represents both the bottom
+	 * of the address space and the top of it (using -1 for the
+	 * top wouldn't help much: the masks would do the wrong thing).
+	 * The rule is that addr 0 and floor 0 refer to the bottom of
+	 * the address space, but end 0 and ceiling 0 refer to the top
+	 * Comparisons need to use "end - 1" and "ceiling - 1" (though
+	 * that end 0 case should be mythical).
+	 *
+	 * Wherever addr is brought up or ceiling brought down, we must
+	 * be careful to reject "the opposite 0" before it confuses the
+	 * subsequent tests.  But what about where end is brought down
+	 * by PMD_SIZE below? no, end can't go down to 0 there.
+	 *
+	 * Whereas we round start (addr) and ceiling down, by different
+	 * masks at different levels, in order to test whether a table
+	 * now has no other vmas using it, so can be freed, we don't
+	 * bother to round floor or end up - the tests don't need that.
+	 */
+
+	addr &= PMD_MASK;
+	if (addr < floor) {
+		addr += PMD_SIZE;
+		if (!addr)
+			return;
+	}
+	if (ceiling) {
+		ceiling &= PMD_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		end -= PMD_SIZE;
+	if (addr > end - 1)
+		return;
+	/*
+	 * We add page table cache pages with PAGE_SIZE,
+	 * (see pte_free_tlb()), flush the tlb if we need
+	 */
+	tlb_change_page_size(tlb, PAGE_SIZE);
+	pgd = pgd_offset(tlb->mm, addr);
+	do {
+		next = pgd_addr_end(addr, end);
+		if (pgd_none_or_clear_bad(pgd))
+			continue;
+		free_p4d_range(tlb, pgd, addr, next, floor, ceiling);
+	} while (pgd++, addr = next, addr != end);
+}
+
 /* Clean up ephmap stuff on mm teardown. */
 void ephmap_cleanup(struct mmu_gather *tlb)
 {
@@ -206,5 +551,5 @@ void ephmap_cleanup(struct mmu_gather *tlb)
 	unsigned long end = ALIGN(EPHMAP_END_ADDR, PUD_SIZE);
 
 	/* Cribbed from free_ldt_pagetables() */
-	free_pgd_range(tlb, start, end, start, end);
+	ephmap_free_pgd_range(tlb, start, end, start, end);
 }
