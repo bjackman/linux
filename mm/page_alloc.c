@@ -1031,8 +1031,36 @@ static inline bool should_skip_kasan_poison(struct page *page)
 	return page_kasan_tag(page) == KASAN_TAG_KERNEL;
 }
 
+enum {
+	EPHMAP_ASI,		/* Sensible behaviour. */
+	EPHMAP_ALWAYS_ALLOC, 	/* Always create, don't always use it. */
+	EPHMAP_ALWAYS_USE,	/* Use ephmap to zero regardless of ASI. */
+} page_alloc_ephmap __ro_after_init;
+
+static int __init early_page_alloc_ephmap(char *str)
+{
+	if (!strncmp(str, "asi", sizeof("asi"))) {
+		printk("page_alloc_ephmap: using when ASI-restricted\n");
+		page_alloc_ephmap = EPHMAP_ASI;
+	} else if (!strncmp(str, "always_alloc", sizeof("always_alloc"))) {
+		printk("page_alloc_ephmap: always allocating\n");
+		page_alloc_ephmap = EPHMAP_ALWAYS_ALLOC;
+	} else if (!strncmp(str, "always_use", sizeof("always_use"))) {
+		printk("page_alloc_ephmap: always using\n");
+		page_alloc_ephmap = EPHMAP_ALWAYS_USE;
+	} else {
+		printk("page_alloc_ephmap: unrecognized: %s\n", str);
+	}
+
+	return 0;
+}
+early_param("page_alloc_ephmap", early_page_alloc_ephmap);
+
 static void kernel_init_pages(struct page *page, int numpages)
 {
+	bool asi_restricted = asi_is_restricted();
+	bool alloc_ephmap = asi_restricted || page_alloc_ephmap >= EPHMAP_ALWAYS_ALLOC;
+	bool use_ephmap = asi_restricted || page_alloc_ephmap >= EPHMAP_ALWAYS_USE;
 	unsigned long size = numpages << PAGE_SHIFT;
 	void *ephmap = NULL;
 	int i;
@@ -1053,13 +1081,13 @@ static void kernel_init_pages(struct page *page, int numpages)
 	 * is still good enough for benchmarking........
 	 */
 	migrate_disable();
-	if (asi_is_restricted()) {
+	if (alloc_ephmap) {
 		/* Hack: Ensure we are actually in current->mm */
 		if (nmi_uaccess_okay())
 			ephmap = ephmap_get(page, size, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
 	}
 	for (i = 0; i < numpages; i++) {
-		if (ephmap)
+		if (ephmap && use_ephmap)
 			clear_page(ephmap + (i << PAGE_SHIFT));
 		else
 			clear_highpage_kasan_tagged(page + i);
