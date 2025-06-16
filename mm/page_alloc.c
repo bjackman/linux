@@ -1056,7 +1056,7 @@ static void kernel_init_pages(struct page *page, int numpages)
 	if (asi_is_restricted()) {
 		/* Hack: Ensure we are actually in current->mm */
 		if (nmi_uaccess_okay())
-			ephmap = ephmap_get(page, size, PAGE_KERNEL);
+			ephmap = ephmap_get(page, size, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
 	}
 	for (i = 0; i < numpages; i++) {
 		if (ephmap)

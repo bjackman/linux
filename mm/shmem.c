@@ -3177,7 +3177,7 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 				 */
 				migrate_disable();
 				ephemeral = ephmap_get(page, offset + nr,
-						       PAGE_KERNEL_RO);
+						      __pgprot(__PAGE_KERNEL_RO & ~_PAGE_GLOBAL));
 				if (!ephemeral) {
 					migrate_enable();
 					goto non_ephemeral;
