@@ -297,7 +297,7 @@ void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 	if (size > EPHMAP_CPU_REGION_SIZE)
 		return NULL;
 
-	if (this_cpu_xchg(current->mm->mml_cpu->in_use, true)) {
+	if (!current->mm || this_cpu_xchg(current->mm->mml_cpu->in_use, true)) {
 		/* Another thread in this mm is using it */
 		return NULL;
 	}
