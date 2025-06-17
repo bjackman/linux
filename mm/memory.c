@@ -40,6 +40,7 @@
  * Aug/Sep 2004 Changed to four level page tables (Andi Kleen)
  */
 
+#include <linux/ephmap.h>
 #include <linux/kernel_stat.h>
 #include <linux/mm.h>
 #include <linux/mm_inline.h>
@@ -3034,7 +3035,7 @@ static inline int __wp_page_copy_user(struct page *dst, struct page *src,
 				      struct vm_fault *vmf)
 {
 	int ret;
-	void *kaddr;
+	void *kaddr, *ephmap, *copy_src;
 	void __user *uaddr;
 	struct vm_area_struct *vma = vmf->vma;
 	struct mm_struct *mm = vma->vm_mm;
@@ -3052,7 +3053,11 @@ static inline int __wp_page_copy_user(struct page *dst, struct page *src,
 	 * just copying from the original user address. If that
 	 * fails, we just zero-fill it. Live with it.
 	 */
-	kaddr = kmap_local_page(dst);
+	copy_src = kaddr = kmap_local_page(dst);
+	migrate_disable();
+	ephmap = ephmap_get(kaddr, PAGE_SIZE, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
+	if (ephmap)
+		copy_src = ephmap;
 	pagefault_disable();
 	uaddr = (void __user *)(addr & PAGE_MASK);
 
@@ -3087,7 +3092,7 @@ static inline int __wp_page_copy_user(struct page *dst, struct page *src,
 	 * in which case we just give up and fill the result with
 	 * zeroes.
 	 */
-	if (__copy_from_user_inatomic(kaddr, uaddr, PAGE_SIZE)) {
+	if (__copy_from_user_inatomic(copy_src, uaddr, PAGE_SIZE)) {
 		if (vmf->pte)
 			goto warn;
 
@@ -3123,6 +3128,9 @@ pte_unlock:
 		pte_unmap_unlock(vmf->pte, vmf->ptl);
 	pagefault_enable();
 	kunmap_local(kaddr);
+	if (ephmap)
+		ephmap_put(ephmap, PAGE_SIZE);
+	migrate_enable();
 	flush_dcache_page(dst);
 
 	return ret;
