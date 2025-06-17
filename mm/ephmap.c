@@ -293,17 +293,7 @@ void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 	unsigned long addr;
 	void *ptr;
 
-	/*
-	 * TODO: I had a feeling something about this use of migrate_disable()
-	 * would be Bad, and indeed there is a nice comment in
-	 * include/linux/preempt.h explaining that it hurts the scheduler.
-	 * I'm not sure what the best thing to do here is, needs a bit of
-	 * research.
-	 */
-	lockdep_assert(!preemptible() || is_migration_disabled(current));
-
-	if (size > EPHMAP_CPU_REGION_SIZE)
-		return NULL;
+	lockdep_assert(is_migration_disabled(current));
 
 	if (!current->mm || this_cpu_xchg(current->mm->mml_cpu->in_use, true)) {
 		/* Another thread in this mm is using it */

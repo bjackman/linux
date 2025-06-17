@@ -15,7 +15,6 @@
  *          (lots of bits borrowed from Ingo Molnar & Andrew Morton)
  */
 
-#include <linux/ephmap.h>
 #include <linux/stddef.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
@@ -1058,43 +1057,12 @@ early_param("page_alloc_ephmap", early_page_alloc_ephmap);
 
 static void kernel_init_pages(struct page *page, int numpages)
 {
-	bool asi_restricted = asi_is_restricted();
-	bool alloc_ephmap = asi_restricted || page_alloc_ephmap >= EPHMAP_ALWAYS_ALLOC;
-	bool use_ephmap = asi_restricted || page_alloc_ephmap >= EPHMAP_ALWAYS_USE;
-	unsigned long size = numpages << PAGE_SHIFT;
-	void *ephmap = NULL;
 	int i;
 
 	/* s390's use of memset() could override KASAN redzones. */
 	kasan_disable_current();
-	/*
-	 * TODO: This should be integrated properly with the existing highmem
-	 * biz since it's very similar to kmap_local_page().
-	 * TODO: Also KASAN lol.
-	 * TODO: This abominable quadrille of conditionals is most unbecoming of
-	 * a gentleman of means, I shall never be married at this rate.
-	 * TODO: This won't work if we can context switch in the restricted
-	 * address space.
-	 * TODO: I stupidly used get_pte_locked() in the ephmap implementation
-	 * which will cause a lockdep splat. There's probably no actual deadlock
-	 * there because we won't content the split PTE lock, so hopefully this
-	 * is still good enough for benchmarking........
-	 */
-	migrate_disable();
-	if (alloc_ephmap) {
-		/* Hack: Ensure we are actually in current->mm */
-		if (nmi_uaccess_okay())
-			ephmap = ephmap_get(page, size, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
-	}
-	for (i = 0; i < numpages; i++) {
-		if (ephmap && use_ephmap)
-			clear_page(ephmap + (i << PAGE_SHIFT));
-		else
-			clear_highpage_kasan_tagged(page + i);
-	}
-	if (ephmap)
-		ephmap_put(ephmap, size);
-	migrate_enable();
+	for (i = 0; i < numpages; i++)
+		clear_highpage_kasan_tagged(page + i);
 	kasan_enable_current();
 }
 
