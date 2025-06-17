@@ -261,7 +261,6 @@ void ephmap_cond_put(const void *p, unsigned long size)
 static int map_page_range(struct mm_struct *mm, unsigned long addr,
 			  unsigned long end, phys_addr_t phys_addr, pgprot_t prot)
 {
-	pgd_t *pgd;
 	unsigned long start;
 	unsigned long next;
 	int err;
@@ -274,7 +273,7 @@ static int map_page_range(struct mm_struct *mm, unsigned long addr,
 		err = map_p4d_range(mm, addr, next, phys_addr, prot);
 		if (err)
 			break;
-	} while (pgd++, phys_addr += (next - addr), addr = next, addr != end);
+	} while (phys_addr += (next - addr), addr = next, addr != end);
 
 	return err;
 }
