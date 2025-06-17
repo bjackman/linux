@@ -563,6 +563,12 @@ void ephmap_cleanup(struct mmu_gather *tlb)
 	 * management just needs to be designed properly! Yikes.
 	 */
 	unsigned long end = ALIGN(EPHMAP_END_ADDR, PUD_SIZE);
+	int cpu;
+
+	/* Stop anyone from using it now that we are freeing the pagetables. */
+	for_each_possible_cpu(cpu) {
+		per_cpu(current->mm->mml_cpu->in_use, cpu) = false;
+	}
 
 	/* Cribbed from free_ldt_pagetables() */
 	free_pgd_range(tlb, start, end, start, end);
