@@ -208,7 +208,7 @@ static noinline void unmap_page_range_noflush(struct mm_struct *mm,
 }
 
 /* Return a region allocated by ephmap_get(). */
-void ephmap_put(void *vaddr, unsigned long size)
+void ephmap_put(const void *vaddr, unsigned long size)
 {
 	unsigned long addr = (unsigned long)vaddr;
 	unsigned long end = addr + PAGE_ALIGN(size);
@@ -249,6 +249,14 @@ void ephmap_put(void *vaddr, unsigned long size)
 	this_cpu_write(current->mm->mml_cpu->in_use, false);
 }
 
+/* Call ephmap_put(), if the address is in the ephmap range. */
+void ephmap_cond_put(const void *p, unsigned long size)
+{
+	unsigned long addr = (unsigned long)p;
+
+	if (addr >= EPHEMERAL_FILEMAP_BASE_ADDR && addr < EPHMAP_END_ADDR)
+		ephmap_put(p, size);
+}
 
 static int map_page_range(struct mm_struct *mm, unsigned long addr,
 			  unsigned long end, phys_addr_t phys_addr, pgprot_t prot)

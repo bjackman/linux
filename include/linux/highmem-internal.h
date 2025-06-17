@@ -2,6 +2,8 @@
 #ifndef _LINUX_HIGHMEM_INTERNAL_H
 #define _LINUX_HIGHMEM_INTERNAL_H
 
+#include <linux/ephmap.h>
+
 /*
  * Outside of CONFIG_HIGHMEM to support X86 32bit iomap_atomic() cruft.
  */
@@ -177,17 +179,26 @@ static inline void kunmap(struct page *page)
 
 static inline void *kmap_local_page(struct page *page)
 {
-	return page_address(page);
+	void *addr = page_address(page);
+	void *ephmap;
+
+	migrate_disable();
+	ephmap = ephmap_get(addr, PAGE_SIZE, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
+	if (ephmap)
+		return ephmap;
+	return addr;
 }
 
 static inline void *kmap_local_folio(struct folio *folio, size_t offset)
 {
+	migrate_disable();
 	return page_address(&folio->page) + offset;
 }
 
 static inline void *kmap_local_page_prot(struct page *page, pgprot_t prot)
 {
-	return kmap_local_page(page);
+	migrate_disable();
+	return page_address(page);
 }
 
 static inline void *kmap_local_pfn(unsigned long pfn)
@@ -200,6 +211,8 @@ static inline void __kunmap_local(const void *addr)
 #ifdef ARCH_HAS_FLUSH_ON_KUNMAP
 	kunmap_flush_on_unmap(PTR_ALIGN_DOWN(addr, PAGE_SIZE));
 #endif
+	ephmap_cond_put(addr, PAGE_SIZE);
+	migrate_enable();
 }
 
 static inline void *kmap_atomic(struct page *page)
