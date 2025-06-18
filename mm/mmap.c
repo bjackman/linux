@@ -1910,6 +1910,15 @@ void exit_mmap(struct mm_struct *mm)
 
 	vma = vma_next(&vmi);
 	if (!vma || unlikely(xa_is_zero(vma))) {
+		/*
+		 * TODO: This sux! Lazy fix: just don't set up ephmap until we
+		 * get a VMA? (Can we still become VMAless after that?)
+		 */
+		lru_add_drain();
+		tlb_gather_mmu_fullmm(&tlb, mm);
+		ephmap_cleanup(&tlb);
+		tlb_finish_mmu(&tlb);
+
 		/* Can happen if dup_mmap() received an OOM */
 		mmap_read_unlock(mm);
 		mmap_write_lock(mm);
