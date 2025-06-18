@@ -38,6 +38,21 @@ static int map_pte_range(struct mm_struct *mm, pmd_t *pmd, unsigned long addr, u
 	struct page *page;
 	unsigned long size = PAGE_SIZE;
 
+	/*
+	 * TODO: Dumb hacks to check we are really not allocating here. Instead
+	 * we should just... use code that doesn't allocate for the cases that
+	 * aren't supposed to allocate.
+	 */
+	if (pgprot_val(prot)) {
+		pte_t *pte = pte_offset_map(pmd, addr);
+		if (!pte) {
+			printk("Missing PTE at addr %#lx (SIZE %#lx END %#lx CPU %d)\n",
+				addr, EPHMAP_CPU_REGION_SIZE, EPHMAP_END_ADDR, smp_processor_id());
+			BUG();
+		}
+		pte_unmap(pte);
+	}
+
 	pfn = phys_addr >> PAGE_SHIFT;
 	pte = pte_alloc_map(mm, pmd, addr);
 	pte_table = pte;
