@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+#include "asm/pgtable_64_types.h"
 #include <linux/compiler_types.h>
 #include <linux/export.h>
 #include <linux/percpu.h>
@@ -236,39 +237,122 @@ void __init asi_check_boottime_disable(void)
 		static_branch_enable(&asi_sandbox_userspace);
 }
 
-/*
- * Map data by sharing sub-PGD pagetables with the unrestricted mapping. This is
- * more efficient than asi_map, but only works when you know the whole top-level
- * page needs to be mapped in the restricted tables. Note that the size of the
- * mappings this creates differs between 4 and 5-level paging.
- */
-static void asi_clone_pgd(pgd_t *dst_table, pgd_t *src_table, size_t addr)
+/* Helper for asi_clone_range() */
+static int asi_clone_pud(p4d_t *dst_p4d, p4d_t *src_p4d,
+			 unsigned long addr, unsigned long end)
 {
-	pgd_t *src = pgd_offset_pgd(src_table, addr);
-	pgd_t *dst = pgd_offset_pgd(dst_table, addr);
+	pud_t *dst = pud_alloc(&init_mm, dst_p4d, addr);
+	pud_t *src = pud_offset(src_p4d, addr);
+	unsigned long next;
 
-	if (!pgd_val(*dst))
-		set_pgd(dst, *src);
-	else
-		WARN_ON_ONCE(pgd_val(*dst) != pgd_val(*src));
+	if (WARN_ON_ONCE(!dst))
+		return -EINVAL;
+
+	do {
+		next = pud_addr_end(addr, end);
+		if (IS_ALIGNED(addr, PUD_SIZE) && (next - addr == PUD_SIZE)) {
+			if (pud_val(*dst)) {
+				WARN_ONCE(1, "addr: %lx, PUD: %lx, ASI PUD: %lx",
+					  addr, pud_val(*dst), pud_val(*src));
+				if (pud_val(*dst) != pud_val(*src))
+					return -EEXIST;
+			} else {
+				set_pud(dst, *src);
+			}
+		} else {
+			WARN_ONCE(1, "Cloning PMDs is not supported");
+			return -EOPNOTSUPP;
+		}
+	} while (dst++, src++, addr = next, addr != end);
+
+	return 0;
+}
+
+/* Helper for asi_clone_range() */
+static int asi_clone_p4d(pgd_t *dst_pgd, pgd_t *src_pgd,
+			 unsigned long addr, unsigned long end)
+{
+	p4d_t *dst = p4d_alloc(&init_mm, dst_pgd, addr);
+	p4d_t *src = p4d_offset(src_pgd, addr);
+	unsigned long next;
+	int err;
+
+	if (WARN_ON_ONCE(!dst))
+		return -EINVAL;
+
+	BUILD_BUG_ON(p4d_leaf(*dst));
+	do {
+		next = p4d_addr_end(addr, end);
+		if ((p4d_none(*src) || !p4d_present(*src)))
+			continue;
+
+		if (IS_ALIGNED(addr, P4D_SIZE) && (next - addr == P4D_SIZE)) {
+			if (p4d_val(*dst)) {
+				WARN_ONCE(1, "addr: %lx, P4D: %lx, ASI P4D: %lx",
+					  addr, p4d_val(*dst), p4d_val(*src));
+				if (p4d_val(*dst) != p4d_val(*src))
+					return -EEXIST;
+			} else {
+				set_p4d(dst, *src);
+			}
+		} else {
+			err = asi_clone_pud(dst, src, addr, next);
+			if (err)
+				return err;
+		}
+	} while (dst++, src++, addr = next, addr != end);
+
+	return 0;
 }
 
 /*
- * For 4-level paging this is exactly the same as asi_clone_pgd. For 5-level
- * paging it clones one level lower. So this always creates a mapping of the
- * same size.
+ * Share the mappings of a range of addresses with the unrestricted page tables
+ * by cloning the page table entries at the appropriate level (PGD/P4D/PUD)
+ * based on the address alignment. This shares the page tables at the lower
+ * levels (i.e. P4D/PUD/PMD). Cloning mappings at a lower level than PUD is not
+ * supported (hence @addr and @len must both be aligned to PUD_SIZE).
+ *
+ * Assumes that the cloned mappings (down to the PUD entries) will not change.
+ * Any non-present or none page table entries will be ignored.
+ *
+ * asi_clone_range() and its helpers are not expected to fail, so always WARN
+ * before returning an error.
  */
-static void asi_clone_p4d(pgd_t *dst_table, pgd_t *src_table, size_t addr)
+static int asi_clone_range(unsigned long addr, unsigned long len)
 {
-	pgd_t *src_pgd = pgd_offset_pgd(src_table, addr);
-	pgd_t *dst_pgd = pgd_offset_pgd(dst_table, addr);
-	p4d_t *src_p4d = p4d_alloc(&init_mm, src_pgd, addr);
-	p4d_t *dst_p4d = p4d_alloc(&init_mm, dst_pgd, addr);
+	pgd_t *dst = pgd_offset_pgd(asi_global_nonsensitive_pgd, addr);
+	pgd_t *src = pgd_offset_k(addr);
+	unsigned long end = addr + len;
+	unsigned long next;
+	int err;
 
-	if (!p4d_val(*dst_p4d))
-		set_p4d(dst_p4d, *src_p4d);
-	else
-		WARN_ON_ONCE(p4d_val(*dst_p4d) != p4d_val(*src_p4d));
+	if (WARN_ONCE(addr >= end, "addr: %lx, len: %lx, end: %lx\n",
+		      addr, len, end))
+		return -EINVAL;
+
+	BUILD_BUG_ON(pgd_leaf(*dst));
+	do {
+		next = pgd_addr_end(addr, end);
+		if ((pgd_none(*src) || !pgd_present(*src)))
+			continue;
+
+		if (IS_ALIGNED(addr, PGDIR_SIZE) && (next - addr == PGDIR_SIZE)) {
+			if (pgd_val(*dst)) {
+				WARN_ONCE(1, "addr: %lx, PGD: %lx, ASI PGD: %lx",
+					  addr, pgd_val(*dst), pgd_val(*src));
+				if (pgd_val(*dst) != pgd_val(*src))
+					return -EEXIST;
+			} else {
+				set_pgd(dst, *src);
+			}
+		} else {
+			err = asi_clone_p4d(dst, src, addr, next);
+			if (err)
+				return err;
+		}
+	} while (dst++, src++, addr = next, addr != end);
+
+	return 0;
 }
 
 /*
@@ -386,28 +470,32 @@ static int __init asi_global_init(void)
 		return err;
 
 	/*
-	 * The next areas are mapped using shared sub-P4D paging structures
-	 * (asi_clone_p4d instead of asi_map), since we know the whole P4D will
-	 * be mapped.
-	 */
-	asi_clone_p4d(asi_global_nonsensitive_pgd, init_mm.pgd,
-		      CPU_ENTRY_AREA_BASE);
-#ifdef CONFIG_X86_ESPFIX64
-	asi_clone_p4d(asi_global_nonsensitive_pgd, init_mm.pgd,
-		      ESPFIX_BASE_ADDR);
-#endif
-	/*
-	 * The vmemmap area actually _must_ be cloned via shared paging
-	 * structures, since mappings can potentially change dynamically when
-	 * hugetlbfs pages are created or broken down.
+	 * Share the mappings of the vmemmap, CPU_ENTRY_AREA, and ESPFIX with
+	 * unrestricted address space. The vmemmap mappings specifically _must_
+	 * be shared since they can dynamically change (e.g. when hugetlbfs
+	 * pages are created or broken down).
 	 *
-	 * We always clone 2 PGDs, this is a corrolary of the sizes of struct
-	 * page, a page, and the physical address space.
+	 * This assumes that the mappings do not change in the unrestricted
+	 * address space down to the PUDs do not change for these ranges.
+	 * Hugetlb vmemmap optimizations splits huge PMDs but it does not change
+	 * PUDs.
+	 *
+	 * TODO: This does not handle memory hotplug correctly as additional
+	 * vmemmap mappings could be created.
 	 */
-	WARN_ON(sizeof(struct page) * MAXMEM / PAGE_SIZE != 2 * (1UL << PGDIR_SHIFT));
-	asi_clone_pgd(asi_global_nonsensitive_pgd, init_mm.pgd, VMEMMAP_START);
-	asi_clone_pgd(asi_global_nonsensitive_pgd, init_mm.pgd,
-		      VMEMMAP_START + (1UL << PGDIR_SHIFT));
+	err = asi_clone_range(VMEMMAP_START, VMEMMAP_END - VMEMMAP_START);
+	if (err)
+	return err;
+
+	err = asi_clone_range(CPU_ENTRY_AREA_BASE, CPU_ENTRY_AREA_MAP_SIZE);
+	if (err)
+		return err;
+
+	if (IS_ENABLED(CONFIG_X86_ESPFIX64)) {
+		err = asi_clone_range(ESPFIX_BASE_ADDR, P4D_SIZE);
+		if (err)
+			return err;
+	}
 
 	if (boot_cpu_has_bug(X86_BUG_L1TF)) {
 		int err = l1tf_flush_setup();
@@ -512,7 +600,7 @@ int asi_init(struct mm_struct *mm, enum asi_class_id class_id, struct asi **out_
 	 * the unrestricted address space in the fork path.
 	 */
 	BUG_ON(pgd_none(*pgd_offset(mm, MM_LOCAL_BASE_ADDR)));
-	asi_clone_pgd(asi->pgd, mm->pgd, MM_LOCAL_BASE_ADDR);
+	set_pgd(&asi->pgd[pgd_index(MM_LOCAL_BASE_ADDR)], mm->pgd[pgd_index(MM_LOCAL_BASE_ADDR)]);
 
 	for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
 		set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
