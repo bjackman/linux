@@ -567,7 +567,7 @@ void ephmap_cleanup(struct mmu_gather *tlb)
 
 	/* Stop anyone from using it now that we are freeing the pagetables. */
 	for_each_possible_cpu(cpu) {
-		per_cpu(current->mm->mml_cpu->in_use, cpu) = false;
+		per_cpu(tlb->mm->mml_cpu->in_use, cpu) = false;
 	}
 
 	/* Cribbed from free_ldt_pagetables() */
