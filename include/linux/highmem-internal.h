@@ -180,10 +180,11 @@ static inline void kunmap(struct page *page)
 static inline void *kmap_local_page(struct page *page)
 {
 	void *addr = page_address(page);
-	void *ephmap;
+	void *ephmap = NULL;
 
 	migrate_disable();
-	ephmap = ephmap_get(page, PAGE_SIZE, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
+	if (asi_is_restricted())
+		ephmap = ephmap_get(page, PAGE_SIZE, __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
 	if (ephmap)
 		return ephmap;
 	return addr;
