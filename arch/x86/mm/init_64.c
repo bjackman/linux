@@ -1386,6 +1386,7 @@ leak_p4d:
 		for (int i = 0; i < PTRS_PER_PUD; i++) {
 			if (WARN_ON_ONCE(!pud_none(pud[i]))) {
 				/* Lower-level not freed. */
+				pr_warn_ratelimited("Leaking PUD for addr %#lx\n", addr);
 				goto leak_pud;
 			}
 		}
