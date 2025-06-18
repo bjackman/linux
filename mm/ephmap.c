@@ -263,6 +263,7 @@ void ephmap_put(const void *vaddr, unsigned long size)
 
 	this_cpu_write(current->mm->mml_cpu->in_use, false);
 }
+EXPORT_SYMBOL(ephmap_put);
 
 /* Call ephmap_put(), if the address is in the ephmap range. */
 void ephmap_cond_put(const void *p, unsigned long size)
@@ -272,6 +273,7 @@ void ephmap_cond_put(const void *p, unsigned long size)
 	if (addr >= EPHEMERAL_FILEMAP_BASE_ADDR && addr < EPHMAP_END_ADDR)
 		ephmap_put(p, size);
 }
+EXPORT_SYMBOL(ephmap_cond_put);
 
 static int map_page_range(struct mm_struct *mm, unsigned long addr,
 			  unsigned long end, phys_addr_t phys_addr, pgprot_t prot)
@@ -341,6 +343,7 @@ void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 	return ptr;
 
 }
+EXPORT_SYMBOL(ephmap_get);
 
 /* Set up ephmap for a new mm. */
 void ephmap_setup(struct mm_struct *mm)
