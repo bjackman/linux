@@ -58,7 +58,7 @@ static int map_pte_range(struct mm_struct *mm, pmd_t *pmd, unsigned long addr, u
 				BUG();
 			}
 
-			set_pte_at(&init_mm, addr, pte, pfn_pte(pfn, prot));
+			set_pte_at(mm, addr, pte, pfn_pte(pfn, prot));
 			pfn++;
 		} while (pte += PFN_DOWN(size), addr += size, addr != end);
 	}
