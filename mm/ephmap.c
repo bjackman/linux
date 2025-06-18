@@ -337,7 +337,7 @@ void ephmap_setup(struct mm_struct *mm)
 	 * CPU vuln leaks) and then unmap it again, leaving the tables behind.
 	 */
 	for_each_possible_cpu(cpu) {
-		unsigned long addr = EPHEMERAL_FILEMAP_BASE_ADDR + (smp_processor_id() * EPHMAP_CPU_REGION_SIZE);
+		unsigned long addr = EPHEMERAL_FILEMAP_BASE_ADDR + (cpu * EPHMAP_CPU_REGION_SIZE);
 		unsigned long end = addr + EPHMAP_CPU_REGION_SIZE;
 
 		map_page_range(mm, addr, end, __START_KERNEL_map, __pgprot(0));
