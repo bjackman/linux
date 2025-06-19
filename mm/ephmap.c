@@ -317,6 +317,19 @@ static int map_page_range(struct mm_struct *mm, unsigned long addr,
  * The returned region is physically local to the current mm. It is _logically_
  * local to the current CPU (so you must disable migration) but this is not
  * enforced by hardware so it can't be exploited to mitigate CPU vulns.
+ *
+ * TODO: The fact that you can only have on single ephemeral mapping turns out
+ * to be a fairly nasty limitation because we have cases (e.g. in do_wp_page())
+ * where we copy from one user page directly to another. So, we'd really like
+ * this allocator to be a stack, like kmap_local_page() is. kmap achieves that
+ * without requiring preemption to be off, by saving and restoring the mappings
+ * on context switch. I guess maybe we have to try that? So then the mapings are
+ * logically totally local to the context (which is fine) and physically local
+ * to the mm. Basically, we would have something like kmap_local_page() but:
+ *
+ * - You can allocate random sizes.
+ * - Therefore it can and will fail.
+ * - And it's physically mm-local.
  */
 void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 {
