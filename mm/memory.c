@@ -3052,7 +3052,7 @@ static inline int __wp_page_copy_user(struct page *dst, struct page *src,
 	 * just copying from the original user address. If that
 	 * fails, we just zero-fill it. Live with it.
 	 */
-	kaddr = kmap_local_page(dst);
+	kaddr = kmap_local_page_asi(dst);
 	pagefault_disable();
 	uaddr = (void __user *)(addr & PAGE_MASK);
 
