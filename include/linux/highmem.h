@@ -344,8 +344,8 @@ static inline int copy_mc_user_highpage(struct page *to, struct page *from,
 	unsigned long ret;
 	char *vfrom, *vto;
 
-	vfrom = kmap_local_page_asi(from);
-	vto = kmap_local_page_asi(to);
+	vfrom = kmap_local_page(from);
+	vto = kmap_local_page(to);
 	ret = copy_mc_to_kernel(vto, vfrom, PAGE_SIZE);
 	if (!ret)
 		kmsan_unpoison_memory(page_address(to), PAGE_SIZE);
@@ -363,8 +363,8 @@ static inline int copy_mc_highpage(struct page *to, struct page *from)
 	unsigned long ret;
 	char *vfrom, *vto;
 
-	vfrom = kmap_local_page_asi(from);
-	vto = kmap_local_page_asi(to);
+	vfrom = kmap_local_page(from);
+	vto = kmap_local_page(to);
 	ret = copy_mc_to_kernel(vto, vfrom, PAGE_SIZE);
 	if (!ret)
 		kmsan_copy_page_meta(to, from);
