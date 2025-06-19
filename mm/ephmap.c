@@ -265,12 +265,26 @@ void ephmap_put(const void *vaddr, unsigned long size)
 }
 EXPORT_SYMBOL(ephmap_put);
 
+static inline unsigned long ephmap_cpu_base(int cpu)
+{
+	return EPHEMERAL_FILEMAP_BASE_ADDR + (cpu * EPHMAP_CPU_REGION_SIZE);
+}
+
+/* Non-inclusive :/ */
+static inline unsigned long ephmap_cpu_end(int cpu)
+{
+	return EPHEMERAL_FILEMAP_BASE_ADDR + ((cpu + 1) * EPHMAP_CPU_REGION_SIZE);
+}
+
+static inline bool is_ephmap(unsigned long addr, int cpu)
+{
+	return addr >= ephmap_cpu_base(cpu) && addr < ephmap_cpu_end(cpu);
+}
+
 /* Call ephmap_put(), if the address is in the ephmap range. */
 void ephmap_cond_put(const void *p, unsigned long size)
 {
-	unsigned long addr = (unsigned long)p;
-
-	if (addr >= EPHEMERAL_FILEMAP_BASE_ADDR && addr < EPHMAP_END_ADDR)
+	if (is_ephmap((unsigned long)p, smp_processor_id()))
 		ephmap_put(p, size);
 }
 EXPORT_SYMBOL(ephmap_cond_put);
@@ -322,7 +336,7 @@ void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 	/* TODO: Make it a BUILD_BUG_ON (annoying because PGD size is variable). */
 	BUG_ON(EPHMAP_END_ADDR > MM_LOCAL_END);
 
-	addr = EPHEMERAL_FILEMAP_BASE_ADDR + (smp_processor_id() * EPHMAP_CPU_REGION_SIZE);
+	addr = ephmap_cpu_base(smp_processor_id());
 	size = PAGE_ALIGN(size);
 	ptr = (void *)addr;
 
