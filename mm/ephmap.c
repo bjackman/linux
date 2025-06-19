@@ -586,7 +586,14 @@ void ephmap_cleanup(struct mmu_gather *tlb)
 	unsigned long end = ALIGN(EPHMAP_END_ADDR, PUD_SIZE);
 	int cpu;
 
-	/* Stop anyone from using it now that we are freeing the pagetables. */
+	/*
+	 * Stop anyone from using it now that we are freeing the pagetables.
+	 *
+	 * TODO: Agh, I was assuming that we are the only thread in the mm but
+	 * actually I'm not sure, I need to think about mms getting borrowed
+	 * (there might also just generally be issues with mm borrowing in this
+	 * whole thing).
+	 */
 	for_each_possible_cpu(cpu) {
 		per_cpu(tlb->mm->mml_cpu->in_use, cpu) = false;
 	}
