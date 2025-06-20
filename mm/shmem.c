@@ -3082,6 +3082,11 @@ shmem_write_end(struct file *file, struct address_space *mapping,
 	return copied;
 }
 
+/*
+ * TODO: Obviously this does not belong in shmem.c, it needs to be abstracted
+ * away. But prototpying it here since this is the area that is worst affected
+ * by the problem it solves.
+ */
 enum {
 	EPHMAP_ASI,		/* Sensible behaviour. */
 	EPHMAP_ALWAYS_ALLOC, 	/* Always create, don't always use it. */
@@ -3195,12 +3200,30 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			 */
 
 			/*
-			 * TODO: How bad is it if we fault in
-			 * migrate_disable()?
+			 * TODO: How bad is it if we fault in migrate_disable()?
 			 *
-			 * TODO: this is honestly the worst code I've
-			 * ever written in my life, and I am trained in
-			 * Visual Basic 6.
+			 * TODO: this is honestly the worst code I've ever
+			 * written in my life, and I am trained in Visual Basic
+			 * 6.
+			 *
+			 * TODO: Mapping this page means we are permitting it to
+			 * be leaked via CPU vulns until some future time,
+			 * potentially long after the system call has completed.
+			 * This is not really any different from the POSIX file
+			 * access model which doesn't really care about anything
+			 * after the open(). But on Linux there is also LSMs and
+			 * the fanotify access control thing, which let the
+			 * kernel "change its mind" about access in the middle
+			 * of a file descriptor's lifetime. To avoid creating a
+			 * bypass of those systems, the ephmap_get() should be
+			 * conditional.
+
+			 * For fanotify, I think just being slow is fine, we
+			 * should just skip this for files with that thing in
+			 * place. For LSMs, I think a reasonable strategy is to
+			 * treat this as theoretically equivalent to an mmap. If
+			 * the LSM layer would let us mmap this region then we
+			 * can ephmap it.
 			 */
 			migrate_disable();
 			if (alloc_ephmap)
