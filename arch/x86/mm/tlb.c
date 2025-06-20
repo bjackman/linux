@@ -1098,6 +1098,17 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 
 	put_flush_tlb_info();
 	put_cpu();
+
+	/*
+	 * TODO: This is obviously racy. I think this might need to be a
+	 * generation instead of just a bool. Haven't thought it through
+	 * properly. I don't think this will change the performance cost
+	 * significantly, the cost of an atomic write is nothing compared to
+	 * what just happened with the IPI etc.
+	 */
+	if (end == TLB_FLUSH_ALL)
+		mm->ephmap_flush_pending = false;
+
 	mmu_notifier_arch_invalidate_secondary_tlbs(mm, start, end);
 }
 

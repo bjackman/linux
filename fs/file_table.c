@@ -422,6 +422,30 @@ static void __fput(struct file *file)
 	eventpoll_release(file);
 	locks_remove_file(file);
 
+	/*
+	 * TODO: This is not carefully assessed. It's certainly insufficient and
+	 * probably more than necessary.
+	 *
+	 * It's insufficient because closing files is not the only way a process
+	 * loses access to the pages that back it; we should also do this flush
+	 * whenever somethign gets swapped out, for example. However, I'm
+	 * guessing optimistically that in most of those cases we are already
+	 * paying most of the cost of this flush so this ought to give a
+	 * reasonable signal as to the cost added by the ephmap's flushes.
+	 *
+	 * Similarly, in the general case we need to do this for other mms than
+	 * current's. This needs a bit of plumbing fiddling to figure out how to
+	 * map the file or address_space or something back to the relevant mms.
+	 * Again, I optimistically think this is unlikely to dramatically change
+	 * the performance cost overall, I think it just ends up meaning that we
+	 * send global flushes instead of per-PCID ones, in cases where we
+	 * thinkg more than one mm needs a flush.
+	 *
+	 * (Also obviously this logic is x86-specific!)
+	 */
+	if (current->mm && current->mm->ephmap_flush_pending)
+		flush_tlb_mm_range(current->mm, 0, TLB_FLUSH_ALL, 0, 0);
+
 	security_file_release(file);
 	if (unlikely(file->f_flags & FASYNC)) {
 		if (file->f_op->fasync)

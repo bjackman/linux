@@ -838,6 +838,7 @@ struct mm_struct {
 		struct mutex asi_init_lock;
 #endif
 		struct mml_cpu __percpu *mml_cpu;
+		bool ephmap_flush_pending;
 
 		/**
 		 * @mm_users: The number of users including userspace.
