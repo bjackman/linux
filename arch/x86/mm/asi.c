@@ -523,3 +523,27 @@ static int __maybe_unused asi_clone_range(unsigned long addr, unsigned long end)
 
 	return 0;
 }
+
+static int __init asi_global_init(void)
+{
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
+
+	/*
+	 * Share most of the kernel address space, except the direct map, directly
+	 * with the nonsensitive address space. This is obviously incomplete; the
+	 * direct map is not the only place where user data ends up. This "share
+	 * the page tables" approach will always make sense for certain regions
+	 * such as the kernel text and vmemmap, but e.g. the vmalloc area should
+	 * certainly be managed as separate pagetables. However right now there
+	 * is no infrastructure for actually taking advantage of those tables
+	 * (they would need to be an exact copy of the sensitive ones) so we
+	 * just clone the whole thing.
+	 *
+	 * Note this is making assumptions about the address space layout :/
+	 */
+	asi_clone_range(VMALLOC_START, ULONG_MAX);
+
+	return 0;
+}
+subsys_initcall(asi_global_init)
