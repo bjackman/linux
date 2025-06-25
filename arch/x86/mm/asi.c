@@ -510,3 +510,121 @@ void asi_unmap(struct page *page, int numpages)
 
 	flush_tlb_kernel_range(start, end - 1);
 }
+
+/* Helper for asi_clone_range() */
+static int asi_clone_pud(p4d_t *dst_p4d, p4d_t *src_p4d,
+			 unsigned long addr, unsigned long end)
+{
+	pud_t *dst = pud_alloc(&init_mm, dst_p4d, addr);
+	pud_t *src = pud_offset(src_p4d, addr);
+	unsigned long next;
+
+	if (WARN_ON_ONCE(!dst))
+		return -EINVAL;
+
+	do {
+		next = pud_addr_end(addr, end);
+		if (IS_ALIGNED(addr, PUD_SIZE) && (next - addr == PUD_SIZE)) {
+			if (pud_val(*dst)) {
+				WARN_ONCE(1, "addr: %lx, PUD: %lx, ASI PUD: %lx",
+					  addr, pud_val(*dst), pud_val(*src));
+				if (pud_val(*dst) != pud_val(*src))
+					return -EEXIST;
+			} else {
+				set_pud(dst, *src);
+			}
+		} else {
+			WARN_ONCE(1, "Cloning PMDs is not supported");
+			return -EOPNOTSUPP;
+		}
+	} while (dst++, src++, addr = next, addr != end);
+
+	return 0;
+}
+
+/* Helper for asi_clone_range() */
+static int asi_clone_p4d(pgd_t *dst_pgd, pgd_t *src_pgd,
+			 unsigned long addr, unsigned long end)
+{
+	p4d_t *dst = p4d_alloc(&init_mm, dst_pgd, addr);
+	p4d_t *src = p4d_offset(src_pgd, addr);
+	unsigned long next;
+	int err;
+
+	if (WARN_ON_ONCE(!dst))
+		return -EINVAL;
+
+	BUILD_BUG_ON(p4d_leaf(*dst));
+	do {
+		next = p4d_addr_end(addr, end);
+		if ((p4d_none(*src) || !p4d_present(*src)))
+			continue;
+
+		if (IS_ALIGNED(addr, P4D_SIZE) && (next - addr == P4D_SIZE)) {
+			if (p4d_val(*dst)) {
+				WARN_ONCE(1, "addr: %lx, P4D: %lx, ASI P4D: %lx",
+					  addr, p4d_val(*dst), p4d_val(*src));
+				if (p4d_val(*dst) != p4d_val(*src))
+					return -EEXIST;
+			} else {
+				set_p4d(dst, *src);
+			}
+		} else {
+			err = asi_clone_pud(dst, src, addr, next);
+			if (err)
+				return err;
+		}
+	} while (dst++, src++, addr = next, addr != end);
+
+	return 0;
+}
+
+/*
+ * Share the mappings of a range of addresses with the unrestricted page tables
+ * by cloning the page table entries at the appropriate level (PGD/P4D/PUD)
+ * based on the address alignment. This shares the page tables at the lower
+ * levels (i.e. P4D/PUD/PMD). Cloning mappings at a lower level than PUD is not
+ * supported (hence @addr and @len must both be aligned to PUD_SIZE).
+ *
+ * Assumes that the cloned mappings (down to the PUD entries) will not change.
+ * Any non-present or none page table entries will be ignored.
+ *
+ * asi_clone_range() and its helpers are not expected to fail, so always WARN
+ * before returning an error.
+ */
+static int __maybe_unused asi_clone_range(unsigned long addr, unsigned long len)
+{
+	pgd_t *dst = pgd_offset_pgd(asi_global_nonsensitive_pgd, addr);
+	pgd_t *src = pgd_offset_k(addr);
+	unsigned long end = addr + len;
+	unsigned long next;
+	int err;
+
+	if (WARN_ONCE(addr >= end, "addr: %lx, len: %lx, end: %lx\n",
+		      addr, len, end))
+		return -EINVAL;
+
+	BUILD_BUG_ON(pgd_leaf(*dst));
+	do {
+		next = pgd_addr_end(addr, end);
+		if ((pgd_none(*src) || !pgd_present(*src)))
+			continue;
+
+		if (IS_ALIGNED(addr, PGDIR_SIZE) && (next - addr == PGDIR_SIZE)) {
+			if (pgd_val(*dst)) {
+				WARN_ONCE(1, "addr: %lx, PGD: %lx, ASI PGD: %lx",
+					  addr, pgd_val(*dst), pgd_val(*src));
+				if (pgd_val(*dst) != pgd_val(*src))
+					return -EEXIST;
+			} else {
+				set_pgd(dst, *src);
+			}
+		} else {
+			err = asi_clone_p4d(dst, src, addr, next);
+			if (err)
+				return err;
+		}
+	} while (dst++, src++, addr = next, addr != end);
+
+	return 0;
+}
