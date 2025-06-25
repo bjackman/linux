@@ -14,6 +14,8 @@
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 
+#include "mm_internal.h"
+
 static struct asi_taint_policy *taint_policies[ASI_MAX_NUM_CLASSES];
 
 const char *asi_class_names[] = {
@@ -626,3 +628,46 @@ static int __maybe_unused asi_clone_range(unsigned long addr, unsigned long end)
 
 	return 0;
 }
+
+static int __init asi_global_init(void)
+{
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
+
+	/*
+	 * The direct map and vmalloc range mappings are shared by all ASI
+	 * domains through ASI_GLOBAL_NONSENSITIVE, but not with the
+	 * unrestricted address space. All ASI domains copy PGD entries from
+	 * ASI_GLOBAL_NONSENSITIVE page tables during initialization (hence
+	 * sharing lower-level page tables). To avoid needing to synchronize
+	 * these PGD entries dynamically, preallocate the relevant sub-PGD page
+	 * table pages so that all the needed PGD entries are created before any
+	 * ASI domains copy them.
+	 */
+	preallocate_sub_pgd_pages(asi_global_nonsensitive_pgd,
+				  PAGE_OFFSET,
+				  PAGE_OFFSET + PFN_PHYS(max_pfn) - 1,
+				  "ASI Global Non-sensitive direct map");
+	preallocate_sub_pgd_pages(asi_global_nonsensitive_pgd,
+				  VMALLOC_START, VMALLOC_END,
+				  "ASI Global Non-sensitive vmalloc");
+
+	/*
+	 * Share the whole kernel address space, except the direct map, directly
+	 * with the restricted address space. This is obviously incomplete; the
+	 * direct map is not the only place where user data ends up. This "share
+	 * the page tables" approach will always make sense for certain regions
+	 * such as the kernel text and vmemmap, but e.g. the vmalloc area should
+	 * certainly be managed as separate pagetables. However right now there
+	 * is no infrastructure for actually taking advantage of those tables
+	 * (they would need to be an exact copy of the unrestricted ones) so we
+	 * just clone the whole thing.
+	 *
+	 * Note this is making assumptions about the address space layout :/
+	 */
+	asi_clone_range(LDT_BASE_ADDR, LDT_END_ADDR - 1);
+	asi_clone_range(VMALLOC_START, ULONG_MAX);
+
+	return 0;
+}
+subsys_initcall(asi_global_init)
