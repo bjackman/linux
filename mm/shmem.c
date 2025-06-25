@@ -3093,6 +3093,12 @@ enum {
 	EPHMAP_ALWAYS_USE,	/* Use ephmap to zero regardless of ASI. */
 } shmem_ephmap __ro_after_init;
 
+bool shmem_ephmap_needed(void)
+{
+	return static_asi_enabled() || shmem_ephmap > EPHMAP_ASI;
+}
+
+
 static int __init early_shmem_ephmap(char *str)
 {
 	if (!strncmp(str, "asi", sizeof("asi"))) {

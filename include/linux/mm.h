@@ -4220,4 +4220,7 @@ static inline void pgalloc_tag_copy(struct folio *new, struct folio *old)
 }
 #endif /* CONFIG_MEM_ALLOC_PROFILING */
 
+bool page_alloc_ephmap_needed(void);
+bool shmem_ephmap_needed(void);
+
 #endif /* _LINUX_MM_H */

@@ -1036,6 +1036,11 @@ enum {
 	EPHMAP_ALWAYS_USE,	/* Use ephmap to zero regardless of ASI. */
 } page_alloc_ephmap __ro_after_init;
 
+bool page_alloc_ephmap_needed(void)
+{
+	return static_asi_enabled() || page_alloc_ephmap > EPHMAP_ASI;
+}
+
 static int __init early_page_alloc_ephmap(char *str)
 {
 	if (!strncmp(str, "asi", sizeof("asi"))) {

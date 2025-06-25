@@ -465,7 +465,7 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	 * So that ASI's restricted pagetables can just clone the mm-local PGD
 	 * entry (sharing lower-level structures), pre-populate it now.
 	 */
-	if (static_asi_enabled())
+	if (page_alloc_ephmap_needed() || shmem_ephmap_needed())
 		/* TODO: Make MM_LOCAL_END non-inclusive like VMEMORY_END? */
 		/*
 		 * TODO: Make allocating and freing of pagetables cleaner. It's
