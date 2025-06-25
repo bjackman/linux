@@ -32,4 +32,7 @@ phys_p4d_init(p4d_t *p4d_page, unsigned long paddr, unsigned long paddr_end,
 	      unsigned long page_size_mask, pgprot_t prot, bool init);
 #endif
 
+void preallocate_sub_pgd_pages(pgd_t *pgd_table, ulong start,
+			       ulong end, const char *name);
+
 #endif	/* __X86_MM_INTERNAL_H */
