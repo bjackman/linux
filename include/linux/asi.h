@@ -2,6 +2,8 @@
 #ifndef _INCLUDE_ASI_H
 #define _INCLUDE_ASI_H
 
+#include <linux/asi_exit.h>
+
 #include <asm/pgtable_types.h>
 
 enum asi_class_id {
@@ -43,7 +45,7 @@ static inline void asi_map(struct page *page, int numpages) { }
 static inline void asi_unmap(struct page *page, int numpages) { }
 
 static inline void asi_enter(struct asi *asi) { }
-static inline void asi_exit(void) { }
+/* asi_exit() defined via yucky asi_exit.h. */
 static inline void asi_relax(void) { }
 
 static inline struct asi *asi_get_current(void) { return NULL; }

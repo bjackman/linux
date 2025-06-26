@@ -6,6 +6,7 @@
 #include <asm/nops.h>
 #include <asm/processor-flags.h>
 
+#include <linux/asi_exit.h>
 #include <linux/errno.h>
 #include <linux/irqflags.h>
 #include <linux/jump_label.h>
