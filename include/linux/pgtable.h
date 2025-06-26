@@ -1209,6 +1209,32 @@ static inline void arch_swap_restore(swp_entry_t entry, struct folio *folio)
 #endif
 
 /*
+ * Get the last address mapped by the pagetable, or the end address of the range
+ * if that comes earlier. As with *_addr_end, __boundary may wrap to 0
+ * throughout.
+ */
+
+#define pgd_addr_last(addr, end)					\
+({	unsigned long __boundary = ((addr) + PGDIR_SIZE) & PGDIR_MASK;	\
+	(__boundary - 1 < (end) - 1)? __boundary - 1: (end);		\
+})
+
+#define p4d_addr_last(addr, end)					\
+({	unsigned long __boundary = ((addr) + P4D_SIZE) & P4D_MASK;	\
+	(__boundary - 1 < (end) - 1)? __boundary - 1: (end);		\
+})
+
+#define pud_addr_last(addr, end)					\
+({	unsigned long __boundary = ((addr) + PUD_SIZE) & PUD_MASK;	\
+	(__boundary - 1 < (end) - 1)? __boundary - 1: (end);		\
+})
+
+#define pmd_addr_last(addr, end)					\
+({	unsigned long __boundary = ((addr) + PMD_SIZE) & PMD_MASK;	\
+	(__boundary - 1 < (end) - 1)? __boundary - 1: (end);		\
+})
+
+/*
  * When walking page tables, we usually want to skip any p?d_none entries;
  * and any p?d_bad entries - reporting the error before resetting to none.
  * Do the tests inline, but report and clear the bad entry in mm/memory.c.
