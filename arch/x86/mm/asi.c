@@ -414,14 +414,14 @@ static int asi_clone_pud(p4d_t *dst_p4d, p4d_t *src_p4d,
 {
 	pud_t *dst = pud_alloc(&init_mm, dst_p4d, addr);
 	pud_t *src = pud_offset(src_p4d, addr);
-	unsigned long next;
+	unsigned long last;
 
 	if (WARN_ON_ONCE(!dst))
 		return -EINVAL;
 
 	do {
-		next = pud_addr_end(addr, end);
-		if (IS_ALIGNED(addr, PUD_SIZE) && (next - addr == PUD_SIZE)) {
+		last = pud_addr_last(addr, end);
+		if (IS_ALIGNED(addr, PUD_SIZE) && (last - addr == PUD_SIZE - 1)) {
 			if (pud_val(*dst)) {
 				WARN_ONCE(1, "addr: %lx, PUD: %lx, ASI PUD: %lx",
 					  addr, pud_val(*dst), pud_val(*src));
@@ -431,10 +431,10 @@ static int asi_clone_pud(p4d_t *dst_p4d, p4d_t *src_p4d,
 				set_pud(dst, *src);
 			}
 		} else {
-			WARN_ONCE(1, "Cloning PMDs is not supported");
+			WARN_ONCE(1, "Cloning PMDs is not supported (tried to clone %#lx)", addr);
 			return -EOPNOTSUPP;
 		}
-	} while (dst++, src++, addr = next, addr != end);
+	} while (dst++, src++, addr = last + 1, last != end);
 
 	return 0;
 }
@@ -445,7 +445,7 @@ static int asi_clone_p4d(pgd_t *dst_pgd, pgd_t *src_pgd,
 {
 	p4d_t *dst = p4d_alloc(&init_mm, dst_pgd, addr);
 	p4d_t *src = p4d_offset(src_pgd, addr);
-	unsigned long next;
+	unsigned long last;
 	int err;
 
 	if (WARN_ON_ONCE(!dst))
@@ -453,11 +453,11 @@ static int asi_clone_p4d(pgd_t *dst_pgd, pgd_t *src_pgd,
 
 	BUILD_BUG_ON(p4d_leaf(*dst));
 	do {
-		next = p4d_addr_end(addr, end);
+		last = p4d_addr_last(addr, end);
 		if ((p4d_none(*src) || !p4d_present(*src)))
 			continue;
 
-		if (IS_ALIGNED(addr, P4D_SIZE) && (next - addr == P4D_SIZE)) {
+		if (IS_ALIGNED(addr, P4D_SIZE) && (last - addr == P4D_SIZE - 1)) {
 			if (p4d_val(*dst)) {
 				WARN_ONCE(1, "addr: %lx, P4D: %lx, ASI P4D: %lx",
 					  addr, p4d_val(*dst), p4d_val(*src));
@@ -467,11 +467,11 @@ static int asi_clone_p4d(pgd_t *dst_pgd, pgd_t *src_pgd,
 				set_p4d(dst, *src);
 			}
 		} else {
-			err = asi_clone_pud(dst, src, addr, next);
+			err = asi_clone_pud(dst, src, addr, last);
 			if (err)
 				return err;
 		}
-	} while (dst++, src++, addr = next, addr != end);
+	} while (dst++, src++, addr = last + 1, last != end);
 
 	return 0;
 }
@@ -489,25 +489,23 @@ static int asi_clone_p4d(pgd_t *dst_pgd, pgd_t *src_pgd,
  * asi_clone_range() and its helpers are not expected to fail, so always WARN
  * before returning an error.
  */
-static int __maybe_unused asi_clone_range(unsigned long addr, unsigned long len)
+static int __maybe_unused asi_clone_range(unsigned long addr, unsigned long end)
 {
 	pgd_t *dst = pgd_offset_pgd(asi_nonsensitive_pgd, addr);
 	pgd_t *src = pgd_offset_k(addr);
-	unsigned long end = addr + len;
-	unsigned long next;
+	unsigned long last;
 	int err;
 
-	if (WARN_ONCE(addr >= end, "addr: %lx, len: %lx, end: %lx\n",
-		      addr, len, end))
+	if (WARN_ONCE(addr >= end, "addr: %lx, end: %lx\n", addr, end))
 		return -EINVAL;
 
 	BUILD_BUG_ON(pgd_leaf(*dst));
 	do {
-		next = pgd_addr_end(addr, end);
+		last = pgd_addr_last(addr, end);
 		if ((pgd_none(*src) || !pgd_present(*src)))
 			continue;
 
-		if (IS_ALIGNED(addr, PGDIR_SIZE) && (next - addr == PGDIR_SIZE)) {
+		if (IS_ALIGNED(addr, PGDIR_SIZE) && (last - addr == PGDIR_SIZE - 1)) {
 			if (pgd_val(*dst)) {
 				WARN_ONCE(1, "addr: %lx, PGD: %lx, ASI PGD: %lx",
 					  addr, pgd_val(*dst), pgd_val(*src));
@@ -517,11 +515,11 @@ static int __maybe_unused asi_clone_range(unsigned long addr, unsigned long len)
 				set_pgd(dst, *src);
 			}
 		} else {
-			err = asi_clone_p4d(dst, src, addr, next);
+			err = asi_clone_p4d(dst, src, addr, last);
 			if (err)
 				return err;
 		}
-	} while (dst++, src++, addr = next, addr != end);
+	} while (dst++, src++, addr = last + 1, last != end);
 
 	return 0;
 }
