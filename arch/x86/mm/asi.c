@@ -326,6 +326,7 @@ noinstr void asi_relax(void)
 }
 EXPORT_SYMBOL_GPL(asi_relax);
 
+/* Immediately exit the restricted address space if in it. */
 noinstr void asi_exit(void)
 {
 	u64 unrestricted_cr3;

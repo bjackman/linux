@@ -3,6 +3,7 @@
 #define _ASM_X86_ASI_H
 
 #include <linux/asi.h>
+#include <linux/asi_exit.h>
 #include <linux/log2.h>
 #include <linux/sched.h>
 
@@ -162,9 +163,6 @@ void asi_enter(struct asi *asi);
  * will stay relaxed until the next asi_enter.
  */
 void asi_relax(void);
-
-/* Immediately exit the restricted address space if in it */
-void asi_exit(void);
 
 static inline void asi_init_thread_state(struct thread_struct *thread)
 {
