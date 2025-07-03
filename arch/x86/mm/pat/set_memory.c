@@ -2074,7 +2074,7 @@ out:
 	return ret;
 }
 
-static int change_page_attr_set_clr(unsigned long *addr, int numpages,
+static int change_page_attr_set_clr_pgd(pgd_t *pgd, unsigned long *addr, int numpages,
 				    pgprot_t mask_set, pgprot_t mask_clr,
 				    int force_split, int in_flag,
 				    struct page **pages)
@@ -2121,6 +2121,7 @@ static int change_page_attr_set_clr(unsigned long *addr, int numpages,
 
 	vm_unmap_aliases();
 
+	cpa.pgd = pgd;
 	cpa.vaddr = addr;
 	cpa.pages = pages;
 	cpa.numpages = numpages;
@@ -2155,6 +2156,15 @@ static int change_page_attr_set_clr(unsigned long *addr, int numpages,
 	cpa_flush(&cpa, cache);
 out:
 	return ret;
+}
+
+static int change_page_attr_set_clr(unsigned long *addr, int numpages,
+				    pgprot_t mask_set, pgprot_t mask_clr,
+				    int force_split, int in_flag,
+				    struct page **pages)
+{
+	return change_page_attr_set_clr_pgd(NULL, addr, numpages, mask_set, mask_clr,
+					   force_split, in_flag, pages);
 }
 
 static inline int change_page_attr_set(unsigned long *addr, int numpages,
@@ -2388,6 +2398,13 @@ int set_memory_np_noalias(unsigned long addr, int numpages)
 int set_memory_p(unsigned long addr, int numpages)
 {
 	return change_page_attr_set(&addr, numpages, __pgprot(_PAGE_PRESENT), 0);
+}
+
+int set_memory_p_pgd_noalias(pgd_t *pgd, unsigned long addr, int numpages)
+{
+	return change_page_attr_set_clr_pgd(pgd, &addr, numpages,
+					    __pgprot(_PAGE_PRESENT),
+					    __pgprot(0), 0, CPA_NO_CHECK_ALIAS, NULL);
 }
 
 int set_memory_4k(unsigned long addr, int numpages)
