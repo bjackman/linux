@@ -34,6 +34,25 @@ def _page_offset_base():
     pob = pob_symbol.name
     return gdb.parse_and_eval(pob)
 
+def pgtable_index(va, level):
+    """Equivalent of *_index in the C code. Note that level is 1-based."""
+
+    def start_bit(level):
+        if level == 5:
+            return 48
+        elif level == 4:
+            return 39
+        elif level == 3:
+            return 30
+        elif level == 2:
+            return 21
+        elif level == 1:
+            return 12
+        else:
+            raise Exception(f'Unknown level {level}')
+
+    return (va >> start_bit(level)) & 511
+
 
 def is_bit_defined_tupled(data, offset):
     return offset, bool(data >> offset & 1)
@@ -42,21 +61,7 @@ def content_tupled(data, bit_start, bit_end):
     return (bit_start, bit_end), data >> bit_start & ((1 << (1 + bit_end - bit_start)) - 1)
 
 def entry_va(level, phys_addr, translating_va):
-        def start_bit(level):
-            if level == 5:
-                return 48
-            elif level == 4:
-                return 39
-            elif level == 3:
-                return 30
-            elif level == 2:
-                return 21
-            elif level == 1:
-                return 12
-            else:
-                raise Exception(f'Unknown level {level}')
-
-        entry_offset =  ((translating_va >> start_bit(level)) & 511) * 8
+        entry_offset =  (pgtable_index(translating_va, level) & 511) * 8
         entry_va = _page_offset_base() + phys_addr + entry_offset
         return entry_va
 
@@ -192,6 +197,11 @@ level {self.page_hierarchy_level}:
 """
 
 
+def get_page_levels():
+    cr4 = gdb.parse_and_eval('$cr4')
+    return 5 if cr4 & (1 << 12) else 4
+
+
 class TranslateVM(gdb.Command):
     """Prints the entire paging structure used to translate a given virtual address.
 
@@ -204,11 +214,16 @@ Currently supported arch: x86"""
 
     def invoke(self, arg, from_tty):
         if utils.is_target_arch("x86"):
-            vm_address = gdb.parse_and_eval(f'{arg}')
-            cr3_data = gdb.parse_and_eval('$cr3')
-            cr4 = gdb.parse_and_eval('$cr4')
-            page_levels = 5 if cr4 & (1 << 12) else 4
-            page_entry = Cr3(cr3_data, page_levels)
+            args = gdb.string_to_argv(arg)
+            vm_address = gdb.parse_and_eval(f'{args[0]}')
+            pgd_level = get_page_levels()
+            if len(args) == 1:
+                cr3_data = gdb.parse_and_eval('$cr3')
+                page_entry = Cr3(cr3_data, pgd_level)
+            else:
+                pgd_base = gdb.parse_and_eval(args[1])
+                pgd = pgd_base + 8 * pgtable_index(vm_address, pgd_level)
+                page_entry = PageHierarchyEntry(pgd, pgd_level)
             while page_entry:
                 gdb.write(page_entry.mk_string())
                 page_entry = page_entry.next_entry(vm_address)
