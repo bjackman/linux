@@ -147,31 +147,53 @@ static struct page *do_alloc_pages(struct kunit *test, gfp_t gfp, unsigned int o
 	return ctx->pages;
 }
 
-/* Is this page present in the physmap? */
-static bool page_present_phys(struct kunit *test, pgd_t *pgd, struct page *page)
+static inline pteval_t pgtable_flags(struct kunit *test, pte_t *pte,
+				     unsigned int level)
+{
+	switch (level) {
+	case PG_LEVEL_4K:
+		return pte_flags(*pte);
+	case PG_LEVEL_2M:
+		return pmd_flags(*(pmd_t *)pte);
+	case PG_LEVEL_1G:
+		return pud_flags(*(pud_t *)pte);
+	case PG_LEVEL_512G:
+		/* Assuming this is the same regardless of la57... */
+		return p4d_flags(*(p4d_t *)pte);
+	case PG_LEVEL_256T:
+		return pgd_flags(*(pgd_t *)pte);
+	default:
+		KUNIT_FAIL_AND_ABORT(test, "Unknown pagetable level %d\n", level);
+	}
+}
+
+static bool addr_present(struct kunit *test, pgd_t *pgd, unsigned long addr)
 {
 	unsigned int level;
-	unsigned long addr = (unsigned long)page_address(page);
 	pte_t *pte = lookup_address_in_pgd(pgd_offset_pgd(pgd, addr), addr, &level);
 
 	if (!pte)
 		return false;
 
-	switch (level) {
-	case PG_LEVEL_4K:
-		return pte_flags(*pte) & _PAGE_PRESENT;
-	case PG_LEVEL_2M:
-		return pmd_flags(*(pmd_t *)pte) & _PAGE_PRESENT;
-	case PG_LEVEL_1G:
-		return pud_flags(*(pud_t *)pte) & _PAGE_PRESENT;
-	case PG_LEVEL_512G:
-		/* Assuming this is the same regardless of la57... */
-		return p4d_flags(*(p4d_t *)pte) & _PAGE_PRESENT;
-	case PG_LEVEL_256T:
-		return pgd_flags(*(pgd_t *)pte) & _PAGE_PRESENT;
-	default:
-		KUNIT_FAIL_AND_ABORT(test, "Unknown pagetable level %d\n", level);
-	}
+	return pgtable_flags(test, pte, level) & _PAGE_PRESENT;
+}
+
+static bool addr_executable(struct kunit *test, pgd_t *pgd, unsigned long addr)
+{
+	unsigned int level;
+	pte_t *pte = lookup_address_in_pgd(pgd_offset_pgd(pgd, addr), addr, &level);
+
+	if (!pte)
+		return false;
+
+	return (pgtable_flags(test, pte, level) & (_PAGE_PRESENT | _PAGE_NX))
+		== _PAGE_PRESENT;
+}
+
+/* Is this page present in the physmap? */
+static bool page_present_phys(struct kunit *test, pgd_t *pgd, struct page *page)
+{
+	return addr_present(test, pgd, (unsigned long)page_address(page));
 }
 
 /* This is a very minimal smoke test. */
@@ -194,7 +216,40 @@ static void test_alloc_sensitive_nonsensitive(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, page_present_phys(test, restricted_pgd, page_nonsensitive));
 }
 
+/*
+ * Touching sensitive data in the critical section is forbidden. If this this
+ * rule is broken it becomes very quickly obvious that something is wrong. But
+ * sometimes it bricks the system such that it's a pain to figure out exactly
+ * _what_ is wrong. So this is a somke test to catch some obvious cases.
+ */
+static void test_critical_data_nonsensitive(struct kunit *test)
+{
+	pgd_t *pgd;
+	int cpu;
+
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		kunit_skip(test, "ASI disabled. Set asi=on to test\n");
+
+	pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
+
+	KUNIT_EXPECT_TRUE(test, addr_executable(test, pgd,
+						(unsigned long)asi_enter));
+	/*
+	 * Can't really get at a module here, but sometimes this code will be a
+	 * module, so at least in that case we can check that module text is
+	 * mapped.
+	 */
+	KUNIT_EXPECT_TRUE(test, addr_executable(test, pgd,
+		(unsigned long)test_critical_data_nonsensitive));
+
+	for_each_possible_cpu(cpu) {
+		KUNIT_EXPECT_TRUE(test, addr_present(test, pgd,
+						(unsigned long)raw_cpu_ptr(&curr_asi)));
+	}
+}
+
 static struct kunit_case asi_test_cases[] = {
+	KUNIT_CASE(test_critical_data_nonsensitive),
 	KUNIT_CASE(test_asi_state),
 	KUNIT_CASE(test_alloc_sensitive_nonsensitive),
 	{}
