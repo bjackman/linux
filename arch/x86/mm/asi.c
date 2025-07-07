@@ -635,24 +635,6 @@ static int __init asi_global_init(void)
 		return 0;
 
 	/*
-	 * The direct map and vmalloc range mappings are shared by all ASI
-	 * domains through ASI_GLOBAL_NONSENSITIVE, but not with the
-	 * unrestricted address space. All ASI domains copy PGD entries from
-	 * ASI_GLOBAL_NONSENSITIVE page tables during initialization (hence
-	 * sharing lower-level page tables). To avoid needing to synchronize
-	 * these PGD entries dynamically, preallocate the relevant sub-PGD page
-	 * table pages so that all the needed PGD entries are created before any
-	 * ASI domains copy them.
-	 */
-	preallocate_sub_pgd_pages(asi_global_nonsensitive_pgd,
-				  PAGE_OFFSET,
-				  PAGE_OFFSET + PFN_PHYS(max_pfn) - 1,
-				  "ASI Global Non-sensitive direct map");
-	preallocate_sub_pgd_pages(asi_global_nonsensitive_pgd,
-				  VMALLOC_START, VMALLOC_END,
-				  "ASI Global Non-sensitive vmalloc");
-
-	/*
 	 * Share most of the kernel address space, except the direct map, directly
 	 * with the restricted address space. This is obviously incomplete; the
 	 * direct map is not the only place where user data ends up. This "share
