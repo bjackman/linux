@@ -1315,11 +1315,6 @@ static inline int cpu_of(struct rq *rq)
 
 #define MDF_PUSH		0x01
 
-static inline bool is_migration_disabled(struct task_struct *p)
-{
-	return p->migration_disabled;
-}
-
 DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
 #define cpu_rq(cpu)		(&per_cpu(runqueues, (cpu)))
