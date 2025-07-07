@@ -9,6 +9,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/ephmap.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/backing-dev.h>
@@ -1271,6 +1272,15 @@ void exit_mmap(struct mm_struct *mm)
 
 	vma = vma_next(&vmi);
 	if (!vma || unlikely(xa_is_zero(vma))) {
+		/*
+		 * TODO: This sux! Lazy fix: just don't set up ephmap until we
+		 * get a VMA? (Can we still become VMAless after that?)
+		 */
+		lru_add_drain();
+		tlb_gather_mmu_fullmm(&tlb, mm);
+		ephmap_cleanup(&tlb);
+		tlb_finish_mmu(&tlb);
+
 		/* Can happen if dup_mmap() received an OOM */
 		mmap_read_unlock(mm);
 		mmap_write_lock(mm);
@@ -1282,6 +1292,7 @@ void exit_mmap(struct mm_struct *mm)
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
 	/* Use ULONG_MAX here to ensure all VMAs in the mm are unmapped */
 	unmap_vmas(&tlb, &vmi.mas, vma, 0, ULONG_MAX, ULONG_MAX, false);
+	ephmap_cleanup(&tlb);
 	mmap_read_unlock(mm);
 
 	/*

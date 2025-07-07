@@ -13,6 +13,7 @@
  */
 
 #include <linux/anon_inodes.h>
+#include <linux/ephmap.h>
 #include <linux/slab.h>
 #include <linux/sched/autogroup.h>
 #include <linux/sched/mm.h>
@@ -688,6 +689,7 @@ void __mmdrop(struct mm_struct *mm)
 	mm_pasid_drop(mm);
 	mm_destroy_cid(mm);
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
+	free_percpu(mm->mml_cpu);
 
 	free_mm(mm);
 }
@@ -1082,10 +1084,20 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 				     NR_MM_COUNTERS))
 		goto fail_pcpu;
 
+	mm->mml_cpu = alloc_percpu_gfp(struct mml_cpu, GFP_KERNEL_ACCOUNT);
+	if (!mm->mml_cpu)
+		goto fail_mml;
+
 	mm->user_ns = get_user_ns(user_ns);
 	lru_gen_init_mm(mm);
+
+	if (ephmap_needed())
+		ephmap_setup(mm);
+
 	return mm;
 
+fail_mml:
+	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 fail_pcpu:
 	mm_destroy_cid(mm);
 fail_cid:

@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _LINUX_EPHMAP_H
+#define _LINUX_EPHMAP_H
+
+#include <linux/mm.h>
+
+/* No users yet. */
+static inline bool ephmap_needed(void) { return false; }
+void ephmap_setup(struct mm_struct *mm);
+void ephmap_cleanup(struct mmu_gather *tlb);
+
+void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot);
+void ephmap_put(const void *vaddr, unsigned long size);
+void ephmap_cond_put(const void *vaddr, unsigned long size);
+
+#endif /* _LINUX_EPHMAP_H */

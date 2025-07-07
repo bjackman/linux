@@ -108,6 +108,13 @@ extern unsigned int ptrs_per_p4d;
 #define LDT_REMAP_SIZE		PMD_SIZE
 #define LDT_END_ADDR		(LDT_BASE_ADDR + LDT_REMAP_SIZE)
 
+/*
+ * Hack: aligning to makes freing pagetables easier.
+ * TODO: Does this hack work on 5level? Prob not.
+ */
+#define EPHEMERAL_FILEMAP_BASE_ADDR	ALIGN(LDT_END_ADDR, PUD_SIZE)
+
+
 #define __VMALLOC_BASE_L4	0xffffc90000000000UL
 #define __VMALLOC_BASE_L5 	0xffa0000000000000UL
 
