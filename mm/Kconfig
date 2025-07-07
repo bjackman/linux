@@ -1466,4 +1466,17 @@ config FIND_NORMAL_PAGE
 
 source "mm/damon/Kconfig"
 
+config ARCH_HAS_MM_LOCAL
+	bool
+	help
+	  The architecture has a region of the kernel address space that's local
+	  to the process.
+
+config MERMAP
+	bool "Support for epheMERal mappings within the kernel"
+	default COMPILE_TEST
+	depends on ARCH_HAS_MM_LOCAL
+	help
+	  Support for epheMERal mappings within the kernel.
+
 endmenu

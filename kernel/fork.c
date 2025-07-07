@@ -13,6 +13,7 @@
  */
 
 #include <linux/anon_inodes.h>
+#include <linux/mermap.h>
 #include <linux/slab.h>
 #include <linux/sched/autogroup.h>
 #include <linux/sched/mm.h>
@@ -1129,8 +1130,14 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 
 	mm->user_ns = get_user_ns(user_ns);
 	lru_gen_init_mm(mm);
+
+	if (mermap_mm_init(mm))
+		goto fail_mermap;
+
 	return mm;
 
+fail_mermap:
+	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 fail_pcpu:
 	mm_destroy_cid(mm);
 fail_cid:

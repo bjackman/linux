@@ -105,11 +105,19 @@ extern unsigned int ptrs_per_p4d;
 
 #define MM_LOCAL_PGD_ENTRY	-240UL
 #define MM_LOCAL_BASE_ADDR	(MM_LOCAL_PGD_ENTRY << PGDIR_SHIFT)
-#define MM_LOCAL_END		((MM_LOCAL_PGD_ENTRY + 1) << PGDIR_SHIFT)
+#define MM_LOCAL_START_ADDR	((MM_LOCAL_PGD_ENTRY) << PGDIR_SHIFT)
+#define MM_LOCAL_END_ADDR	(MM_LOCAL_START_ADDR + (1UL << PGDIR_SHIFT))
 
 #define LDT_BASE_ADDR		MM_LOCAL_BASE_ADDR
 #define LDT_REMAP_SIZE		PMD_SIZE
 #define LDT_END_ADDR		(LDT_BASE_ADDR + LDT_REMAP_SIZE)
+
+/*
+ * Hack: aligning to makes freing pagetables easier.
+ * TODO: Does this hack work on 5level? Prob not.
+ */
+#define MERMAP_BASE_ADDR	ALIGN(LDT_END_ADDR, PUD_SIZE)
+
 
 #define __VMALLOC_BASE_L4	0xffffc90000000000UL
 #define __VMALLOC_BASE_L5 	0xffa0000000000000UL
