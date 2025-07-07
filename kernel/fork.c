@@ -1091,7 +1091,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->user_ns = get_user_ns(user_ns);
 	lru_gen_init_mm(mm);
 
-	if (kmap_ephmap_needed())
+	if (kmap_ephmap_needed() || shmem_ephmap_needed())
 		ephmap_setup(mm);
 
 	return mm;

@@ -3986,4 +3986,10 @@ static inline bool vfs_empty_path(int dfd, const char __user *path)
 
 int generic_atomic_write_valid(struct kiocb *iocb, struct iov_iter *iter);
 
+#ifdef CONFIG_SHMEM
+bool shmem_ephmap_needed(void);
+#else
+static inline bool shmem_ephmap_needed(void) { return false; }
+#endif
+
 #endif /* _LINUX_FS_H */

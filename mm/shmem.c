@@ -21,6 +21,9 @@
  * This file is released under the GPL.
  */
 
+#include "linux/lockdep.h"
+#include "linux/percpu-defs.h"
+#include <linux/ephmap.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/vfs.h>
@@ -46,6 +49,42 @@
 static struct vfsmount *shm_mnt __ro_after_init;
 
 #ifdef CONFIG_SHMEM
+
+/*
+ * TODO: Obviously this does not belong in shmem.c, it needs to be abstracted
+ * away. But prototpying it here since this is the area that is worst affected
+ * by the problem it solves.
+ */
+enum {
+	EPHMAP_ASI,		/* Sensible behaviour. */
+	EPHMAP_ALWAYS_ALLOC, 	/* Always create, don't always use it. */
+	EPHMAP_ALWAYS_USE,	/* Use ephmap to zero regardless of ASI. */
+} shmem_ephmap __ro_after_init;
+
+bool shmem_ephmap_needed(void)
+{
+	return static_asi_enabled() || shmem_ephmap > EPHMAP_ASI;
+}
+
+static int __init early_shmem_ephmap(char *str)
+{
+	if (!strncmp(str, "asi", sizeof("asi"))) {
+		printk("shmem_ephmap: using when ASI-restricted\n");
+		shmem_ephmap = EPHMAP_ASI;
+	} else if (!strncmp(str, "always_alloc", sizeof("always_alloc"))) {
+		printk("shmem_ephmap: always allocating\n");
+		shmem_ephmap = EPHMAP_ALWAYS_ALLOC;
+	} else if (!strncmp(str, "always_use", sizeof("always_use"))) {
+		printk("shmem_ephmap: always using\n");
+		shmem_ephmap = EPHMAP_ALWAYS_USE;
+	} else {
+		printk("shmem_ephmap: unrecognized: %s\n", str);
+	}
+
+	return 0;
+}
+early_param("shmem_ephmap", early_shmem_ephmap);
+
 /*
  * This virtual memory filesystem is heavily based on the ramfs. It
  * extends ramfs by the ability to use swap and honor resource limits
@@ -3337,6 +3376,9 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	unsigned long offset;
 	int error = 0;
 	ssize_t retval = 0;
+	bool asi_restricted = asi_is_restricted();
+	bool alloc_ephmap = asi_restricted || shmem_ephmap >= EPHMAP_ALWAYS_ALLOC;
+	bool use_ephmap = asi_restricted || shmem_ephmap >= EPHMAP_ALWAYS_USE;
 
 	for (;;) {
 		struct folio *folio = NULL;
@@ -3390,6 +3432,8 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		nr = min_t(loff_t, end_offset - iocb->ki_pos, fsize - offset);
 
 		if (folio) {
+			void *ephemeral = NULL;
+
 			/*
 			 * If users can be writing to this page using arbitrary
 			 * virtual addresses, take care about potential aliasing
@@ -3411,11 +3455,48 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			 * Ok, we have the page, and it's up-to-date, so
 			 * now we can copy it to user space...
 			 */
-			if (likely(!fallback_page_copy))
+
+			/*
+			 * TODO: How bad is it if we fault in migrate_disable()?
+			 *
+			 * TODO: this is honestly the worst code I've ever
+			 * written in my life, and I am trained in Visual Basic
+			 * 6.
+			 *
+			 * TODO: Mapping this page means we are permitting it to
+			 * be leaked via CPU vulns until some future time,
+			 * potentially long after the system call has completed.
+			 * This is not really any different from the POSIX file
+			 * access model which doesn't really care about anything
+			 * after the open(). But on Linux there is also LSMs and
+			 * the fanotify access control thing, which let the
+			 * kernel "change its mind" about access in the middle
+			 * of a file descriptor's lifetime. To avoid creating a
+			 * bypass of those systems, the ephmap_get() should be
+			 * conditional.
+
+			 * For fanotify, I think just being slow is fine, we
+			 * should just skip this for files with that thing in
+			 * place. For LSMs, I think a reasonable strategy is to
+			 * treat this as theoretically equivalent to an mmap. If
+			 * the LSM layer would let us mmap this region then we
+			 * can ephmap it.
+			 */
+			migrate_disable();
+			if (alloc_ephmap)
+				ephemeral = ephmap_get(page, offset + nr,
+						      __pgprot(__PAGE_KERNEL_RO & ~_PAGE_GLOBAL));
+
+			if (ephemeral && use_ephmap)
+				ret = copy_to_iter(ephemeral + offset, nr, to);
+			else if (likely(!fallback_page_copy))
 				ret = copy_folio_to_iter(folio, offset, nr, to);
 			else
 				ret = copy_page_to_iter(page, offset, nr, to);
+			if (ephemeral)
+				ephmap_put(ephemeral, offset + nr);
 			folio_put(folio);
+			migrate_enable();
 		} else if (user_backed_iter(to)) {
 			/*
 			 * Copy to user tends to be so well optimized, but

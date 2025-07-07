@@ -56,6 +56,7 @@ static inline void asi_relax(void) { }
 
 static inline struct asi *asi_get_current(void) { return NULL; }
 static inline bool asi_in_critical_section(void) { return false; }
+static inline bool asi_is_restricted(void) { return false; }
 
 static inline void asi_intr_enter(void) { }
 static inline void asi_intr_exit(void) { }
