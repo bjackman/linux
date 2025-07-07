@@ -261,6 +261,13 @@ void ephmap_put(const void *vaddr, unsigned long size)
 		invpcid_flush_all();
 	}
 
+	/*
+	 * Code above just flushed the local CPU's TLB but the mapping is only
+	 * _logically_ CPU-local, other CPUs may have a TLB entry. We will flush
+	 * those lazily.
+	 */
+	current->mm->ephmap_flush_pending = true;
+
 	this_cpu_write(current->mm->mml_cpu->in_use, false);
 }
 EXPORT_SYMBOL(ephmap_put);
