@@ -236,14 +236,14 @@ struct folio *vma_alloc_zeroed_movable_folio(struct vm_area_struct *vma,
 
 static inline void clear_highpage(struct page *page)
 {
-	void *kaddr = kmap_local_page(page);
+	void *kaddr = kmap_local_page_asi(page);
 	clear_page(kaddr);
 	kunmap_local(kaddr);
 }
 
 static inline void clear_highpage_kasan_tagged(struct page *page)
 {
-	void *kaddr = kmap_local_page(page);
+	void *kaddr = kmap_local_page_asi(page);
 
 	clear_page(kasan_reset_tag(kaddr));
 	kunmap_local(kaddr);
@@ -693,5 +693,7 @@ static inline void unmap_and_put_page(struct page *page, void *addr)
 {
 	folio_release_kmap(page_folio(page), addr);
 }
+
+bool kmap_ephmap_needed(void);
 
 #endif /* _LINUX_HIGHMEM_H */

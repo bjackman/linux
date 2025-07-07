@@ -30,6 +30,36 @@
 #include <asm/tlbflush.h>
 #include <linux/vmalloc.h>
 
+enum {
+	EPHMAP_ASI,	     /* Sensible behaviour. */
+	EPHMAP_ALWAYS_ALLOC,    /* Always create, don't always use it. */
+	EPHMAP_ALWAYS_USE,      /* Use ephmap to zero regardless of ASI. */
+} kmap_ephmap __ro_after_init;
+
+bool kmap_ephmap_needed(void)
+{
+	return static_asi_enabled() || kmap_ephmap > EPHMAP_ASI;
+}
+
+static int __init early_kmap_ephmap(char *str)
+{
+	if (!strncmp(str, "asi", sizeof("asi"))) {
+		printk("kmap_ephmap: using when ASI-restricted\n");
+		kmap_ephmap = EPHMAP_ASI;
+	} else if (!strncmp(str, "always_alloc", sizeof("always_alloc"))) {
+		printk("kmap_ephmap: always allocating\n");
+		kmap_ephmap = EPHMAP_ALWAYS_ALLOC;
+	} else if (!strncmp(str, "always_use", sizeof("always_use"))) {
+		printk("kmap_ephmap: always using\n");
+		kmap_ephmap = EPHMAP_ALWAYS_USE;
+	} else {
+		printk("kmap_ephmap: unrecognized: %s\n", str);
+	}
+
+	return 0;
+}
+early_param("kmap_ephmap", early_kmap_ephmap);
+
 #ifdef CONFIG_KMAP_LOCAL
 static inline int kmap_local_calc_idx(int idx)
 {
