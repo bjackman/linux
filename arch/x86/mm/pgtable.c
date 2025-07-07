@@ -7,6 +7,8 @@
 #include <asm/fixmap.h>
 #include <asm/mtrr.h>
 
+#include "mm_internal.h"
+
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
 EXPORT_SYMBOL(physical_mask);
@@ -344,6 +346,20 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 		goto out_free_user_pmds;
 
 	/*
+	 * So that ASI's restricted pagetables can just clone the mm-local PGD
+	 * entry (sharing lower-level structures), pre-populate it now.
+	 */
+	if (static_cpu_has(X86_FEATURE_ASI))
+		/* TODO: Make MM_LOCAL_END non-inclusive like VMEMORY_END? */
+		/*
+		 * TODO: Make allocating and freing of pagetables cleaner. It's
+		 * divided in two because the PGD is shared but the lower levels
+		 * are split between the LDT and the ephmap.
+		 */
+		preallocate_sub_pgd_pages(pgd, MM_LOCAL_BASE_ADDR,
+					  MM_LOCAL_END - 1, "mm-local");
+
+	/*
 	 * Make sure that pre-populating the pmds is atomic with
 	 * respect to anything walking the pgd_list, so that they
 	 * never see a partially populated pgd.
@@ -375,6 +391,8 @@ out:
 
 void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 {
+	if (static_asi_enabled())
+		free_sub_pgd_pages(mm->pgd, MM_LOCAL_BASE_ADDR, MM_LOCAL_END - 1);
 	pgd_mop_up_pmds(mm, pgd);
 	pgd_dtor(pgd);
 	paravirt_pgd_free(mm, pgd);

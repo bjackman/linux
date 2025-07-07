@@ -260,6 +260,17 @@ exit_unlock:
 	for (int i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
 		set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 
+	/*
+	 * The mm-local region is shared with the process' unrestricted addres
+	 * space. It's assumed there isn't anything in there that is important
+	 * to keep secret from the process that owns it.
+	 *
+	 * The lower level table should have been pre-allocated and installed in
+	 * the unrestricted address space in the fork path.
+	 */
+	WARN_ON_ONCE(pgd_none(*pgd_offset(mm, MM_LOCAL_BASE_ADDR)));
+	set_pgd(&asi->pgd[pgd_index(MM_LOCAL_BASE_ADDR)], mm->pgd[pgd_index(MM_LOCAL_BASE_ADDR)]);
+
 	__asi_init_user_pgds(mm, asi);
 	mutex_unlock(&mm->asi_init_lock);
 

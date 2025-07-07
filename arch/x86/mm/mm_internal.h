@@ -36,5 +36,6 @@ extern pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
 
 void preallocate_sub_pgd_pages(pgd_t *pgd_table, ulong start,
 			       ulong end, const char *name);
+extern void free_sub_pgd_pages(pgd_t *pgd_table, ulong start, ulong end);
 
 #endif	/* __X86_MM_INTERNAL_H */
