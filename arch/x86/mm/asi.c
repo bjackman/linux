@@ -653,7 +653,7 @@ static int __init asi_global_init(void)
 				  "ASI Global Non-sensitive vmalloc");
 
 	/*
-	 * Share the whole kernel address space, except the direct map, directly
+	 * Share most of the kernel address space, except the direct map, directly
 	 * with the restricted address space. This is obviously incomplete; the
 	 * direct map is not the only place where user data ends up. This "share
 	 * the page tables" approach will always make sense for certain regions
@@ -665,7 +665,6 @@ static int __init asi_global_init(void)
 	 *
 	 * Note this is making assumptions about the address space layout :/
 	 */
-	asi_clone_range(LDT_BASE_ADDR, LDT_END_ADDR - 1);
 	asi_clone_range(VMALLOC_START, ULONG_MAX);
 
 	return 0;
