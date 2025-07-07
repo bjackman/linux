@@ -1516,6 +1516,15 @@ config MM_LOCAL_REGION
 	bool
 	depends on ARCH_SUPPORTS_MM_LOCAL_REGION
 
+config ARCH_SUPPORTS_MERMAP
+	bool
+	select ARCH_SUPPORTS_MM_LOCAL_REGION
+
+config MERMAP
+	bool
+	depends on ARCH_SUPPORTS_MERMAP
+	select MM_LOCAL_REGION
+
 source "mm/damon/Kconfig"
 
 endmenu
