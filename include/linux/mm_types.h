@@ -927,6 +927,11 @@ struct mm_cid {
 };
 #endif
 
+/* TODO: this doesn't belong here. */
+struct mml_cpu {
+	bool in_use;
+};
+
 struct kioctx_table;
 struct iommu_mm_data;
 struct mm_struct {
@@ -967,6 +972,8 @@ struct mm_struct {
 		 */
 		atomic_t membarrier_state;
 #endif
+
+		struct mml_cpu __percpu *mml_cpu;
 
 		/**
 		 * @mm_users: The number of users including userspace.
