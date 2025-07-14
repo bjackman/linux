@@ -138,7 +138,8 @@ static void show_migration_types(unsigned char type)
 		[MIGRATE_UNMOVABLE_SENSITIVE]		= 'S',
 		[MIGRATE_UNMOVABLE_NONSENSITIVE]	= 'N',
 		[MIGRATE_MOVABLE]			= 'M',
-		[MIGRATE_RECLAIMABLE]			= 'E',
+		[MIGRATE_RECLAIMABLE_SENSITIVE]		= 'E',
+		[MIGRATE_RECLAIMABLE_NONSENSITIVE]	= 'F',
 		[MIGRATE_HIGHATOMIC]			= 'H',
 #ifdef CONFIG_CMA
 		[MIGRATE_CMA]				= 'C',

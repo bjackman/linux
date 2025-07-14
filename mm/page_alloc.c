@@ -437,7 +437,7 @@ void set_pageblock_migratetype(struct page *page, int migratetype)
 	 * last in userspace. Need to figure out how to do that without too much
 	 * cost.
 	 */
-	if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE)
+	if (!migratetype_is_sensitive(migratetype))
 		asi_map(page, pageblock_nr_pages);
 
 	set_pfnblock_flags_mask(page, (unsigned long)migratetype,
@@ -1789,17 +1789,26 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 #endif
 static const int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
 	[MIGRATE_UNMOVABLE_SENSITIVE]    = {
-		MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE, TERMINATE_FALLBACK
+		MIGRATE_RECLAIMABLE_SENSITIVE, MIGRATE_MOVABLE, TERMINATE_FALLBACK
 	},
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 	[MIGRATE_UNMOVABLE_NONSENSITIVE] = {
-		MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE
+		MIGRATE_UNMOVABLE_SENSITIVE,
+		MIGRATE_RECLAIMABLE_SENSITIVE,
+		MIGRATE_RECLAIMABLE_NONSENSITIVE,
+		MIGRATE_MOVABLE
+	},
+	[MIGRATE_RECLAIMABLE_NONSENSITIVE] = {
+		MIGRATE_RECLAIMABLE_SENSITIVE,
+		MIGRATE_UNMOVABLE_SENSITIVE,
+		MIGRATE_UNMOVABLE_NONSENSITIVE,
+		MIGRATE_MOVABLE
 	},
 #endif
 	[MIGRATE_MOVABLE] = {
-		MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE_SENSITIVE, TERMINATE_FALLBACK
+		MIGRATE_RECLAIMABLE_SENSITIVE, MIGRATE_UNMOVABLE_SENSITIVE, TERMINATE_FALLBACK
 	},
-	[MIGRATE_RECLAIMABLE] = {
+	[MIGRATE_RECLAIMABLE_SENSITIVE] = {
 		MIGRATE_UNMOVABLE_SENSITIVE, MIGRATE_MOVABLE, TERMINATE_FALLBACK
 	},
 };
@@ -2081,7 +2090,7 @@ static bool should_try_claim_block(unsigned int order, int start_mt)
 	 * allocation size. Later movable allocations can always steal from this
 	 * block, which is less problematic.
 	 */
-	if (start_mt == MIGRATE_RECLAIMABLE || is_migrate_unmovable(start_mt))
+	if (is_migrate_reclaimable(start_mt) || is_migrate_unmovable(start_mt))
 		return true;
 
 	if (page_group_by_mobility_disabled)
@@ -2114,26 +2123,21 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
 	if (area->nr_free == 0)
 		return -1;
 
-	/*
-	 * It's not possible to  change the sensitivity of individual pages,
-	 * only an entire pageblock. Thus, we can only fallback to a migratetype
-	 * of a different sensitivity when the entire block is free.
-	 *
-	 * This cross-sensitivity fallback occurs exactly when the start
-	 * migratetype is MIGRATE_UNMOVABLE_NONSENSITIVE. This is because it's
-	 * the only nonsensitive migratetype (so if it's the start type, a
-	 * fallback will always differ in sensitivity) and it doesn't appear in
-	 * the 'fallbacks' arrays (i.e. we never fall back to it, so if it isn't
-	 * the start type, the fallback will never differ in sensitivity).
-	 */
-	if (migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE && order < pageblock_order)
-		return -1;
-
 	for (i = 0; i < MIGRATE_PCPTYPES - 1 ; i++) {
 		int fallback_mt = fallbacks[migratetype][i];
 
 		if (fallback_mt < 0)
 			return fallback_mt;
+
+		/*
+		 * It's not possible to  change the sensitivity of individual
+		 * pages, only an entire pageblock. Thus, we can only fallback
+		 * to a migratetype of a different sensitivity when the entire
+		 * block is free.
+		 */
+		if (order < pageblock_order &&
+		    migratetype_is_sensitive(migratetype) != migratetype_is_sensitive(fallback_mt))
+			return -1;
 
 		if (!free_area_empty(area, fallback_mt))
 			return fallback_mt;
@@ -3025,7 +3029,7 @@ struct page *__rmqueue_asi_unmap(struct zone *zone, unsigned int request_order,
 	if (!(alloc_flags & ALLOC_ASI_UNMAP))
 		return NULL;
 
-	VM_WARN_ON_ONCE(migratetype == MIGRATE_UNMOVABLE_NONSENSITIVE);
+	VM_WARN_ON_ONCE(!migratetype_is_sensitive(migratetype));
 
 	/*
 	 * Need to unmap a whole pageblock (otherwise it might require
@@ -3044,7 +3048,13 @@ struct page *__rmqueue_asi_unmap(struct zone *zone, unsigned int request_order,
 
 	alloc_order = max(request_order, pageblock_order);
 	spin_lock_irq(&zone->lock);
+	/*
+	 * TODO: This should probably be done with a cleaner fallback-style
+	 * mechanism.
+	 */
 	page = __rmqueue_smallest(zone, alloc_order, MIGRATE_UNMOVABLE_NONSENSITIVE);
+	if (!page)
+		page = __rmqueue_smallest(zone, alloc_order, MIGRATE_RECLAIMABLE_NONSENSITIVE);
 	spin_unlock_irq(&zone->lock);
 	if (!page)
 		return NULL;

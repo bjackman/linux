@@ -63,11 +63,11 @@
 
 enum migratetype {
 	/*
-	 * All movable pages are sensitive for ASI. Unmovable pages might be
-	 * either; the migratetype reflects whether they are mapped into the
-	 * global-nonsensitive address space.
+	 * All movable pages are sensitive for ASI. Unmovable and reclaimable
+	 * pages might be either; the migratetype reflects whether they are
+	 * mapped into the global-nonsensitive address space.
 	 *
-	 * TODO: what about HIGHATOMIC/RECLAIMABLE?
+	 * TODO: what about HIGHATOMIC?
 	 */
 	MIGRATE_UNMOVABLE_SENSITIVE,
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
@@ -76,7 +76,12 @@ enum migratetype {
 	MIGRATE_UNMOVABLE_NONSENSITIVE = MIGRATE_UNMOVABLE_SENSITIVE,
 #endif
 	MIGRATE_MOVABLE,
-	MIGRATE_RECLAIMABLE,
+	MIGRATE_RECLAIMABLE_SENSITIVE,
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	MIGRATE_RECLAIMABLE_NONSENSITIVE,
+#else
+	MIGRATE_RECLAIMABLE_NONSENSITIVE = MIGRATE_RECLAIMABLE_SENSITIVE,
+#endif
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
 	MIGRATE_HIGHATOMIC = MIGRATE_PCPTYPES,
 #ifdef CONFIG_CMA
@@ -122,6 +127,11 @@ static inline bool is_migrate_unmovable(int mt)
 	return mt == MIGRATE_UNMOVABLE_SENSITIVE || mt == MIGRATE_UNMOVABLE_NONSENSITIVE;
 }
 
+static inline bool is_migrate_reclaimable(int mt)
+{
+	return mt == MIGRATE_RECLAIMABLE_SENSITIVE || mt == MIGRATE_RECLAIMABLE_NONSENSITIVE;
+}
+
 /*
  * Check whether a migratetype can be merged with another migratetype.
  *
@@ -132,6 +142,19 @@ static inline bool migratetype_is_mergeable(int mt)
 {
 	return mt < MIGRATE_PCPTYPES;
 }
+
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+static inline bool migratetype_is_sensitive(int mt)
+{
+	return mt != MIGRATE_UNMOVABLE_NONSENSITIVE &&
+	       mt != MIGRATE_RECLAIMABLE_NONSENSITIVE;
+}
+#else
+static inline bool migratetype_is_sensitive(int mt)
+{
+	return false;
+}
+#endif
 
 #define for_each_migratetype_order(order, type) \
 	for (order = 0; order < NR_PAGE_ORDERS; order++) \

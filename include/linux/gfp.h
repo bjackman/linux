@@ -22,13 +22,12 @@ static inline int gfp_migratetype(const gfp_t gfp_flags)
 	if (unlikely(page_group_by_mobility_disabled))
 		goto unmovable;
 
-	/* Only unmovable/unreclaimable pages can be nonsensitive right now. */
-	VM_WARN_ONCE((gfp_flags & GFP_MOVABLE_MASK) && !(gfp_flags & __GFP_SENSITIVE),
-		"%pGg", &gfp_flags);
-
 	switch (gfp_flags & GFP_MOVABLE_MASK) {
 	case __GFP_RECLAIMABLE:
-		return MIGRATE_RECLAIMABLE;
+		if (gfp_flags & __GFP_SENSITIVE)
+			return MIGRATE_RECLAIMABLE_SENSITIVE;
+		else
+			return MIGRATE_RECLAIMABLE_NONSENSITIVE;
 	case __GFP_MOVABLE:
 		return MIGRATE_MOVABLE;
 	default:
