@@ -189,6 +189,7 @@ static bool page_present_phys(struct kunit *test, pgd_t *pgd, struct page *page)
 static void test_alloc_sensitive_nonsensitive(struct kunit *test)
 {
 	struct page *page_sensitive, *page_nonsensitive;
+	struct page *page_sensitive_reclaimable, *page_nonsensitive_reclaimable;
 	pgd_t *restricted_pgd, *unrestricted_pgd;
 
 	if (!static_cpu_has(X86_FEATURE_ASI))
@@ -196,6 +197,9 @@ static void test_alloc_sensitive_nonsensitive(struct kunit *test)
 
 	page_sensitive = do_alloc_pages(test, GFP_KERNEL | __GFP_SENSITIVE, 0);
 	page_nonsensitive = do_alloc_pages(test, GFP_KERNEL, 0);
+	page_sensitive_reclaimable = do_alloc_pages(test, GFP_KERNEL | __GFP_RECLAIMABLE | __GFP_SENSITIVE, 0);
+	page_nonsensitive_reclaimable = do_alloc_pages(test, GFP_KERNEL | __GFP_RECLAIMABLE, 0);
+
 	restricted_pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
 	unrestricted_pgd = init_mm.pgd;
 
@@ -203,6 +207,8 @@ static void test_alloc_sensitive_nonsensitive(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, page_present_phys(test, unrestricted_pgd, page_nonsensitive));
 	KUNIT_EXPECT_FALSE(test, page_present_phys(test, restricted_pgd, page_sensitive));
 	KUNIT_EXPECT_TRUE(test, page_present_phys(test, restricted_pgd, page_nonsensitive));
+	KUNIT_EXPECT_FALSE(test, page_present_phys(test, restricted_pgd, page_sensitive_reclaimable));
+	KUNIT_EXPECT_TRUE(test, page_present_phys(test, restricted_pgd, page_nonsensitive_reclaimable));
 }
 
 /*
