@@ -1,18 +1,161 @@
-Linux kernel
-============
+Brendan: Getting this ready took about a month longer than I hoped, and now I'm
+going away for a month, so I don't wanna post this on LKML since if a good
+discussion pops up I might not be able to respond quickly to it. So here's the
+draft and I'll post it when I get back.
 
-There are several guides for kernel developers and users. These guides can
-be rendered in a number of formats, like HTML and PDF. Please read
-Documentation/admin-guide/README.rst first.
+Subject: [Discuss] First steps for ASI (ASI is fast again)
 
-In order to build the documentation, use ``make htmldocs`` or
-``make pdfdocs``.  The formatted documentation can also be read online at:
+.:: Intro
 
-    https://www.kernel.org/doc/html/latest/
+Following up to the plan I posted at [0], I've now prepared an up-to-date ASI
+branch that demonstrates a technique for solving the page cache performance
+devastation I described in [1]. The branch is at [5].
 
-There are various text files in the Documentation/ subdirectory,
-several of them using the reStructuredText markup notation.
+The goal of this prototype is to increase confidence that ASI is viable as a
+broad solution for CPU vulnerabilities. (If the community still has to develop
+and maintain new mitigations for every individual vuln, because ASI only works
+for certain use-cases, then ASI isn't super attractive given its complexity
+burden).
 
-Please read the Documentation/process/changes.rst file, as it contains the
-requirements for building and running the kernel, and information about
-the problems which may result by upgrading your kernel.
+The biggest gap for establishing that confidence was that Google's deployment
+still only uses ASI for KVM worklaods, not bare-metal processes. And indeed the
+page cache turned out to be a massive issue that Google just hasn't run up
+against yet internally.
+
+.:: The "ephmap"
+
+I won't re-hash the details of the problem here (see [1]) but in short: file
+pages aren't mapped into the physmap as seen from ASI's restricted addres space.
+This causes a major overhead when e.g. read()ing files. The solution we've
+always envisaged (and which I very hastily tried to describe at LSF/MM/BPF this
+year) was to simply stop read() etc from touching the physmap.
+
+This is achieved in this prototype by a mechanism that I've called the "ephmap".
+The ephmap is a special region of the kernel address space that is local to the
+mm (much like the "proclocal" idea from 2019 [2]). Users of the ephmap API can
+allocate a subregion of this, and provide pages that get mapped into their
+subregion. These subregions are CPU-local. This means that it's cheap to tear
+these mappings down, so they can be removed immediately after use (eph =
+"ephmeral"), eliminating the need for complex/costly tracking data structures.
+
+(You might notice the ephmap is extremely similar to kmap_local_page() - see the
+commit that introduces it ("x86: mm: Introduce the ephmap") for discussion).
+
+The ephmap can then be used for accessing file pages. It's also a generic
+mechanism for accessing sensitive data, for example it could be used for
+zeroing sensitive pages, or if necessary for copy-on-write of user pages.
+
+.:: State of the branch
+
+The branch contains:
+
+- A rebased version of my "ASI integration for the page allocator" RFC [3]. (Up
+  to "mm/page_alloc: Add support for ASI-unmapping pages")
+- The rest of ASI's basic functionality (up to "mm: asi: Stop ignoring asi=on
+  cmdline flag")
+- Some test and observability conveniences (up to "mm: asi: Add a tracepoint for
+  ASI page faults")
+- A prototype of the new performance improvements (the remainder of the
+  branch).
+
+There's a gradient of quality where the earlier patches are closer to "complete"
+and the later ones are increasingly messy and hacky. Comments and commit message
+describe lots of the hacky elements but the most important things are:
+
+1. The logic to take advantage of the ephmap is stuck directly into mm/shmem.c.
+   This is just a shortcut to make its behaviour obvious. Since tmpfs is the
+   most extreme case of the read/write slowdown this should give us some idea of
+   the performance improvements but it obviously hides a lot of important
+   complexity wrt how this would be integrated "for real".
+
+2. The ephmap implementation is extremely stupid. It only works for the simple
+   shmem usecase. I don't think this is really important though, whatever we end
+   up with needs to be very simple, and it's not even clear that we actually
+   want a while new subsystem anyway. (e.g. maybe it's better to just adapt
+   kmap_local_page() itself).
+
+3. For software correctness, the ephmap only needs to be TLB-flushed on the
+   local CPU. But for CPU vulnerability mitigation, flushes are needed on other
+   CPUs too. I believe these flushes can be very infrequent. "Add ephmap TLB
+   flushes for mitigating CPU vulns" is an superillustrative idea of how these
+   flushes could be implemented, but it's a bit of a simplistic implementation.
+   The commit message has some more details.
+
+.:: Performance
+
+Using the scripts at [4]. This is running on a Sapphire Rapids machine, but with
+setcpuid=retbleed. This introduces an IBPB in asi_exit(), which dramatically
+amplifies the performance impact of ASI.
+
+Native FIO randread IOPS on tmpfs (this is where the 70% perf degradation was):
+┌─────────┬─────────┬───────────┬─────────┬───────────┬────────┐
+│ variant │ samples │      mean │     min │       max │ Δμ     │
+├─────────┼─────────┼───────────┼─────────┼───────────┼────────┤
+│ asi-off │      10 │ 1,003,102 │ 981,813 │ 1,036,142 │        │
+│ asi-on  │      10 │   871,928 │ 848,362 │   885,622 │ -13.1% │
+└─────────┴─────────┴───────────┴─────────┴───────────┴────────┘
+
+Native kernel compilation time:
+┌─────────┬─────────┬────────┬────────┬────────┬──────┐
+│ variant │ samples │   mean │    min │    max │ Δμ   │
+├─────────┼─────────┼────────┼────────┼────────┼──────┤
+│ asi-off │       3 │ 34.84s │ 34.42s │ 35.31s │      │
+│ asi-on  │       3 │ 37.50s │ 37.39s │ 37.58s │ 7.6% │
+└─────────┴─────────┴────────┴────────┴────────┴──────┘
+
+Kernel compilation in a guest VM:
+┌─────────┬─────────┬────────┬────────┬────────┬──────┐
+│ variant │ samples │   mean │    min │    max │ Δμ   │
+├─────────┼─────────┼────────┼────────┼────────┼──────┤
+│ asi-off │       3 │ 52.73s │ 52.41s │ 53.15s │      │
+│ asi-on  │       3 │ 55.80s │ 55.51s │ 56.06s │ 5.8% │
+└─────────┴─────────┴────────┴────────┴────────┴──────┘
+
+Despite my clickbait title these numbers are kinda disappointing to be honest,
+it's not where I wanted to be by now, but it's still an order-of-magnitude
+better than where we were for native FIO a few months ago. I believe almost all
+of this slowdown is due to unnecessary ASI exits, the key areas being:
+
+- On every context_switch(). Google's internal implementation has fixed this (we
+  only really need it when switching mms).
+
+- Whenever zeroing sensitive pages from the allocator. This could potentially be
+  solved with the ephmap but requires a bit of care to avoid opening CPU attack
+  windows.
+
+- In copy-on-write for user pages. The ephmap could also help here but the
+  current implementation doesn't support it (it only allows one allocation at a
+  time per context).
+
+.:: Next steps
+
+Here's where I'd like to go next:
+
+1. Discuss here and get feedback from x86 folks. Dave H said we need "line of
+   sight" to a version of ASI that's viable for sandboxing native workloads. I
+   don't consider a 13% slowdown "viable" as-is, but I do think this shows we're
+   out of the "but what about the page cache" black hole. It seems provably
+   solvable now.
+
+2. Once we have some x86 maintainers saying "yep, it looks like this can work
+   and it's something we want", I can start turning my page_alloc RFC [3] into a
+   proper patchset (or maybe multiple if I can find a way to break things down
+   further).
+
+BUT, I'm not particularly wed to this strategy, if anyone feels there's a better
+approach I'm glad to hear suggestions.
+
+.:: Conclusion
+
+So, x86 folks: Does this feel like "line of sight" to you? If not, what would
+that look like, what experiments should I run or what further prototypes should
+I build?
+
+---
+
+[0] https://lore.kernel.org/lkml/DAJ0LUX8F2IW.Q95PTFBNMFOI@google.com/
+[1] https://lore.kernel.org/linux-mm/20250129144320.2675822-1-jackmanb@google.com/
+[2] https://lore.kernel.org/linux-mm/20190612170834.14855-1-mhillenb@amazon.de/
+[3] https://lore.kernel.org/lkml/20250313-asi-page-alloc-v1-0-04972e046cea@google.com/
+[4] https://github.com/bjackman/nixos-flake/commit/be42ba326f8a0854deb1d37143b5c70bf301c9db
+[5] https://github.com/bjackman/linux/tree/asi/6.16
