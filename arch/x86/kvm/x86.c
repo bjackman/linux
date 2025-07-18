@@ -3248,6 +3248,40 @@ u64 get_kvmclock_ns(struct kvm *kvm)
 	return data.clock;
 }
 
+static void kvm_setup_guest_pvclock_slow(struct pvclock_vcpu_time_info *ref_hv_clock,
+					 struct kvm_vcpu *vcpu,
+					 gpa_t gpa)
+{
+	struct pvclock_vcpu_time_info guest_hv_clock;
+	struct pvclock_vcpu_time_info hv_clock;
+
+	memcpy(&hv_clock, ref_hv_clock, sizeof(hv_clock));
+
+	kvm_read_guest(vcpu->kvm, gpa, &guest_hv_clock, sizeof(struct pvclock_vcpu_time_info));
+
+	/*
+	 * This VCPU is paused, but it's legal for a guest to read another
+	 * VCPU's kvmclock, so we really have to follow the specification where
+	 * it says that version is odd if data is being modified, and even after
+	 * it is consistent.
+	 */
+
+	guest_hv_clock.version = hv_clock.version = (guest_hv_clock.version + 1) | 1;
+	smp_wmb();
+
+	/* retain PVCLOCK_GUEST_STOPPED if set in guest copy */
+	hv_clock.flags |= (guest_hv_clock.flags & PVCLOCK_GUEST_STOPPED);
+
+	kvm_write_guest(vcpu->kvm, gpa, &hv_clock, sizeof(struct pvclock_vcpu_time_info));
+
+	smp_wmb();
+
+	++hv_clock.version;
+	kvm_write_guest(vcpu->kvm, gpa + offsetof(struct pvclock_vcpu_time_info, version), &hv_clock.version, sizeof(hv_clock.version));
+
+	trace_kvm_pvclock_update(vcpu->vcpu_id, &hv_clock);
+}
+
 static void kvm_setup_guest_pvclock(struct pvclock_vcpu_time_info *ref_hv_clock,
 				    struct kvm_vcpu *vcpu,
 				    struct gfn_to_pfn_cache *gpc,
@@ -3263,8 +3297,10 @@ static void kvm_setup_guest_pvclock(struct pvclock_vcpu_time_info *ref_hv_clock,
 	while (!kvm_gpc_check(gpc, offset + sizeof(*guest_hv_clock))) {
 		read_unlock_irqrestore(&gpc->lock, flags);
 
-		if (kvm_gpc_refresh(gpc, offset + sizeof(*guest_hv_clock)))
+		if (kvm_gpc_refresh(gpc, offset + sizeof(*guest_hv_clock))) {
+			kvm_setup_guest_pvclock_slow(ref_hv_clock, vcpu, gpc->gpa + offset);
 			return;
+		}
 
 		read_lock_irqsave(&gpc->lock, flags);
 	}
