@@ -21,6 +21,26 @@ static const struct regcache_ops *cache_types[] = {
 	&regcache_flat_ops,
 };
 
+static int regcache_defaults_cmp(const void *a, const void *b)
+{
+	const struct reg_default *x = a;
+	const struct reg_default *y = b;
+
+	if (x->reg > y->reg)
+		return 1;
+	else if (x->reg < y->reg)
+		return -1;
+	else
+		return 0;
+}
+
+void regcache_sort_defaults(struct reg_default *defaults, unsigned int ndefaults)
+{
+	sort(defaults, ndefaults, sizeof(*defaults),
+	     regcache_defaults_cmp, NULL);
+}
+EXPORT_SYMBOL_GPL(regcache_sort_defaults);
+
 static int regcache_hw_init(struct regmap *map)
 {
 	int i, j;

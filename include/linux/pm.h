@@ -8,14 +8,15 @@
 #ifndef _LINUX_PM_H
 #define _LINUX_PM_H
 
-#include <linux/export.h>
-#include <linux/list.h>
-#include <linux/workqueue.h>
-#include <linux/spinlock.h>
-#include <linux/wait.h>
-#include <linux/timer.h>
-#include <linux/hrtimer.h>
 #include <linux/completion.h>
+#include <linux/export.h>
+#include <linux/hrtimer_types.h>
+#include <linux/mutex.h>
+#include <linux/spinlock.h>
+#include <linux/types.h>
+#include <linux/util_macros.h>
+#include <linux/wait.h>
+#include <linux/workqueue_types.h>
 
 /*
  * Callbacks for platform drivers to implement.
@@ -597,6 +598,7 @@ enum rpm_status {
 	RPM_RESUMING,
 	RPM_SUSPENDED,
 	RPM_SUSPENDING,
+	RPM_BLOCKED,
 };
 
 /*
@@ -678,10 +680,11 @@ struct dev_pm_info {
 	bool			wakeup_path:1;
 	bool			syscore:1;
 	bool			no_pm_callbacks:1;	/* Owned by the PM core */
-	bool			async_in_progress:1;	/* Owned by the PM core */
+	bool			work_in_progress:1;	/* Owned by the PM core */
+	bool			smart_suspend:1;	/* Owned by the PM core */
 	bool			must_resume:1;		/* Owned by the PM core */
-	bool			set_active:1;		/* Owned by the PM core */
 	bool			may_skip_resume:1;	/* Set by subsystems */
+	bool			strict_midlayer:1;
 #else
 	bool			should_wakeup:1;
 #endif
@@ -719,6 +722,7 @@ struct dev_pm_info {
 	struct pm_subsys_data	*subsys_data;  /* Owned by the subsystem. */
 	void (*set_latency_tolerance)(struct device *, s32);
 	struct dev_pm_qos	*qos;
+	bool			detach_power_off:1;	/* Owned by the driver core */
 };
 
 extern int dev_pm_get_subsys_data(struct device *dev);
@@ -838,10 +842,8 @@ extern int pm_generic_resume_early(struct device *dev);
 extern int pm_generic_resume_noirq(struct device *dev);
 extern int pm_generic_resume(struct device *dev);
 extern int pm_generic_freeze_noirq(struct device *dev);
-extern int pm_generic_freeze_late(struct device *dev);
 extern int pm_generic_freeze(struct device *dev);
 extern int pm_generic_thaw_noirq(struct device *dev);
-extern int pm_generic_thaw_early(struct device *dev);
 extern int pm_generic_thaw(struct device *dev);
 extern int pm_generic_restore_noirq(struct device *dev);
 extern int pm_generic_restore_early(struct device *dev);
@@ -883,10 +885,8 @@ static inline void dpm_for_each_dev(void *data, void (*fn)(struct device *, void
 #define pm_generic_resume_noirq		NULL
 #define pm_generic_resume		NULL
 #define pm_generic_freeze_noirq		NULL
-#define pm_generic_freeze_late		NULL
 #define pm_generic_freeze		NULL
 #define pm_generic_thaw_noirq		NULL
-#define pm_generic_thaw_early		NULL
 #define pm_generic_thaw			NULL
 #define pm_generic_restore_noirq	NULL
 #define pm_generic_restore_early	NULL

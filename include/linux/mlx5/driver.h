@@ -36,6 +36,7 @@
 #include <linux/kernel.h>
 #include <linux/completion.h>
 #include <linux/pci.h>
+#include <linux/pci-tph.h>
 #include <linux/irq.h>
 #include <linux/spinlock_types.h>
 #include <linux/semaphore.h>
@@ -54,7 +55,6 @@
 #include <linux/mlx5/doorbell.h>
 #include <linux/mlx5/eq.h>
 #include <linux/timecounter.h>
-#include <linux/ptp_clock_kernel.h>
 #include <net/devlink.h>
 
 #define MLX5_ADEV_NAME "mlx5_core"
@@ -305,6 +305,8 @@ struct mlx5_cmd {
 		struct semaphore sem;
 		struct semaphore pages_sem;
 		struct semaphore throttle_sem;
+		struct semaphore unprivileged_sem;
+		struct xarray	privileged_uids;
 	} vars;
 	enum mlx5_cmdif_state	state;
 	void	       *cmd_alloc_buf;
@@ -397,6 +399,7 @@ struct mlx5_core_rsc_common {
 	enum mlx5_res_type	res;
 	refcount_t		refcount;
 	struct completion	free;
+	bool			invalid;
 };
 
 struct mlx5_uars_page {
@@ -679,38 +682,14 @@ struct mlx5_rsvd_gids {
 	struct ida ida;
 };
 
-#define MAX_PIN_NUM	8
-struct mlx5_pps {
-	u8                         pin_caps[MAX_PIN_NUM];
-	struct work_struct         out_work;
-	u64                        start[MAX_PIN_NUM];
-	u8                         enabled;
-	u64                        min_npps_period;
-	u64                        min_out_pulse_duration_ns;
-};
-
-struct mlx5_timer {
-	struct cyclecounter        cycles;
-	struct timecounter         tc;
-	u32                        nominal_c_mult;
-	unsigned long              overflow_period;
-};
-
-struct mlx5_clock {
-	struct mlx5_nb             pps_nb;
-	seqlock_t                  lock;
-	struct hwtstamp_config     hwtstamp_config;
-	struct ptp_clock          *ptp;
-	struct ptp_clock_info      ptp_info;
-	struct mlx5_pps            pps_info;
-	struct mlx5_timer          timer;
-};
-
+struct mlx5_clock;
+struct mlx5_clock_dev_state;
 struct mlx5_dm;
 struct mlx5_fw_tracer;
 struct mlx5_vxlan;
 struct mlx5_geneve;
 struct mlx5_hv_vhca;
+struct mlx5_st;
 
 #define MLX5_LOG_SW_ICM_BLOCK_SIZE(dev) (MLX5_CAP_DEV_MEM(dev, log_sw_icm_alloc_granularity))
 #define MLX5_SW_ICM_BLOCK_SIZE(dev) (1 << MLX5_LOG_SW_ICM_BLOCK_SIZE(dev))
@@ -780,6 +759,7 @@ struct mlx5_core_dev {
 	u32			issi;
 	struct mlx5e_resources  mlx5e_res;
 	struct mlx5_dm          *dm;
+	struct mlx5_st          *st;
 	struct mlx5_vxlan       *vxlan;
 	struct mlx5_geneve      *geneve;
 	struct {
@@ -789,7 +769,8 @@ struct mlx5_core_dev {
 #ifdef CONFIG_MLX5_FPGA
 	struct mlx5_fpga_device *fpga;
 #endif
-	struct mlx5_clock        clock;
+	struct mlx5_clock       *clock;
+	struct mlx5_clock_dev_state *clock_state;
 	struct mlx5_ib_clock_info  *clock_info;
 	struct mlx5_fw_tracer   *tracer;
 	struct mlx5_rsc_dump    *rsc_dump;
@@ -989,6 +970,8 @@ struct mlx5_async_work {
 	mlx5_async_cbk_t user_callback;
 	u16 opcode; /* cmd opcode */
 	u16 op_mod; /* cmd op_mod */
+	u8 throttle_locked:1;
+	u8 unpriv_locked:1;
 	void *out; /* pointer to the cmd output buffer */
 };
 
@@ -1019,6 +1002,8 @@ int mlx5_cmd_exec(struct mlx5_core_dev *dev, void *in, int in_size, void *out,
 int mlx5_cmd_exec_polling(struct mlx5_core_dev *dev, void *in, int in_size,
 			  void *out, int out_size);
 bool mlx5_cmd_is_down(struct mlx5_core_dev *dev);
+int mlx5_cmd_add_privileged_uid(struct mlx5_core_dev *dev, u16 uid);
+void mlx5_cmd_remove_privileged_uid(struct mlx5_core_dev *dev, u16 uid);
 
 void mlx5_core_uplink_netdev_set(struct mlx5_core_dev *mdev, struct net_device *netdev);
 void mlx5_core_uplink_netdev_event_replay(struct mlx5_core_dev *mdev);
@@ -1177,6 +1162,23 @@ int mlx5_dm_sw_icm_alloc(struct mlx5_core_dev *dev, enum mlx5_sw_icm_type type,
 			 phys_addr_t *addr, u32 *obj_id);
 int mlx5_dm_sw_icm_dealloc(struct mlx5_core_dev *dev, enum mlx5_sw_icm_type type,
 			   u64 length, u16 uid, phys_addr_t addr, u32 obj_id);
+
+#ifdef CONFIG_PCIE_TPH
+int mlx5_st_alloc_index(struct mlx5_core_dev *dev, enum tph_mem_type mem_type,
+			unsigned int cpu_uid, u16 *st_index);
+int mlx5_st_dealloc_index(struct mlx5_core_dev *dev, u16 st_index);
+#else
+static inline int mlx5_st_alloc_index(struct mlx5_core_dev *dev,
+				      enum tph_mem_type mem_type,
+				      unsigned int cpu_uid, u16 *st_index)
+{
+	return -EOPNOTSUPP;
+}
+static inline int mlx5_st_dealloc_index(struct mlx5_core_dev *dev, u16 st_index)
+{
+	return -EOPNOTSUPP;
+}
+#endif
 
 struct mlx5_core_dev *mlx5_vf_get_core_dev(struct pci_dev *pdev);
 void mlx5_vf_put_core_dev(struct mlx5_core_dev *mdev);
@@ -1367,4 +1369,9 @@ enum {
 };
 
 bool mlx5_wc_support_get(struct mlx5_core_dev *mdev);
+
+static inline struct net *mlx5_core_net(struct mlx5_core_dev *dev)
+{
+	return devlink_net(priv_to_devlink(dev));
+}
 #endif /* MLX5_DRIVER_H */

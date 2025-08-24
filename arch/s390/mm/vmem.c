@@ -4,6 +4,7 @@
  */
 
 #include <linux/memory_hotplug.h>
+#include <linux/cpufeature.h>
 #include <linux/memblock.h>
 #include <linux/pfn.h>
 #include <linux/mm.h>
@@ -63,13 +64,12 @@ void *vmem_crst_alloc(unsigned long val)
 
 pte_t __ref *vmem_pte_alloc(void)
 {
-	unsigned long size = PTRS_PER_PTE * sizeof(pte_t);
 	pte_t *pte;
 
 	if (slab_is_available())
-		pte = (pte_t *) page_table_alloc(&init_mm);
+		pte = (pte_t *)page_table_alloc(&init_mm);
 	else
-		pte = (pte_t *) memblock_alloc(size, size);
+		pte = (pte_t *)memblock_alloc(PAGE_SIZE, PAGE_SIZE);
 	if (!pte)
 		return NULL;
 	memset64((u64 *)pte, _PAGE_INVALID, PTRS_PER_PTE);
@@ -249,12 +249,12 @@ static int __ref modify_pmd_table(pud_t *pud, unsigned long addr,
 		} else if (pmd_none(*pmd)) {
 			if (IS_ALIGNED(addr, PMD_SIZE) &&
 			    IS_ALIGNED(next, PMD_SIZE) &&
-			    MACHINE_HAS_EDAT1 && direct &&
+			    cpu_has_edat1() && direct &&
 			    !debug_pagealloc_enabled()) {
 				set_pmd(pmd, __pmd(__pa(addr) | prot));
 				pages++;
 				continue;
-			} else if (!direct && MACHINE_HAS_EDAT1) {
+			} else if (!direct && cpu_has_edat1()) {
 				void *new_page;
 
 				/*
@@ -335,7 +335,7 @@ static int modify_pud_table(p4d_t *p4d, unsigned long addr, unsigned long end,
 		} else if (pud_none(*pud)) {
 			if (IS_ALIGNED(addr, PUD_SIZE) &&
 			    IS_ALIGNED(next, PUD_SIZE) &&
-			    MACHINE_HAS_EDAT2 && direct &&
+			    cpu_has_edat2() && direct &&
 			    !debug_pagealloc_enabled()) {
 				set_pud(pud, __pud(__pa(addr) | prot));
 				pages++;
@@ -659,7 +659,7 @@ void __init vmem_map_init(void)
 	 * prefix page is used to return to the previous context with
 	 * an LPSWE instruction and therefore must be executable.
 	 */
-	if (!static_key_enabled(&cpu_has_bear))
+	if (!cpu_has_bear())
 		set_memory_x(0, 1);
 	if (debug_pagealloc_enabled())
 		__set_memory_4k(__va(0), absolute_pointer(__va(0)) + ident_map_size);

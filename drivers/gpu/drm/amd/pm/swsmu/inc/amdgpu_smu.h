@@ -402,6 +402,7 @@ struct smu_power_gate {
 	atomic_t vcn_gated[AMDGPU_MAX_VCN_INSTANCES];
 	atomic_t jpeg_gated;
 	atomic_t vpe_gated;
+	atomic_t isp_gated;
 	atomic_t umsch_mm_gated;
 };
 
@@ -438,9 +439,11 @@ struct mclock_latency_table {
 };
 
 enum smu_reset_mode {
-    SMU_RESET_MODE_0,
-    SMU_RESET_MODE_1,
-    SMU_RESET_MODE_2,
+	SMU_RESET_MODE_0,
+	SMU_RESET_MODE_1,
+	SMU_RESET_MODE_2,
+	SMU_RESET_MODE_3,
+	SMU_RESET_MODE_4,
 };
 
 enum smu_baco_state {
@@ -558,6 +561,7 @@ struct smu_context {
 
 	/* asic agnostic workload mask */
 	uint32_t workload_mask;
+	bool pause_workload;
 	/* default/user workload preference */
 	uint32_t power_profile_mode;
 	uint32_t workload_refcount[PP_SMC_POWER_PROFILE_COUNT];
@@ -1228,10 +1232,11 @@ struct pptable_funcs {
 	 * @mode1_reset_is_support: Check if GPU supports mode1 reset.
 	 */
 	bool (*mode1_reset_is_support)(struct smu_context *smu);
+
 	/**
-	 * @mode2_reset_is_support: Check if GPU supports mode2 reset.
+	 * @link_reset_is_support: Check if GPU supports link reset.
 	 */
-	bool (*mode2_reset_is_support)(struct smu_context *smu);
+	bool (*link_reset_is_support)(struct smu_context *smu);
 
 	/**
 	 * @mode1_reset: Perform mode1 reset.
@@ -1249,6 +1254,13 @@ struct pptable_funcs {
 	int (*mode2_reset)(struct smu_context *smu);
 	/* for gfx feature enablement after mode2 reset */
 	int (*enable_gfx_features)(struct smu_context *smu);
+
+	/**
+	 * @link_reset: Perform link reset.
+	 *
+	 * The gfx device driver reset
+	 */
+	int (*link_reset)(struct smu_context *smu);
 
 	/**
 	 * @get_dpm_ultimate_freq: Get the hard frequency range of a clock
@@ -1376,6 +1388,15 @@ struct pptable_funcs {
 	 * @reset_sdma: message SMU to soft reset sdma instance.
 	 */
 	int (*reset_sdma)(struct smu_context *smu, uint32_t inst_mask);
+	/**
+	 * @reset_sdma_is_supported: Check if support resets the SDMA engine.
+	 */
+	bool (*reset_sdma_is_supported)(struct smu_context *smu);
+
+	/**
+	 * @reset_vcn: message SMU to soft reset vcn instance.
+	 */
+	int (*dpm_reset_vcn)(struct smu_context *smu, uint32_t inst_mask);
 
 	/**
 	 * @get_ecc_table:  message SMU to get ECC INFO table.
@@ -1416,6 +1437,12 @@ struct pptable_funcs {
 	int (*dpm_set_vpe_enable)(struct smu_context *smu, bool enable);
 
 	/**
+	 * @dpm_set_isp_enable: Enable/disable ISP engine dynamic power
+	 *                       management.
+	 */
+	int (*dpm_set_isp_enable)(struct smu_context *smu, bool enable);
+
+	/**
 	 * @dpm_set_umsch_mm_enable: Enable/disable UMSCH engine dynamic power
 	 *                       management.
 	 */
@@ -1446,6 +1473,12 @@ struct pptable_funcs {
 	 */
 	int (*set_wbrf_exclusion_ranges)(struct smu_context *smu,
 					struct freq_band_range *exclusion_ranges);
+	/**
+	 * @get_xcp_metrics: Get a copy of the partition metrics table from SMU.
+	 * Return: Size of table
+	 */
+	ssize_t (*get_xcp_metrics)(struct smu_context *smu, int xcp_id,
+				   void *table);
 };
 
 typedef enum {
@@ -1596,8 +1629,9 @@ int smu_get_power_limit(void *handle,
 			enum pp_power_type pp_power_type);
 
 bool smu_mode1_reset_is_support(struct smu_context *smu);
-bool smu_mode2_reset_is_support(struct smu_context *smu);
+bool smu_link_reset_is_support(struct smu_context *smu);
 int smu_mode1_reset(struct smu_context *smu);
+int smu_link_reset(struct smu_context *smu);
 
 extern const struct amd_ip_funcs smu_ip_funcs;
 
@@ -1608,7 +1642,7 @@ int smu_write_watermarks_table(struct smu_context *smu);
 int smu_get_dpm_freq_range(struct smu_context *smu, enum smu_clk_type clk_type,
 			   uint32_t *min, uint32_t *max);
 
-int smu_set_soft_freq_range(struct smu_context *smu, enum smu_clk_type clk_type,
+int smu_set_soft_freq_range(struct smu_context *smu, enum pp_clock_type clk_type,
 			    uint32_t min, uint32_t max);
 
 int smu_set_gfx_power_up_by_imu(struct smu_context *smu);
@@ -1637,6 +1671,8 @@ int smu_send_hbm_bad_pages_num(struct smu_context *smu, uint32_t size);
 int smu_send_hbm_bad_channel_flag(struct smu_context *smu, uint32_t size);
 int smu_send_rma_reason(struct smu_context *smu);
 int smu_reset_sdma(struct smu_context *smu, uint32_t inst_mask);
+bool smu_reset_sdma_is_supported(struct smu_context *smu);
+int smu_reset_vcn(struct smu_context *smu, uint32_t inst_mask);
 int smu_set_pm_policy(struct smu_context *smu, enum pp_pm_policy p_type,
 		      int level);
 ssize_t smu_get_pm_policy_info(struct smu_context *smu,

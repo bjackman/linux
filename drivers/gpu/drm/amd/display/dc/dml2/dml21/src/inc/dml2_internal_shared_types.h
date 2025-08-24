@@ -38,6 +38,12 @@ struct dml2_mcg_min_clock_table {
 	} max_clocks_khz;
 
 	struct {
+		unsigned int dispclk;
+		unsigned int dppclk;
+		unsigned int dtbclk;
+	} max_ss_clocks_khz;
+
+	struct {
 		unsigned int dprefclk;
 		unsigned int xtalclk;
 		unsigned int pcierefclk;
@@ -64,7 +70,6 @@ struct dml2_mcg_build_min_clock_table_params_in_out {
 };
 struct dml2_mcg_instance {
 	bool (*build_min_clock_table)(struct dml2_mcg_build_min_clock_table_params_in_out *in_out);
-	bool (*unit_test)(void);
 };
 
 /*
@@ -110,7 +115,6 @@ struct dml2_dpmm_scratch {
 struct dml2_dpmm_instance {
 	bool (*map_mode_to_soc_dpm)(struct dml2_dpmm_map_mode_to_soc_dpm_params_in_out *in_out);
 	bool (*map_watermarks)(struct dml2_dpmm_map_watermarks_params_in_out *in_out);
-	bool (*unit_test)(void);
 
 	struct dml2_dpmm_scratch dpmm_scratch;
 };
@@ -198,6 +202,8 @@ struct dml2_core_mode_support_result {
 		} active;
 
 		unsigned int dispclk_khz;
+		unsigned int dpprefclk_khz;
+		unsigned int dtbrefclk_khz;
 		unsigned int dcfclk_deepsleep_khz;
 		unsigned int socclk_khz;
 
@@ -442,13 +448,17 @@ struct dml2_core_internal_state_intermediates {
 };
 
 struct dml2_core_mode_support_locals {
-	struct dml2_core_calcs_mode_support_ex mode_support_ex_params;
+	union {
+		struct dml2_core_calcs_mode_support_ex mode_support_ex_params;
+	};
 	struct dml2_display_cfg svp_expanded_display_cfg;
 	struct dml2_calculate_mcache_allocation_in_out calc_mcache_allocation_params;
 };
 
 struct dml2_core_mode_programming_locals {
-	struct dml2_core_calcs_mode_programming_ex mode_programming_ex_params;
+	union {
+		struct dml2_core_calcs_mode_programming_ex mode_programming_ex_params;
+	};
 	struct dml2_display_cfg svp_expanded_display_cfg;
 };
 
@@ -473,7 +483,6 @@ struct dml2_core_instance {
 	bool (*mode_programming)(struct dml2_core_mode_programming_in_out *in_out);
 	bool (*populate_informative)(struct dml2_core_populate_informative_in_out *in_out);
 	bool (*calculate_mcache_allocation)(struct dml2_calculate_mcache_allocation_in_out *in_out);
-	bool (*unit_test)(void);
 
 	struct {
 		struct dml2_core_internal_display_mode_lib mode_lib;
@@ -721,8 +730,6 @@ struct dml2_pmo_instance {
 	bool (*test_for_stutter)(struct dml2_pmo_test_for_stutter_in_out *in_out);
 	bool (*optimize_for_stutter)(struct dml2_pmo_optimize_for_stutter_in_out *in_out);
 
-	bool (*unit_test)(void);
-
 	struct dml2_pmo_init_data init_data;
 	struct dml2_pmo_scratch scratch;
 };
@@ -947,7 +954,6 @@ struct dml2_top_funcs {
 	bool (*check_mode_supported)(struct dml2_check_mode_supported_in_out *in_out);
 	bool (*build_mode_programming)(struct dml2_build_mode_programming_in_out *in_out);
 	bool (*build_mcache_programming)(struct dml2_build_mcache_programming_in_out *in_out);
-	bool (*unit_test)(void);
 };
 
 struct dml2_instance {

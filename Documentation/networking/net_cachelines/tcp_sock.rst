@@ -27,6 +27,7 @@ u32                           dsack_dups
 u32                           snd_una                 read_mostly         read_write          tcp_wnd_end,tcp_urg_mode,tcp_minshall_check,tcp_cwnd_validate(tx);tcp_ack,tcp_may_update_window,tcp_clean_rtx_queue(write),tcp_ack_tstamp(rx)
 u32                           snd_sml                 read_write                              tcp_minshall_check,tcp_minshall_update
 u32                           rcv_tstamp                                  read_mostly         tcp_ack
+void *                        tcp_clean_acked                             read_mostly         tcp_ack
 u32                           lsndtime                read_write                              tcp_slow_start_after_idle_check,tcp_event_data_sent
 u32                           last_oow_ack_time
 u32                           compressed_ack_rcv_nxt
@@ -114,7 +115,6 @@ u32                           lost_out                read_mostly         read_m
 u32                           sacked_out              read_mostly         read_mostly         tcp_left_out(tx);tcp_packets_in_flight(tx/rx);tcp_clean_rtx_queue(rx)
 struct hrtimer                pacing_timer
 struct hrtimer                compressed_ack_timer
-struct sk_buff*               lost_skb_hint           read_mostly                             tcp_clean_rtx_queue
 struct sk_buff*               retransmit_skb_hint     read_mostly                             tcp_clean_rtx_queue
 struct rb_root                out_of_order_queue                          read_mostly         tcp_data_queue,tcp_fast_path_check
 struct sk_buff*               ooo_last_skb
@@ -122,7 +122,6 @@ struct tcp_sack_block[1]      duplicate_sack
 struct tcp_sack_block[4]      selective_acks
 struct tcp_sack_block[4]      recv_sack_cache
 struct sk_buff*               highest_sack            read_write                              tcp_event_new_data_sent
-int                           lost_cnt_hint
 u32                           prior_ssthresh
 u32                           high_seq
 u32                           retrans_stamp

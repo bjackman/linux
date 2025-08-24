@@ -138,6 +138,14 @@ void xe_gt_tlb_invalidation_reset(struct xe_gt *gt)
 	int pending_seqno;
 
 	/*
+	 * we can get here before the CTs are even initialized if we're wedging
+	 * very early, in which case there are not going to be any pending
+	 * fences so we can bail immediately.
+	 */
+	if (!xe_guc_ct_initialized(&gt->uc.guc.ct))
+		return;
+
+	/*
 	 * CT channel is already disabled at this point. No new TLB requests can
 	 * appear.
 	 */
@@ -322,6 +330,47 @@ int xe_gt_tlb_invalidation_ggtt(struct xe_gt *gt)
 	return 0;
 }
 
+static int send_tlb_invalidation_all(struct xe_gt *gt,
+				     struct xe_gt_tlb_invalidation_fence *fence)
+{
+	u32 action[] = {
+		XE_GUC_ACTION_TLB_INVALIDATION_ALL,
+		0,  /* seqno, replaced in send_tlb_invalidation */
+		MAKE_INVAL_OP(XE_GUC_TLB_INVAL_FULL),
+	};
+
+	return send_tlb_invalidation(&gt->uc.guc, fence, action, ARRAY_SIZE(action));
+}
+
+/**
+ * xe_gt_tlb_invalidation_all - Invalidate all TLBs across PF and all VFs.
+ * @gt: the &xe_gt structure
+ * @fence: the &xe_gt_tlb_invalidation_fence to be signaled on completion
+ *
+ * Send a request to invalidate all TLBs across PF and all VFs.
+ *
+ * Return: 0 on success, negative error code on error
+ */
+int xe_gt_tlb_invalidation_all(struct xe_gt *gt, struct xe_gt_tlb_invalidation_fence *fence)
+{
+	int err;
+
+	xe_gt_assert(gt, gt == fence->gt);
+
+	err = send_tlb_invalidation_all(gt, fence);
+	if (err)
+		xe_gt_err(gt, "TLB invalidation request failed (%pe)", ERR_PTR(err));
+
+	return err;
+}
+
+/*
+ * Ensure that roundup_pow_of_two(length) doesn't overflow.
+ * Note that roundup_pow_of_two() operates on unsigned long,
+ * not on u64.
+ */
+#define MAX_RANGE_TLB_INVALIDATION_LENGTH (rounddown_pow_of_two(ULONG_MAX))
+
 /**
  * xe_gt_tlb_invalidation_range - Issue a TLB invalidation on this GT for an
  * address range
@@ -346,6 +395,7 @@ int xe_gt_tlb_invalidation_range(struct xe_gt *gt,
 	struct xe_device *xe = gt_to_xe(gt);
 #define MAX_TLB_INVALIDATION_LEN	7
 	u32 action[MAX_TLB_INVALIDATION_LEN];
+	u64 length = end - start;
 	int len = 0;
 
 	xe_gt_assert(gt, fence);
@@ -358,11 +408,11 @@ int xe_gt_tlb_invalidation_range(struct xe_gt *gt,
 
 	action[len++] = XE_GUC_ACTION_TLB_INVALIDATION;
 	action[len++] = 0; /* seqno, replaced in send_tlb_invalidation */
-	if (!xe->info.has_range_tlb_invalidation) {
+	if (!xe->info.has_range_tlb_invalidation ||
+	    length > MAX_RANGE_TLB_INVALIDATION_LENGTH) {
 		action[len++] = MAKE_INVAL_OP(XE_GUC_TLB_INVAL_FULL);
 	} else {
 		u64 orig_start = start;
-		u64 length = end - start;
 		u64 align;
 
 		if (length < SZ_4K)
@@ -411,27 +461,25 @@ int xe_gt_tlb_invalidation_range(struct xe_gt *gt,
 }
 
 /**
- * xe_gt_tlb_invalidation_vma - Issue a TLB invalidation on this GT for a VMA
- * @gt: GT structure
- * @fence: invalidation fence which will be signal on TLB invalidation
- * completion, can be NULL
- * @vma: VMA to invalidate
+ * xe_gt_tlb_invalidation_vm - Issue a TLB invalidation on this GT for a VM
+ * @gt: graphics tile
+ * @vm: VM to invalidate
  *
- * Issue a range based TLB invalidation if supported, if not fallback to a full
- * TLB invalidation. Completion of TLB is asynchronous and caller can use
- * the invalidation fence to wait for completion.
- *
- * Return: Negative error code on error, 0 on success
+ * Invalidate entire VM's address space
  */
-int xe_gt_tlb_invalidation_vma(struct xe_gt *gt,
-			       struct xe_gt_tlb_invalidation_fence *fence,
-			       struct xe_vma *vma)
+void xe_gt_tlb_invalidation_vm(struct xe_gt *gt, struct xe_vm *vm)
 {
-	xe_gt_assert(gt, vma);
+	struct xe_gt_tlb_invalidation_fence fence;
+	u64 range = 1ull << vm->xe->info.va_bits;
+	int ret;
 
-	return xe_gt_tlb_invalidation_range(gt, fence, xe_vma_start(vma),
-					    xe_vma_end(vma),
-					    xe_vma_vm(vma)->usm.asid);
+	xe_gt_tlb_invalidation_fence_init(gt, &fence, true);
+
+	ret = xe_gt_tlb_invalidation_range(gt, &fence, 0, range, vm->usm.asid);
+	if (ret < 0)
+		return;
+
+	xe_gt_tlb_invalidation_fence_wait(&fence);
 }
 
 /**

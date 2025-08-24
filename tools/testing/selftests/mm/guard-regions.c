@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <linux/limits.h>
 #include <linux/userfaultfd.h>
+#include <linux/fs.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -21,6 +22,8 @@
 #include <unistd.h>
 #include "vm_util.h"
 
+#include "../pidfd/pidfd.h"
+
 /*
  * Ignore the checkpatch warning, as per the C99 standard, section 7.14.1.1:
  *
@@ -31,13 +34,6 @@
  */
 static volatile sig_atomic_t signal_jump_set;
 static sigjmp_buf signal_jmp_buf;
-
-/*
- * Ignore the checkpatch warning, we must read from x but don't want to do
- * anything with it in order to trigger a read page fault. We therefore must use
- * volatile to stop the compiler from optimising this away.
- */
-#define FORCE_READ(x) (*(volatile typeof(x) *)x)
 
 /*
  * How is the test backing the mapping being tested?
@@ -123,11 +119,6 @@ static void handle_fatal(int c)
 		return;
 
 	siglongjmp(signal_jmp_buf, c);
-}
-
-static int pidfd_open(pid_t pid, unsigned int flags)
-{
-	return syscall(SYS_pidfd_open, pid, flags);
 }
 
 static ssize_t sys_process_madvise(int pidfd, const struct iovec *iovec,
@@ -274,12 +265,16 @@ FIXTURE_SETUP(guard_regions)
 	self->page_size = (unsigned long)sysconf(_SC_PAGESIZE);
 	setup_sighandler();
 
-	if (variant->backing == ANON_BACKED)
+	switch (variant->backing) {
+	case ANON_BACKED:
 		return;
-
-	self->fd = open_file(
-		variant->backing == SHMEM_BACKED ? "/tmp/" : "",
-		self->path);
+	case LOCAL_FILE_BACKED:
+		self->fd = open_file("", self->path);
+		break;
+	case SHMEM_BACKED:
+		self->fd = memfd_create(self->path, 0);
+		break;
+	}
 
 	/* We truncate file to at least 100 pages, tests can modify as needed. */
 	ASSERT_EQ(ftruncate(self->fd, 100 * self->page_size), 0);
@@ -528,13 +523,9 @@ TEST_F(guard_regions, multi_vma)
 TEST_F(guard_regions, process_madvise)
 {
 	const unsigned long page_size = self->page_size;
-	pid_t pid = getpid();
-	int pidfd = pidfd_open(pid, 0);
 	char *ptr_region, *ptr1, *ptr2, *ptr3;
 	ssize_t count;
 	struct iovec vec[6];
-
-	ASSERT_NE(pidfd, -1);
 
 	/* Reserve region to map over. */
 	ptr_region = mmap_(self, variant, NULL, 100 * page_size,
@@ -580,11 +571,11 @@ TEST_F(guard_regions, process_madvise)
 	ASSERT_EQ(munmap(&ptr_region[99 * page_size], page_size), 0);
 
 	/* Now guard in one step. */
-	count = sys_process_madvise(pidfd, vec, 6, MADV_GUARD_INSTALL, 0);
+	count = sys_process_madvise(PIDFD_SELF, vec, 6, MADV_GUARD_INSTALL, 0);
 
 	/* OK we don't have permission to do this, skip. */
 	if (count == -1 && errno == EPERM)
-		ksft_exit_skip("No process_madvise() permissions, try running as root.\n");
+		SKIP(return, "No process_madvise() permissions, try running as root.\n");
 
 	/* Returns the number of bytes advised. */
 	ASSERT_EQ(count, 6 * page_size);
@@ -601,7 +592,7 @@ TEST_F(guard_regions, process_madvise)
 	ASSERT_FALSE(try_read_write_buf(&ptr3[19 * page_size]));
 
 	/* Now do the same with unguard... */
-	count = sys_process_madvise(pidfd, vec, 6, MADV_GUARD_REMOVE, 0);
+	count = sys_process_madvise(PIDFD_SELF, vec, 6, MADV_GUARD_REMOVE, 0);
 
 	/* ...and everything should now succeed. */
 
@@ -618,7 +609,6 @@ TEST_F(guard_regions, process_madvise)
 	ASSERT_EQ(munmap(ptr1, 10 * page_size), 0);
 	ASSERT_EQ(munmap(ptr2, 5 * page_size), 0);
 	ASSERT_EQ(munmap(ptr3, 20 * page_size), 0);
-	close(pidfd);
 }
 
 /* Assert that unmapping ranges does not leave guard markers behind. */
@@ -1456,8 +1446,21 @@ TEST_F(guard_regions, uffd)
 
 	/* Set up uffd. */
 	uffd = userfaultfd(0);
-	if (uffd == -1 && errno == EPERM)
-		ksft_exit_skip("No userfaultfd permissions, try running as root.\n");
+	if (uffd == -1) {
+		switch (errno) {
+		case EPERM:
+			SKIP(return, "No userfaultfd permissions, try running as root.");
+			break;
+		case ENOSYS:
+			SKIP(return, "userfaultfd is not supported/not enabled.");
+			break;
+		default:
+			ksft_exit_fail_msg("userfaultfd failed with %s\n",
+					   strerror(errno));
+			break;
+		}
+	}
+
 	ASSERT_NE(uffd, -1);
 
 	ASSERT_EQ(ioctl(uffd, UFFDIO_API, &api), 0);
@@ -1704,7 +1707,7 @@ TEST_F(guard_regions, readonly_file)
 	char *ptr;
 	int i;
 
-	if (variant->backing == ANON_BACKED)
+	if (variant->backing != LOCAL_FILE_BACKED)
 		SKIP(return, "Read-only test specific to file-backed");
 
 	/* Map shared so we can populate with pattern, populate it, unmap. */
@@ -2073,6 +2076,62 @@ TEST_F(guard_regions, pagemap)
 		unsigned long masked = entry & PM_GUARD_REGION;
 
 		ASSERT_EQ(masked, i % 2 == 0 ? PM_GUARD_REGION : 0);
+	}
+
+	ASSERT_EQ(close(proc_fd), 0);
+	ASSERT_EQ(munmap(ptr, 10 * page_size), 0);
+}
+
+/*
+ * Assert that PAGEMAP_SCAN correctly reports guard region ranges.
+ */
+TEST_F(guard_regions, pagemap_scan)
+{
+	const unsigned long page_size = self->page_size;
+	struct page_region pm_regs[10];
+	struct pm_scan_arg pm_scan_args = {
+		.size = sizeof(struct pm_scan_arg),
+		.category_anyof_mask = PAGE_IS_GUARD,
+		.return_mask = PAGE_IS_GUARD,
+		.vec = (long)&pm_regs,
+		.vec_len = ARRAY_SIZE(pm_regs),
+	};
+	int proc_fd, i;
+	char *ptr;
+
+	proc_fd = open("/proc/self/pagemap", O_RDONLY);
+	ASSERT_NE(proc_fd, -1);
+
+	ptr = mmap_(self, variant, NULL, 10 * page_size,
+		    PROT_READ | PROT_WRITE, 0, 0);
+	ASSERT_NE(ptr, MAP_FAILED);
+
+	pm_scan_args.start = (long)ptr;
+	pm_scan_args.end = (long)ptr + 10 * page_size;
+	ASSERT_EQ(ioctl(proc_fd, PAGEMAP_SCAN, &pm_scan_args), 0);
+	ASSERT_EQ(pm_scan_args.walk_end, (long)ptr + 10 * page_size);
+
+	/* Install a guard region in every other page. */
+	for (i = 0; i < 10; i += 2) {
+		char *ptr_p = &ptr[i * page_size];
+
+		ASSERT_EQ(syscall(__NR_madvise, ptr_p, page_size, MADV_GUARD_INSTALL), 0);
+	}
+
+	/*
+	 * Assert ioctl() returns the count of located regions, where each
+	 * region spans every other page within the range of 10 pages.
+	 */
+	ASSERT_EQ(ioctl(proc_fd, PAGEMAP_SCAN, &pm_scan_args), 5);
+	ASSERT_EQ(pm_scan_args.walk_end, (long)ptr + 10 * page_size);
+
+	/* Re-read from pagemap, and assert guard regions are detected. */
+	for (i = 0; i < 5; i++) {
+		long ptr_p = (long)&ptr[2 * i * page_size];
+
+		ASSERT_EQ(pm_regs[i].start, ptr_p);
+		ASSERT_EQ(pm_regs[i].end, ptr_p + page_size);
+		ASSERT_EQ(pm_regs[i].categories, PAGE_IS_GUARD);
 	}
 
 	ASSERT_EQ(close(proc_fd), 0);

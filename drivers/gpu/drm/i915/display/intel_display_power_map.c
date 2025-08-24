@@ -3,12 +3,14 @@
  * Copyright © 2022 Intel Corporation
  */
 
-#include "i915_reg.h"
+#include <drm/drm_print.h>
+
 #include "intel_display_core.h"
 #include "intel_display_power_map.h"
 #include "intel_display_power_well.h"
+#include "intel_display_regs.h"
 #include "intel_display_types.h"
-#include "vlv_sideband_reg.h"
+#include "vlv_iosf_sb_reg.h"
 
 #define __LIST_INLINE_ELEMS(__elem_type, ...) \
 	((__elem_type[]) { __VA_ARGS__ })
@@ -1694,6 +1696,7 @@ I915_DECL_PW_DOMAINS(xe3lpd_pwdoms_dc_off,
 	XE3LPD_PW_C_POWER_DOMAINS,
 	XE3LPD_PW_D_POWER_DOMAINS,
 	POWER_DOMAIN_AUDIO_MMIO,
+	POWER_DOMAIN_AUDIO_PLAYBACK,
 	POWER_DOMAIN_INIT);
 
 static const struct i915_power_well_desc xe3lpd_power_wells_dcoff[] = {

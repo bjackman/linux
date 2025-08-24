@@ -2145,7 +2145,8 @@ static int sienna_cichlid_update_pcie_parameters(struct smu_context *smu,
 	uint8_t min_gen_speed, max_gen_speed;
 	uint8_t min_lane_width, max_lane_width;
 	uint32_t smu_pcie_arg;
-	int ret, i;
+	int ret = 0;
+	int i;
 
 	GET_PPTABLE_MEMBER(PcieGenSpeed, &table_member1);
 	GET_PPTABLE_MEMBER(PcieLaneCount, &table_member2);
@@ -2170,19 +2171,22 @@ static int sienna_cichlid_update_pcie_parameters(struct smu_context *smu,
 	pcie_table->pcie_lane[1] = max_lane_width;
 
 	for (i = 0; i < NUM_LINK_LEVELS; i++) {
-		smu_pcie_arg = (i << 16 |
+		if (!(smu->adev->pm.pp_feature & PP_PCIE_DPM_MASK) ||
+			table_member1[i] > pcie_gen_cap || table_member2[i] > pcie_width_cap) {
+			smu_pcie_arg = (i << 16 |
 				pcie_table->pcie_gen[i] << 8 |
 				pcie_table->pcie_lane[i]);
 
-		ret = smu_cmn_send_smc_msg_with_param(smu,
-				SMU_MSG_OverridePcieParameters,
-				smu_pcie_arg,
-				NULL);
-		if (ret)
-			return ret;
+			ret = smu_cmn_send_smc_msg_with_param(smu,
+						SMU_MSG_OverridePcieParameters,
+						smu_pcie_arg,
+						NULL);
+			if (ret)
+				break;
+		}
 	}
 
-	return 0;
+	return ret;
 }
 
 static int sienna_cichlid_get_dpm_ultimate_freq(struct smu_context *smu,
@@ -3089,11 +3093,6 @@ static int sienna_cichlid_stb_get_data_direct(struct smu_context *smu,
 	return 0;
 }
 
-static bool sienna_cichlid_is_mode2_reset_supported(struct smu_context *smu)
-{
-	return true;
-}
-
 static int sienna_cichlid_mode2_reset(struct smu_context *smu)
 {
 	int ret = 0, index;
@@ -3229,7 +3228,6 @@ static const struct pptable_funcs sienna_cichlid_ppt_funcs = {
 	.get_default_config_table_settings = sienna_cichlid_get_default_config_table_settings,
 	.set_config_table = sienna_cichlid_set_config_table,
 	.get_unique_id = sienna_cichlid_get_unique_id,
-	.mode2_reset_is_support = sienna_cichlid_is_mode2_reset_supported,
 	.mode2_reset = sienna_cichlid_mode2_reset,
 };
 

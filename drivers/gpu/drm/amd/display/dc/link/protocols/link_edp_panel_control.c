@@ -161,6 +161,9 @@ bool edp_set_backlight_level_nits(struct dc_link *link,
 			link->connector_signal != SIGNAL_TYPE_DISPLAY_PORT))
 		return false;
 
+	if (link->is_dds && !link->dpcd_caps.panel_luminance_control)
+		return true;
+
 	// use internal backlight control if dmub capabilities are not present
 	if (link->backlight_control_type == BACKLIGHT_CONTROL_VESA_AUX &&
 		!link->dc->caps.dmub_caps.aux_backlight_support) {
@@ -172,6 +175,15 @@ bool edp_set_backlight_level_nits(struct dc_link *link,
 			backlight_millinits = 0xFFFFFF;
 
 		target_luminance = (struct target_luminance_value *)&backlight_millinits;
+
+		//make sure we disable AMD ABC first.
+		core_link_read_dpcd(link, DP_SOURCE_BACKLIGHT_CONTROL,
+			&backlight_enable, sizeof(uint8_t));
+		if (backlight_enable) {
+			backlight_enable = 0;
+			core_link_write_dpcd(link, DP_SOURCE_BACKLIGHT_CONTROL,
+					&backlight_enable, 1);
+		}
 
 		core_link_read_dpcd(link, DP_EDP_BACKLIGHT_MODE_SET_REGISTER,
 			&backlight_enable, sizeof(uint8_t));
@@ -193,9 +205,21 @@ bool edp_set_backlight_level_nits(struct dc_link *link,
 		*(uint16_t *)&dpcd_backlight_set.backlight_transition_time_ms = (uint16_t)transition_time_in_ms;
 
 		uint8_t backlight_control = isHDR ? 1 : 0;
+		uint8_t backlight_enable = 0;
+
 		// OLEDs have no PWM, they can only use AUX
 		if (link->dpcd_sink_ext_caps.bits.oled == 1)
 			backlight_control = 1;
+
+		//make sure we disable VESA ABC first.
+		core_link_read_dpcd(link, DP_EDP_BACKLIGHT_MODE_SET_REGISTER,
+			&backlight_enable, sizeof(uint8_t));
+
+		if (backlight_enable & DP_EDP_PANEL_LUMINANCE_CONTROL_ENABLE) {
+			backlight_enable &= ~DP_EDP_PANEL_LUMINANCE_CONTROL_ENABLE;
+			core_link_write_dpcd(link, DP_EDP_BACKLIGHT_MODE_SET_REGISTER,
+					&backlight_enable, sizeof(backlight_enable));
+		}
 
 		if (core_link_write_dpcd(link, DP_SOURCE_BACKLIGHT_LEVEL,
 			(uint8_t *)(&dpcd_backlight_set),
@@ -222,6 +246,8 @@ bool edp_get_backlight_level_nits(struct dc_link *link,
 			link->connector_signal != SIGNAL_TYPE_DISPLAY_PORT))
 		return false;
 
+	if (link->is_dds)
+		return false;
 	if (!core_link_read_dpcd(link, DP_SOURCE_BACKLIGHT_CURRENT_PEAK,
 			dpcd_backlight_get.raw,
 			sizeof(union dpcd_source_backlight_get)))
@@ -248,6 +274,8 @@ bool edp_backlight_enable_aux(struct dc_link *link, bool enable)
 		link->connector_signal != SIGNAL_TYPE_DISPLAY_PORT))
 		return false;
 
+	if (link->is_dds)
+		return true;
 	if (core_link_write_dpcd(link, DP_SOURCE_BACKLIGHT_ENABLE,
 		&backlight_enable, 1) != DC_OK)
 		return false;
@@ -524,7 +552,7 @@ bool edp_set_backlight_level(const struct dc_link *link,
 	struct dc  *dc = link->ctx->dc;
 	uint32_t backlight_pwm_u16_16 = backlight_level_params->backlight_pwm_u16_16;
 	uint32_t frame_ramp = backlight_level_params->frame_ramp;
-	DC_LOGGER_INIT(link->ctx->logger);
+
 	DC_LOG_BACKLIGHT("New Backlight level: %d (0x%X)\n",
 			backlight_pwm_u16_16, backlight_pwm_u16_16);
 
@@ -675,6 +703,18 @@ bool edp_setup_psr(struct dc_link *link,
 	if (!link)
 		return false;
 
+	//Clear PSR cfg
+	memset(&psr_configuration, 0, sizeof(psr_configuration));
+	dm_helpers_dp_write_dpcd(
+		link->ctx,
+		link,
+		DP_PSR_EN_CFG,
+		&psr_configuration.raw,
+		sizeof(psr_configuration.raw));
+
+	if (link->psr_settings.psr_version == DC_PSR_VERSION_UNSUPPORTED)
+		return false;
+
 	dc = link->ctx->dc;
 	dmcu = dc->res_pool->dmcu;
 	psr = dc->res_pool->psr;
@@ -684,9 +724,6 @@ bool edp_setup_psr(struct dc_link *link,
 
 	if (!dc_get_edp_link_panel_inst(dc, link, &panel_inst))
 		return false;
-
-
-	memset(&psr_configuration, 0, sizeof(psr_configuration));
 
 	psr_configuration.bits.ENABLE                    = 1;
 	psr_configuration.bits.CRC_VERIFICATION          = 1;
@@ -907,7 +944,7 @@ bool edp_set_replay_allow_active(struct dc_link *link, const bool *allow_active,
 		// TODO: Handle mux change case if force_static is set
 		// If force_static is set, just change the replay_allow_active state directly
 		if (replay != NULL && link->replay_settings.replay_feature_enabled)
-			replay->funcs->replay_enable(replay, *allow_active, wait, panel_inst);
+			replay->funcs->replay_enable(replay, *allow_active, wait, panel_inst, link);
 		link->replay_settings.replay_allow_active = *allow_active;
 	}
 
@@ -949,6 +986,16 @@ bool edp_setup_replay(struct dc_link *link, const struct dc_stream_state *stream
 
 	if (!link)
 		return false;
+
+	//Clear Replay config
+	dm_helpers_dp_write_dpcd(link->ctx, link,
+		DP_SINK_PR_ENABLE_AND_CONFIGURATION,
+		(uint8_t *)&(replay_config.raw), sizeof(uint8_t));
+
+	if (!(link->replay_settings.config.replay_supported))
+		return false;
+
+	link->replay_settings.config.replay_error_status.raw = 0;
 
 	dc = link->ctx->dc;
 
@@ -1003,6 +1050,9 @@ bool edp_setup_replay(struct dc_link *link, const struct dc_stream_state *stream
 			&alpm_config.raw,
 			sizeof(alpm_config.raw));
 	}
+
+	link->replay_settings.config.replay_video_conferencing_optimization_enabled = false;
+
 	return true;
 }
 
@@ -1111,11 +1161,11 @@ static struct abm *get_abm_from_stream_res(const struct dc_link *link)
 	struct abm *abm = NULL;
 
 	for (i = 0; i < MAX_PIPES; i++) {
-		struct pipe_ctx pipe_ctx = dc->current_state->res_ctx.pipe_ctx[i];
-		struct dc_stream_state *stream = pipe_ctx.stream;
+		struct pipe_ctx *pipe_ctx = &dc->current_state->res_ctx.pipe_ctx[i];
+		struct dc_stream_state *stream = pipe_ctx->stream;
 
 		if (stream && stream->link == link) {
-			abm = pipe_ctx.stream_res.abm;
+			abm = pipe_ctx->stream_res.abm;
 			break;
 		}
 	}
@@ -1149,6 +1199,16 @@ int edp_get_target_backlight_pwm(const struct dc_link *link)
 		return DC_ERROR_UNEXPECTED;
 
 	return (int) abm->funcs->get_target_backlight(abm);
+}
+
+bool is_smartmux_suported(struct dc_link *link)
+{
+	if (link->dc->caps.is_apu)
+		return false;
+	if (!link->dc->config.smart_mux_version)
+		return false;
+
+	return true;
 }
 
 static void edp_set_assr_enable(const struct dc *pDC, struct dc_link *link,

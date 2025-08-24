@@ -325,7 +325,7 @@ static const struct drm_connector_helper_funcs sii902x_connector_helper_funcs = 
 };
 
 static void sii902x_bridge_atomic_disable(struct drm_bridge *bridge,
-					  struct drm_bridge_state *old_bridge_state)
+					  struct drm_atomic_state *state)
 {
 	struct sii902x *sii902x = bridge_to_sii902x(bridge);
 
@@ -339,7 +339,7 @@ static void sii902x_bridge_atomic_disable(struct drm_bridge *bridge,
 }
 
 static void sii902x_bridge_atomic_enable(struct drm_bridge *bridge,
-					 struct drm_bridge_state *old_bridge_state)
+					 struct drm_atomic_state *state)
 {
 	struct sii902x *sii902x = bridge_to_sii902x(bridge);
 
@@ -416,6 +416,7 @@ out:
 }
 
 static int sii902x_bridge_attach(struct drm_bridge *bridge,
+				 struct drm_encoder *encoder,
 				 enum drm_bridge_attach_flags flags)
 {
 	struct sii902x *sii902x = bridge_to_sii902x(bridge);
@@ -424,7 +425,7 @@ static int sii902x_bridge_attach(struct drm_bridge *bridge,
 	int ret;
 
 	if (flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)
-		return drm_bridge_attach(bridge->encoder, sii902x->next_bridge,
+		return drm_bridge_attach(encoder, sii902x->next_bridge,
 					 bridge, flags);
 
 	drm_connector_helper_add(&sii902x->connector,
@@ -452,12 +453,13 @@ static int sii902x_bridge_attach(struct drm_bridge *bridge,
 	if (ret)
 		return ret;
 
-	drm_connector_attach_encoder(&sii902x->connector, bridge->encoder);
+	drm_connector_attach_encoder(&sii902x->connector, encoder);
 
 	return 0;
 }
 
-static enum drm_connector_status sii902x_bridge_detect(struct drm_bridge *bridge)
+static enum drm_connector_status
+sii902x_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
 {
 	struct sii902x *sii902x = bridge_to_sii902x(bridge);
 
@@ -887,7 +889,7 @@ static int sii902x_audio_codec_init(struct sii902x *sii902x,
 		lanes[0] = 0;
 	} else if (num_lanes < 0) {
 		dev_err(dev,
-			"%s: Error gettin \"sil,i2s-data-lanes\": %d\n",
+			"%s: Error getting \"sil,i2s-data-lanes\": %d\n",
 			__func__, num_lanes);
 		return num_lanes;
 	}
@@ -1134,10 +1136,10 @@ static int sii902x_init(struct sii902x *sii902x)
 	if (ret)
 		goto err_unreg_audio;
 
-	sii902x->bridge.funcs = &sii902x_bridge_funcs;
 	sii902x->bridge.of_node = dev->of_node;
 	sii902x->bridge.timings = &default_sii902x_timings;
 	sii902x->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID;
+	sii902x->bridge.type = DRM_MODE_CONNECTOR_HDMIA;
 
 	if (sii902x->i2c->irq > 0)
 		sii902x->bridge.ops |= DRM_BRIDGE_OP_HPD;
@@ -1168,9 +1170,9 @@ static int sii902x_probe(struct i2c_client *client)
 		return -EIO;
 	}
 
-	sii902x = devm_kzalloc(dev, sizeof(*sii902x), GFP_KERNEL);
-	if (!sii902x)
-		return -ENOMEM;
+	sii902x = devm_drm_bridge_alloc(dev, struct sii902x, bridge, &sii902x_bridge_funcs);
+	if (IS_ERR(sii902x))
+		return PTR_ERR(sii902x);
 
 	sii902x->i2c = client;
 	sii902x->regmap = devm_regmap_init_i2c(client, &sii902x_regmap_config);

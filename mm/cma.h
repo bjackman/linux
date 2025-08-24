@@ -25,9 +25,11 @@ struct cma_kobject {
  */
 struct cma_memrange {
 	unsigned long base_pfn;
-	unsigned long early_pfn;
 	unsigned long count;
-	unsigned long *bitmap;
+	union {
+		unsigned long early_pfn;
+		unsigned long *bitmap;
+	};
 #ifdef CONFIG_CMA_DEBUGFS
 	struct debugfs_u32_array dfs_bitmap;
 #endif
@@ -39,6 +41,7 @@ struct cma {
 	unsigned long	available_count;
 	unsigned int order_per_bit; /* Order of pages represented by one bit */
 	spinlock_t	lock;
+	struct mutex alloc_mutex;
 #ifdef CONFIG_CMA_DEBUGFS
 	struct hlist_head mem_head;
 	spinlock_t mem_head_lock;

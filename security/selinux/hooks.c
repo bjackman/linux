@@ -65,7 +65,6 @@
 #include <net/netlink.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <linux/dccp.h>
 #include <linux/sctp.h>
 #include <net/sctp/structs.h>
 #include <linux/quota.h>
@@ -213,8 +212,10 @@ static void cred_init_security(void)
 {
 	struct task_security_struct *tsec;
 
+	/* NOTE: the lsm framework zeros out the buffer on allocation */
+
 	tsec = selinux_cred(unrcu_pointer(current->real_cred));
-	tsec->osid = tsec->sid = SECINITSID_KERNEL;
+	tsec->osid = tsec->sid = tsec->avdcache.sid = SECINITSID_KERNEL;
 }
 
 /*
@@ -278,27 +279,21 @@ static int __inode_security_revalidate(struct inode *inode,
 				       struct dentry *dentry,
 				       bool may_sleep)
 {
-	struct inode_security_struct *isec = selinux_inode(inode);
+	if (!selinux_initialized())
+		return 0;
 
-	might_sleep_if(may_sleep);
+	if (may_sleep)
+		might_sleep();
+	else
+		return -ECHILD;
 
 	/*
-	 * The check of isec->initialized below is racy but
-	 * inode_doinit_with_dentry() will recheck with
-	 * isec->lock held.
+	 * Check to ensure that an inode's SELinux state is valid and try
+	 * reloading the inode security label if necessary.  This will fail if
+	 * @dentry is NULL and no dentry for this inode can be found; in that
+	 * case, continue using the old label.
 	 */
-	if (selinux_initialized() &&
-	    data_race(isec->initialized != LABEL_INITIALIZED)) {
-		if (!may_sleep)
-			return -ECHILD;
-
-		/*
-		 * Try reloading the inode security label.  This will fail if
-		 * @opt_dentry is NULL and no dentry for this inode can be
-		 * found; in that case, continue using the old label.
-		 */
-		inode_doinit_with_dentry(inode, dentry);
-	}
+	inode_doinit_with_dentry(inode, dentry);
 	return 0;
 }
 
@@ -307,41 +302,53 @@ static struct inode_security_struct *inode_security_novalidate(struct inode *ino
 	return selinux_inode(inode);
 }
 
-static struct inode_security_struct *inode_security_rcu(struct inode *inode, bool rcu)
+static inline struct inode_security_struct *inode_security_rcu(struct inode *inode,
+							       bool rcu)
 {
-	int error;
+	int rc;
+	struct inode_security_struct *isec = selinux_inode(inode);
 
-	error = __inode_security_revalidate(inode, NULL, !rcu);
-	if (error)
-		return ERR_PTR(error);
-	return selinux_inode(inode);
+	/* check below is racy, but revalidate will recheck with lock held */
+	if (data_race(likely(isec->initialized == LABEL_INITIALIZED)))
+		return isec;
+	rc = __inode_security_revalidate(inode, NULL, !rcu);
+	if (rc)
+		return ERR_PTR(rc);
+	return isec;
 }
 
 /*
  * Get the security label of an inode.
  */
-static struct inode_security_struct *inode_security(struct inode *inode)
+static inline struct inode_security_struct *inode_security(struct inode *inode)
 {
+	struct inode_security_struct *isec = selinux_inode(inode);
+
+	/* check below is racy, but revalidate will recheck with lock held */
+	if (data_race(likely(isec->initialized == LABEL_INITIALIZED)))
+		return isec;
 	__inode_security_revalidate(inode, NULL, true);
-	return selinux_inode(inode);
+	return isec;
 }
 
-static struct inode_security_struct *backing_inode_security_novalidate(struct dentry *dentry)
+static inline struct inode_security_struct *backing_inode_security_novalidate(struct dentry *dentry)
 {
-	struct inode *inode = d_backing_inode(dentry);
-
-	return selinux_inode(inode);
+	return selinux_inode(d_backing_inode(dentry));
 }
 
 /*
  * Get the security label of a dentry's backing inode.
  */
-static struct inode_security_struct *backing_inode_security(struct dentry *dentry)
+static inline struct inode_security_struct *backing_inode_security(struct dentry *dentry)
 {
 	struct inode *inode = d_backing_inode(dentry);
+	struct inode_security_struct *isec = selinux_inode(inode);
 
+	/* check below is racy, but revalidate will recheck with lock held */
+	if (data_race(likely(isec->initialized == LABEL_INITIALIZED)))
+		return isec;
 	__inode_security_revalidate(inode, dentry, true);
-	return selinux_inode(inode);
+	return isec;
 }
 
 static void inode_free_security(struct inode *inode)
@@ -1191,8 +1198,6 @@ static inline u16 socket_type_to_security_class(int family, int type, int protoc
 				return SECCLASS_ICMP_SOCKET;
 			else
 				return SECCLASS_RAWIP_SOCKET;
-		case SOCK_DCCP:
-			return SECCLASS_DCCP_SOCKET;
 		default:
 			return SECCLASS_RAWIP_SOCKET;
 		}
@@ -1683,12 +1688,15 @@ static inline int dentry_has_perm(const struct cred *cred,
 				  struct dentry *dentry,
 				  u32 av)
 {
-	struct inode *inode = d_backing_inode(dentry);
 	struct common_audit_data ad;
+	struct inode *inode = d_backing_inode(dentry);
+	struct inode_security_struct *isec = selinux_inode(inode);
 
 	ad.type = LSM_AUDIT_DATA_DENTRY;
 	ad.u.dentry = dentry;
-	__inode_security_revalidate(inode, dentry, true);
+	/* check below is racy, but revalidate will recheck with lock held */
+	if (data_race(unlikely(isec->initialized != LABEL_INITIALIZED)))
+		__inode_security_revalidate(inode, dentry, true);
 	return inode_has_perm(cred, inode, av, &ad);
 }
 
@@ -1699,12 +1707,15 @@ static inline int path_has_perm(const struct cred *cred,
 				const struct path *path,
 				u32 av)
 {
-	struct inode *inode = d_backing_inode(path->dentry);
 	struct common_audit_data ad;
+	struct inode *inode = d_backing_inode(path->dentry);
+	struct inode_security_struct *isec = selinux_inode(inode);
 
 	ad.type = LSM_AUDIT_DATA_PATH;
 	ad.u.path = *path;
-	__inode_security_revalidate(inode, path->dentry, true);
+	/* check below is racy, but revalidate will recheck with lock held */
+	if (data_race(unlikely(isec->initialized != LABEL_INITIALIZED)))
+		__inode_security_revalidate(inode, path->dentry, true);
 	return inode_has_perm(cred, inode, av, &ad);
 }
 
@@ -3088,44 +3099,152 @@ static noinline int audit_inode_permission(struct inode *inode,
 			    audited, denied, result, &ad);
 }
 
-static int selinux_inode_permission(struct inode *inode, int mask)
+/**
+ * task_avdcache_reset - Reset the task's AVD cache
+ * @tsec: the task's security state
+ *
+ * Clear the task's AVD cache in @tsec and reset it to the current policy's
+ * and task's info.
+ */
+static inline void task_avdcache_reset(struct task_security_struct *tsec)
 {
+	memset(&tsec->avdcache.dir, 0, sizeof(tsec->avdcache.dir));
+	tsec->avdcache.sid = tsec->sid;
+	tsec->avdcache.seqno = avc_policy_seqno();
+	tsec->avdcache.dir_spot = TSEC_AVDC_DIR_SIZE - 1;
+}
+
+/**
+ * task_avdcache_search - Search the task's AVD cache
+ * @tsec: the task's security state
+ * @isec: the inode to search for in the cache
+ * @avdc: matching avd cache entry returned to the caller
+ *
+ * Search @tsec for a AVD cache entry that matches @isec and return it to the
+ * caller via @avdc.  Returns 0 if a match is found, negative values otherwise.
+ */
+static inline int task_avdcache_search(struct task_security_struct *tsec,
+				       struct inode_security_struct *isec,
+				       struct avdc_entry **avdc)
+{
+	int orig, iter;
+
+	/* focused on path walk optimization, only cache directories */
+	if (isec->sclass != SECCLASS_DIR)
+		return -ENOENT;
+
+	if (unlikely(tsec->sid != tsec->avdcache.sid ||
+		     tsec->avdcache.seqno != avc_policy_seqno())) {
+		task_avdcache_reset(tsec);
+		return -ENOENT;
+	}
+
+	orig = iter = tsec->avdcache.dir_spot;
+	do {
+		if (tsec->avdcache.dir[iter].isid == isec->sid) {
+			/* cache hit */
+			tsec->avdcache.dir_spot = iter;
+			*avdc = &tsec->avdcache.dir[iter];
+			return 0;
+		}
+		iter = (iter - 1) & (TSEC_AVDC_DIR_SIZE - 1);
+	} while (iter != orig);
+
+	return -ENOENT;
+}
+
+/**
+ * task_avdcache_update - Update the task's AVD cache
+ * @tsec: the task's security state
+ * @isec: the inode associated with the cache entry
+ * @avd: the AVD to cache
+ * @audited: the permission audit bitmask to cache
+ *
+ * Update the AVD cache in @tsec with the @avdc and @audited info associated
+ * with @isec.
+ */
+static inline void task_avdcache_update(struct task_security_struct *tsec,
+					struct inode_security_struct *isec,
+					struct av_decision *avd,
+					u32 audited)
+{
+	int spot;
+
+	/* focused on path walk optimization, only cache directories */
+	if (isec->sclass != SECCLASS_DIR)
+		return;
+
+	/* update cache */
+	spot = (tsec->avdcache.dir_spot + 1) & (TSEC_AVDC_DIR_SIZE - 1);
+	tsec->avdcache.dir_spot = spot;
+	tsec->avdcache.dir[spot].isid = isec->sid;
+	tsec->avdcache.dir[spot].audited = audited;
+	tsec->avdcache.dir[spot].allowed = avd->allowed;
+	tsec->avdcache.dir[spot].permissive = avd->flags & AVD_FLAGS_PERMISSIVE;
+	tsec->avdcache.permissive_neveraudit =
+		(avd->flags == (AVD_FLAGS_PERMISSIVE|AVD_FLAGS_NEVERAUDIT));
+}
+
+/**
+ * selinux_inode_permission - Check if the current task can access an inode
+ * @inode: the inode that is being accessed
+ * @requested: the accesses being requested
+ *
+ * Check if the current task is allowed to access @inode according to
+ * @requested.  Returns 0 if allowed, negative values otherwise.
+ */
+static int selinux_inode_permission(struct inode *inode, int requested)
+{
+	int mask;
 	u32 perms;
-	bool from_access;
-	bool no_block = mask & MAY_NOT_BLOCK;
+	struct task_security_struct *tsec;
 	struct inode_security_struct *isec;
-	u32 sid = current_sid();
-	struct av_decision avd;
+	struct avdc_entry *avdc;
 	int rc, rc2;
 	u32 audited, denied;
 
-	from_access = mask & MAY_ACCESS;
-	mask &= (MAY_READ|MAY_WRITE|MAY_EXEC|MAY_APPEND);
+	mask = requested & (MAY_READ|MAY_WRITE|MAY_EXEC|MAY_APPEND);
 
 	/* No permission to check.  Existence test. */
 	if (!mask)
 		return 0;
 
-	if (unlikely(IS_PRIVATE(inode)))
+	tsec = selinux_cred(current_cred());
+	if (task_avdcache_permnoaudit(tsec))
 		return 0;
 
-	perms = file_mask_to_av(inode->i_mode, mask);
-
-	isec = inode_security_rcu(inode, no_block);
+	isec = inode_security_rcu(inode, requested & MAY_NOT_BLOCK);
 	if (IS_ERR(isec))
 		return PTR_ERR(isec);
+	perms = file_mask_to_av(inode->i_mode, mask);
 
-	rc = avc_has_perm_noaudit(sid, isec->sid, isec->sclass, perms, 0,
-				  &avd);
-	audited = avc_audit_required(perms, &avd, rc,
-				     from_access ? FILE__AUDIT_ACCESS : 0,
-				     &denied);
+	rc = task_avdcache_search(tsec, isec, &avdc);
+	if (likely(!rc)) {
+		/* Cache hit. */
+		audited = perms & avdc->audited;
+		denied = perms & ~avdc->allowed;
+		if (unlikely(denied && enforcing_enabled() &&
+			     !avdc->permissive))
+			rc = -EACCES;
+	} else {
+		struct av_decision avd;
+
+		/* Cache miss. */
+		rc = avc_has_perm_noaudit(tsec->sid, isec->sid, isec->sclass,
+					  perms, 0, &avd);
+		audited = avc_audit_required(perms, &avd, rc,
+			(requested & MAY_ACCESS) ? FILE__AUDIT_ACCESS : 0,
+			&denied);
+		task_avdcache_update(tsec, isec, &avd, audited);
+	}
+
 	if (likely(!audited))
 		return rc;
 
 	rc2 = audit_inode_permission(inode, perms, audited, denied, rc);
 	if (rc2)
 		return rc2;
+
 	return rc;
 }
 
@@ -3160,6 +3279,13 @@ static int selinux_inode_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 
 static int selinux_inode_getattr(const struct path *path)
 {
+	struct task_security_struct *tsec;
+
+	tsec = selinux_cred(current_cred());
+
+	if (task_avdcache_permnoaudit(tsec))
+		return 0;
+
 	return path_has_perm(current_cred(), path, FILE__GETATTR);
 }
 
@@ -3366,6 +3492,18 @@ static int selinux_inode_removexattr(struct mnt_idmap *idmap,
 	return -EACCES;
 }
 
+static int selinux_inode_file_setattr(struct dentry *dentry,
+				      struct file_kattr *fa)
+{
+	return dentry_has_perm(current_cred(), dentry, FILE__SETATTR);
+}
+
+static int selinux_inode_file_getattr(struct dentry *dentry,
+				      struct file_kattr *fa)
+{
+	return dentry_has_perm(current_cred(), dentry, FILE__GETATTR);
+}
+
 static int selinux_path_notify(const struct path *path, u64 mask,
 						unsigned int obj_type)
 {
@@ -3394,6 +3532,9 @@ static int selinux_path_notify(const struct path *path, u64 mask,
 		break;
 	case FSNOTIFY_OBJ_TYPE_INODE:
 		perm = FILE__WATCH;
+		break;
+	case FSNOTIFY_OBJ_TYPE_MNTNS:
+		perm = FILE__WATCH_MOUNTNS;
 		break;
 	default:
 		return -EINVAL;
@@ -3584,10 +3725,13 @@ static int selinux_kernfs_init_security(struct kernfs_node *kn_dir,
 		newsid = tsec->create_sid;
 	} else {
 		u16 secclass = inode_mode_to_security_class(kn->mode);
+		const char *kn_name;
 		struct qstr q;
 
-		q.name = kn->name;
-		q.hash_len = hashlen_string(kn_dir, kn->name);
+		/* kn is fresh, can't be renamed, name goes not away */
+		kn_name = rcu_dereference_check(kn->name, true);
+		q.name = kn_name;
+		q.hash_len = hashlen_string(kn_dir, kn_name);
 
 		rc = security_transition_sid(tsec->sid,
 					     parent_sid, secclass, &q,
@@ -4096,7 +4240,7 @@ static int selinux_kernel_module_request(char *kmod_name)
 			    SYSTEM__MODULE_REQUEST, &ad);
 }
 
-static int selinux_kernel_module_from_file(struct file *file)
+static int selinux_kernel_load_from_file(struct file *file, u32 requested)
 {
 	struct common_audit_data ad;
 	struct inode_security_struct *isec;
@@ -4104,12 +4248,8 @@ static int selinux_kernel_module_from_file(struct file *file)
 	u32 sid = current_sid();
 	int rc;
 
-	/* init_module */
 	if (file == NULL)
-		return avc_has_perm(sid, sid, SECCLASS_SYSTEM,
-					SYSTEM__MODULE_LOAD, NULL);
-
-	/* finit_module */
+		return avc_has_perm(sid, sid, SECCLASS_SYSTEM, requested, NULL);
 
 	ad.type = LSM_AUDIT_DATA_FILE;
 	ad.u.file = file;
@@ -4122,8 +4262,7 @@ static int selinux_kernel_module_from_file(struct file *file)
 	}
 
 	isec = inode_security(file_inode(file));
-	return avc_has_perm(sid, isec->sid, SECCLASS_SYSTEM,
-				SYSTEM__MODULE_LOAD, &ad);
+	return avc_has_perm(sid, isec->sid, SECCLASS_SYSTEM, requested, &ad);
 }
 
 static int selinux_kernel_read_file(struct file *file,
@@ -4132,9 +4271,30 @@ static int selinux_kernel_read_file(struct file *file,
 {
 	int rc = 0;
 
+	BUILD_BUG_ON_MSG(READING_MAX_ID > 7,
+			 "New kernel_read_file_id introduced; update SELinux!");
+
 	switch (id) {
+	case READING_FIRMWARE:
+		rc = selinux_kernel_load_from_file(file, SYSTEM__FIRMWARE_LOAD);
+		break;
 	case READING_MODULE:
-		rc = selinux_kernel_module_from_file(contents ? file : NULL);
+		rc = selinux_kernel_load_from_file(file, SYSTEM__MODULE_LOAD);
+		break;
+	case READING_KEXEC_IMAGE:
+		rc = selinux_kernel_load_from_file(file,
+						   SYSTEM__KEXEC_IMAGE_LOAD);
+		break;
+	case READING_KEXEC_INITRAMFS:
+		rc = selinux_kernel_load_from_file(file,
+						SYSTEM__KEXEC_INITRAMFS_LOAD);
+		break;
+	case READING_POLICY:
+		rc = selinux_kernel_load_from_file(file, SYSTEM__POLICY_LOAD);
+		break;
+	case READING_X509_CERTIFICATE:
+		rc = selinux_kernel_load_from_file(file,
+						SYSTEM__X509_CERTIFICATE_LOAD);
 		break;
 	default:
 		break;
@@ -4147,9 +4307,31 @@ static int selinux_kernel_load_data(enum kernel_load_data_id id, bool contents)
 {
 	int rc = 0;
 
+	BUILD_BUG_ON_MSG(LOADING_MAX_ID > 7,
+			 "New kernel_load_data_id introduced; update SELinux!");
+
 	switch (id) {
+	case LOADING_FIRMWARE:
+		rc = selinux_kernel_load_from_file(NULL, SYSTEM__FIRMWARE_LOAD);
+		break;
 	case LOADING_MODULE:
-		rc = selinux_kernel_module_from_file(NULL);
+		rc = selinux_kernel_load_from_file(NULL, SYSTEM__MODULE_LOAD);
+		break;
+	case LOADING_KEXEC_IMAGE:
+		rc = selinux_kernel_load_from_file(NULL,
+						   SYSTEM__KEXEC_IMAGE_LOAD);
+		break;
+	case LOADING_KEXEC_INITRAMFS:
+		rc = selinux_kernel_load_from_file(NULL,
+						SYSTEM__KEXEC_INITRAMFS_LOAD);
+		break;
+	case LOADING_POLICY:
+		rc = selinux_kernel_load_from_file(NULL,
+						   SYSTEM__POLICY_LOAD);
+		break;
+	case LOADING_X509_CERTIFICATE:
+		rc = selinux_kernel_load_from_file(NULL,
+						SYSTEM__X509_CERTIFICATE_LOAD);
 		break;
 	default:
 		break;
@@ -4348,22 +4530,6 @@ static int selinux_parse_skb_ipv4(struct sk_buff *skb,
 		break;
 	}
 
-	case IPPROTO_DCCP: {
-		struct dccp_hdr _dccph, *dh;
-
-		if (ntohs(ih->frag_off) & IP_OFFSET)
-			break;
-
-		offset += ihlen;
-		dh = skb_header_pointer(skb, offset, sizeof(_dccph), &_dccph);
-		if (dh == NULL)
-			break;
-
-		ad->u.net->sport = dh->dccph_sport;
-		ad->u.net->dport = dh->dccph_dport;
-		break;
-	}
-
 #if IS_ENABLED(CONFIG_IP_SCTP)
 	case IPPROTO_SCTP: {
 		struct sctphdr _sctph, *sh;
@@ -4439,18 +4605,6 @@ static int selinux_parse_skb_ipv6(struct sk_buff *skb,
 
 		ad->u.net->sport = uh->source;
 		ad->u.net->dport = uh->dest;
-		break;
-	}
-
-	case IPPROTO_DCCP: {
-		struct dccp_hdr _dccph, *dh;
-
-		dh = skb_header_pointer(skb, offset, sizeof(_dccph), &_dccph);
-		if (dh == NULL)
-			break;
-
-		ad->u.net->sport = dh->dccph_sport;
-		ad->u.net->dport = dh->dccph_dport;
 		break;
 	}
 
@@ -4805,10 +4959,6 @@ static int selinux_socket_bind(struct socket *sock, struct sockaddr *address, in
 			node_perm = UDP_SOCKET__NODE_BIND;
 			break;
 
-		case SECCLASS_DCCP_SOCKET:
-			node_perm = DCCP_SOCKET__NODE_BIND;
-			break;
-
 		case SECCLASS_SCTP_SOCKET:
 			node_perm = SCTP_SOCKET__NODE_BIND;
 			break;
@@ -4864,11 +5014,10 @@ static int selinux_socket_connect_helper(struct socket *sock,
 		return 0;
 
 	/*
-	 * If a TCP, DCCP or SCTP socket, check name_connect permission
+	 * If a TCP or SCTP socket, check name_connect permission
 	 * for the port.
 	 */
 	if (sksec->sclass == SECCLASS_TCP_SOCKET ||
-	    sksec->sclass == SECCLASS_DCCP_SOCKET ||
 	    sksec->sclass == SECCLASS_SCTP_SOCKET) {
 		struct common_audit_data ad;
 		struct lsm_network_audit net = {0,};
@@ -4912,9 +5061,6 @@ static int selinux_socket_connect_helper(struct socket *sock,
 		switch (sksec->sclass) {
 		case SECCLASS_TCP_SOCKET:
 			perm = TCP_SOCKET__NAME_CONNECT;
-			break;
-		case SECCLASS_DCCP_SOCKET:
-			perm = DCCP_SOCKET__NAME_CONNECT;
 			break;
 		case SECCLASS_SCTP_SOCKET:
 			perm = SCTP_SOCKET__NAME_CONNECT;
@@ -6866,7 +7012,7 @@ static int selinux_ib_alloc_security(void *ib_sec)
 
 #ifdef CONFIG_BPF_SYSCALL
 static int selinux_bpf(int cmd, union bpf_attr *attr,
-				     unsigned int size)
+		       unsigned int size, bool kernel)
 {
 	u32 sid = current_sid();
 	int ret;
@@ -6953,7 +7099,7 @@ static int selinux_bpf_prog(struct bpf_prog *prog)
 }
 
 static int selinux_bpf_map_create(struct bpf_map *map, union bpf_attr *attr,
-				  struct bpf_token *token)
+				  struct bpf_token *token, bool kernel)
 {
 	struct bpf_security_struct *bpfsec;
 
@@ -6976,7 +7122,7 @@ static void selinux_bpf_map_free(struct bpf_map *map)
 }
 
 static int selinux_bpf_prog_load(struct bpf_prog *prog, union bpf_attr *attr,
-				 struct bpf_token *token)
+				 struct bpf_token *token, bool kernel)
 {
 	struct bpf_security_struct *bpfsec;
 
@@ -7040,7 +7186,7 @@ struct lsm_blob_sizes selinux_blob_sizes __ro_after_init = {
 };
 
 #ifdef CONFIG_PERF_EVENTS
-static int selinux_perf_event_open(struct perf_event_attr *attr, int type)
+static int selinux_perf_event_open(int type)
 {
 	u32 requested, sid = current_sid();
 
@@ -7137,6 +7283,19 @@ static int selinux_uring_cmd(struct io_uring_cmd *ioucmd)
 	return avc_has_perm(current_sid(), isec->sid,
 			    SECCLASS_IO_URING, IO_URING__CMD, &ad);
 }
+
+/**
+ * selinux_uring_allowed - check if io_uring_setup() can be called
+ *
+ * Check to see if the current task is allowed to call io_uring_setup().
+ */
+static int selinux_uring_allowed(void)
+{
+	u32 sid = current_sid();
+
+	return avc_has_perm(sid, sid, SECCLASS_IO_URING, IO_URING__ALLOWED,
+			    NULL);
+}
 #endif /* CONFIG_IO_URING */
 
 static const struct lsm_id selinux_lsmid = {
@@ -7215,6 +7374,8 @@ static struct security_hook_list selinux_hooks[] __ro_after_init = {
 	LSM_HOOK_INIT(inode_getxattr, selinux_inode_getxattr),
 	LSM_HOOK_INIT(inode_listxattr, selinux_inode_listxattr),
 	LSM_HOOK_INIT(inode_removexattr, selinux_inode_removexattr),
+	LSM_HOOK_INIT(inode_file_getattr, selinux_inode_file_getattr),
+	LSM_HOOK_INIT(inode_file_setattr, selinux_inode_file_setattr),
 	LSM_HOOK_INIT(inode_set_acl, selinux_inode_set_acl),
 	LSM_HOOK_INIT(inode_get_acl, selinux_inode_get_acl),
 	LSM_HOOK_INIT(inode_remove_acl, selinux_inode_remove_acl),
@@ -7390,6 +7551,7 @@ static struct security_hook_list selinux_hooks[] __ro_after_init = {
 	LSM_HOOK_INIT(uring_override_creds, selinux_uring_override_creds),
 	LSM_HOOK_INIT(uring_sqpoll, selinux_uring_sqpoll),
 	LSM_HOOK_INIT(uring_cmd, selinux_uring_cmd),
+	LSM_HOOK_INIT(uring_allowed, selinux_uring_allowed),
 #endif
 
 	/*

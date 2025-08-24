@@ -101,20 +101,39 @@ nsim_get_channels(struct net_device *dev, struct ethtool_channels *ch)
 	ch->combined_count = ns->ethtool.channels;
 }
 
+static void
+nsim_wake_queues(struct net_device *dev)
+{
+	struct netdevsim *ns = netdev_priv(dev);
+	struct netdevsim *peer;
+
+	synchronize_net();
+	netif_tx_wake_all_queues(dev);
+
+	rcu_read_lock();
+	peer = rcu_dereference(ns->peer);
+	if (peer)
+		netif_tx_wake_all_queues(peer->netdev);
+	rcu_read_unlock();
+}
+
 static int
 nsim_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 {
 	struct netdevsim *ns = netdev_priv(dev);
 	int err;
 
-	netdev_lock(dev);
 	err = netif_set_real_num_queues(dev, ch->combined_count,
 					ch->combined_count);
-	netdev_unlock(dev);
 	if (err)
 		return err;
 
 	ns->ethtool.channels = ch->combined_count;
+
+	/* Only wake up queues if devices are linked */
+	if (rcu_access_pointer(ns->peer))
+		nsim_wake_queues(dev);
+
 	return 0;
 }
 

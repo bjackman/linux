@@ -40,7 +40,9 @@ void kvm_mmu_uninit_tdp_mmu(struct kvm *kvm)
 	kvm_tdp_mmu_invalidate_roots(kvm, KVM_VALID_ROOTS);
 	kvm_tdp_mmu_zap_invalidated_roots(kvm, false);
 
-	WARN_ON(atomic64_read(&kvm->arch.tdp_mmu_pages));
+#ifdef CONFIG_KVM_PROVE_MMU
+	KVM_MMU_WARN_ON(atomic64_read(&kvm->arch.tdp_mmu_pages));
+#endif
 	WARN_ON(!list_empty(&kvm->arch.tdp_mmu_roots));
 
 	/*
@@ -193,6 +195,19 @@ static struct kvm_mmu_page *tdp_mmu_next_root(struct kvm *kvm,
 		     !tdp_mmu_root_match((_root), (_types)))) {			\
 		} else
 
+/*
+ * Iterate over all TDP MMU roots in an RCU read-side critical section.
+ * It is safe to iterate over the SPTEs under the root, but their values will
+ * be unstable, so all writes must be atomic. As this routine is meant to be
+ * used without holding the mmu_lock at all, any bits that are flipped must
+ * be reflected in kvm_tdp_mmu_spte_need_atomic_write().
+ */
+#define for_each_tdp_mmu_root_rcu(_kvm, _root, _as_id, _types)			\
+	list_for_each_entry_rcu(_root, &_kvm->arch.tdp_mmu_roots, link)		\
+		if ((_as_id >= 0 && kvm_mmu_page_as_id(_root) != _as_id) ||	\
+		    !tdp_mmu_root_match((_root), (_types))) {			\
+		} else
+
 #define for_each_valid_tdp_mmu_root(_kvm, _root, _as_id)		\
 	__for_each_tdp_mmu_root(_kvm, _root, _as_id, KVM_VALID_ROOTS)
 
@@ -312,13 +327,17 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 static void tdp_account_mmu_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 {
 	kvm_account_pgtable_pages((void *)sp->spt, +1);
+#ifdef CONFIG_KVM_PROVE_MMU
 	atomic64_inc(&kvm->arch.tdp_mmu_pages);
+#endif
 }
 
 static void tdp_unaccount_mmu_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 {
 	kvm_account_pgtable_pages((void *)sp->spt, -1);
+#ifdef CONFIG_KVM_PROVE_MMU
 	atomic64_dec(&kvm->arch.tdp_mmu_pages);
+#endif
 }
 
 /**
@@ -359,7 +378,7 @@ static void remove_external_spte(struct kvm *kvm, gfn_t gfn, u64 old_spte,
 	/* Zapping leaf spte is allowed only when write lock is held. */
 	lockdep_assert_held_write(&kvm->mmu_lock);
 	/* Because write lock is held, operation should success. */
-	ret = static_call(kvm_x86_remove_external_spte)(kvm, gfn, level, old_pfn);
+	ret = kvm_x86_call(remove_external_spte)(kvm, gfn, level, old_pfn);
 	KVM_BUG_ON(ret, kvm);
 }
 
@@ -466,8 +485,8 @@ static void handle_removed_pt(struct kvm *kvm, tdp_ptep_t pt, bool shared)
 	}
 
 	if (is_mirror_sp(sp) &&
-	    WARN_ON(static_call(kvm_x86_free_external_spt)(kvm, base_gfn, sp->role.level,
-							  sp->external_spt))) {
+	    WARN_ON(kvm_x86_call(free_external_spt)(kvm, base_gfn, sp->role.level,
+						    sp->external_spt))) {
 		/*
 		 * Failed to free page table page in mirror page table and
 		 * there is nothing to do further.
@@ -519,12 +538,12 @@ static int __must_check set_external_spte_present(struct kvm *kvm, tdp_ptep_t sp
 	 * external page table, or leaf.
 	 */
 	if (is_leaf) {
-		ret = static_call(kvm_x86_set_external_spte)(kvm, gfn, level, new_pfn);
+		ret = kvm_x86_call(set_external_spte)(kvm, gfn, level, new_pfn);
 	} else {
 		void *external_spt = get_external_spt(gfn, new_spte, level);
 
 		KVM_BUG_ON(!external_spt, kvm);
-		ret = static_call(kvm_x86_link_external_spt)(kvm, gfn, level, external_spt);
+		ret = kvm_x86_call(link_external_spt)(kvm, gfn, level, external_spt);
 	}
 	if (ret)
 		__kvm_tdp_mmu_write_spte(sptep, old_spte);
@@ -773,9 +792,6 @@ static inline void tdp_mmu_iter_set_spte(struct kvm *kvm, struct tdp_iter *iter,
 		    !is_last_spte(_iter.old_spte, _iter.level))		\
 			continue;					\
 		else
-
-#define tdp_mmu_for_each_pte(_iter, _kvm, _root, _start, _end)	\
-	for_each_tdp_pte(_iter, _kvm, _root, _start, _end)
 
 static inline bool __must_check tdp_mmu_iter_need_resched(struct kvm *kvm,
 							  struct tdp_iter *iter)
@@ -1137,13 +1153,12 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
 	if (WARN_ON_ONCE(sp->role.level != fault->goal_level))
 		return RET_PF_RETRY;
 
-	if (fault->prefetch && is_shadow_present_pte(iter->old_spte))
-		return RET_PF_SPURIOUS;
-
 	if (is_shadow_present_pte(iter->old_spte) &&
-	    is_access_allowed(fault, iter->old_spte) &&
-	    is_last_spte(iter->old_spte, iter->level))
+	    (fault->prefetch || is_access_allowed(fault, iter->old_spte)) &&
+	    is_last_spte(iter->old_spte, iter->level)) {
+		WARN_ON_ONCE(fault->pfn != spte_to_pfn(iter->old_spte));
 		return RET_PF_SPURIOUS;
+	}
 
 	if (unlikely(!fault->slot))
 		new_spte = make_mmio_spte(vcpu, iter->gfn, ACC_ALL);
@@ -1235,7 +1250,7 @@ int kvm_tdp_mmu_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 
 	rcu_read_lock();
 
-	tdp_mmu_for_each_pte(iter, kvm, root, fault->gfn, fault->gfn + 1) {
+	for_each_tdp_pte(iter, kvm, root, fault->gfn, fault->gfn + 1) {
 		int r;
 
 		if (fault->nx_huge_page_workaround_enabled)
@@ -1332,21 +1347,22 @@ bool kvm_tdp_mmu_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range,
  * from the clear_young() or clear_flush_young() notifier, which uses the
  * return value to determine if the page has been accessed.
  */
-static void kvm_tdp_mmu_age_spte(struct tdp_iter *iter)
+static void kvm_tdp_mmu_age_spte(struct kvm *kvm, struct tdp_iter *iter)
 {
 	u64 new_spte;
 
 	if (spte_ad_enabled(iter->old_spte)) {
-		iter->old_spte = tdp_mmu_clear_spte_bits(iter->sptep,
-							 iter->old_spte,
-							 shadow_accessed_mask,
-							 iter->level);
+		iter->old_spte = tdp_mmu_clear_spte_bits_atomic(iter->sptep,
+								shadow_accessed_mask);
 		new_spte = iter->old_spte & ~shadow_accessed_mask;
 	} else {
 		new_spte = mark_spte_for_access_track(iter->old_spte);
-		iter->old_spte = kvm_tdp_mmu_write_spte(iter->sptep,
-							iter->old_spte, new_spte,
-							iter->level);
+		/*
+		 * It is safe for the following cmpxchg to fail. Leave the
+		 * Accessed bit set, as the spte is most likely young anyway.
+		 */
+		if (__tdp_mmu_set_spte_atomic(kvm, iter, new_spte))
+			return;
 	}
 
 	trace_kvm_tdp_mmu_spte_changed(iter->as_id, iter->gfn, iter->level,
@@ -1371,9 +1387,9 @@ static bool __kvm_tdp_mmu_age_gfn_range(struct kvm *kvm,
 	 * valid roots!
 	 */
 	WARN_ON(types & ~KVM_VALID_ROOTS);
-	__for_each_tdp_mmu_root(kvm, root, range->slot->as_id, types) {
-		guard(rcu)();
 
+	guard(rcu)();
+	for_each_tdp_mmu_root_rcu(kvm, root, range->slot->as_id, types) {
 		tdp_root_for_each_leaf_pte(iter, kvm, root, range->start, range->end) {
 			if (!is_accessed_spte(iter.old_spte))
 				continue;
@@ -1382,7 +1398,7 @@ static bool __kvm_tdp_mmu_age_gfn_range(struct kvm *kvm,
 				return true;
 
 			ret = true;
-			kvm_tdp_mmu_age_spte(&iter);
+			kvm_tdp_mmu_age_spte(kvm, &iter);
 		}
 	}
 
@@ -1613,21 +1629,21 @@ void kvm_tdp_mmu_try_split_huge_pages(struct kvm *kvm,
 	}
 }
 
-static bool tdp_mmu_need_write_protect(struct kvm_mmu_page *sp)
+static bool tdp_mmu_need_write_protect(struct kvm *kvm, struct kvm_mmu_page *sp)
 {
 	/*
 	 * All TDP MMU shadow pages share the same role as their root, aside
 	 * from level, so it is valid to key off any shadow page to determine if
 	 * write protection is needed for an entire tree.
 	 */
-	return kvm_mmu_page_ad_need_write_protect(sp) || !kvm_ad_enabled;
+	return kvm_mmu_page_ad_need_write_protect(kvm, sp) || !kvm_ad_enabled;
 }
 
 static void clear_dirty_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
 				  gfn_t start, gfn_t end)
 {
-	const u64 dbit = tdp_mmu_need_write_protect(root) ? PT_WRITABLE_MASK :
-							    shadow_dirty_mask;
+	const u64 dbit = tdp_mmu_need_write_protect(kvm, root) ?
+			 PT_WRITABLE_MASK : shadow_dirty_mask;
 	struct tdp_iter iter;
 
 	rcu_read_lock();
@@ -1672,8 +1688,8 @@ void kvm_tdp_mmu_clear_dirty_slot(struct kvm *kvm,
 static void clear_dirty_pt_masked(struct kvm *kvm, struct kvm_mmu_page *root,
 				  gfn_t gfn, unsigned long mask, bool wrprot)
 {
-	const u64 dbit = (wrprot || tdp_mmu_need_write_protect(root)) ? PT_WRITABLE_MASK :
-									shadow_dirty_mask;
+	const u64 dbit = (wrprot || tdp_mmu_need_write_protect(kvm, root)) ?
+			  PT_WRITABLE_MASK : shadow_dirty_mask;
 	struct tdp_iter iter;
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
@@ -1894,23 +1910,50 @@ bool kvm_tdp_mmu_write_protect_gfn(struct kvm *kvm,
  *
  * Must be called between kvm_tdp_mmu_walk_lockless_{begin,end}.
  */
-int kvm_tdp_mmu_get_walk(struct kvm_vcpu *vcpu, u64 addr, u64 *sptes,
-			 int *root_level)
+static int __kvm_tdp_mmu_get_walk(struct kvm_vcpu *vcpu, u64 addr, u64 *sptes,
+				  struct kvm_mmu_page *root)
 {
-	struct kvm_mmu_page *root = root_to_sp(vcpu->arch.mmu->root.hpa);
 	struct tdp_iter iter;
 	gfn_t gfn = addr >> PAGE_SHIFT;
 	int leaf = -1;
 
-	*root_level = vcpu->arch.mmu->root_role.level;
-
-	tdp_mmu_for_each_pte(iter, vcpu->kvm, root, gfn, gfn + 1) {
+	for_each_tdp_pte(iter, vcpu->kvm, root, gfn, gfn + 1) {
 		leaf = iter.level;
 		sptes[leaf] = iter.old_spte;
 	}
 
 	return leaf;
 }
+
+int kvm_tdp_mmu_get_walk(struct kvm_vcpu *vcpu, u64 addr, u64 *sptes,
+			 int *root_level)
+{
+	struct kvm_mmu_page *root = root_to_sp(vcpu->arch.mmu->root.hpa);
+	*root_level = vcpu->arch.mmu->root_role.level;
+
+	return __kvm_tdp_mmu_get_walk(vcpu, addr, sptes, root);
+}
+
+bool kvm_tdp_mmu_gpa_is_mapped(struct kvm_vcpu *vcpu, u64 gpa)
+{
+	struct kvm *kvm = vcpu->kvm;
+	bool is_direct = kvm_is_addr_direct(kvm, gpa);
+	hpa_t root = is_direct ? vcpu->arch.mmu->root.hpa :
+				 vcpu->arch.mmu->mirror_root_hpa;
+	u64 sptes[PT64_ROOT_MAX_LEVEL + 1], spte;
+	int leaf;
+
+	lockdep_assert_held(&kvm->mmu_lock);
+	rcu_read_lock();
+	leaf = __kvm_tdp_mmu_get_walk(vcpu, gpa, sptes, root_to_sp(root));
+	rcu_read_unlock();
+	if (leaf < 0)
+		return false;
+
+	spte = sptes[leaf];
+	return is_shadow_present_pte(spte) && is_last_spte(spte, leaf);
+}
+EXPORT_SYMBOL_GPL(kvm_tdp_mmu_gpa_is_mapped);
 
 /*
  * Returns the last level spte pointer of the shadow page walk for the given
@@ -1931,7 +1974,7 @@ u64 *kvm_tdp_mmu_fast_pf_get_last_sptep(struct kvm_vcpu *vcpu, gfn_t gfn,
 	struct tdp_iter iter;
 	tdp_ptep_t sptep = NULL;
 
-	tdp_mmu_for_each_pte(iter, vcpu->kvm, root, gfn, gfn + 1) {
+	for_each_tdp_pte(iter, vcpu->kvm, root, gfn, gfn + 1) {
 		*spte = iter.old_spte;
 		sptep = iter.sptep;
 	}

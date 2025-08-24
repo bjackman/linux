@@ -720,7 +720,6 @@ cpufreq_freq_attr_ro(brcm_avs_voltage);
 cpufreq_freq_attr_ro(brcm_avs_frequency);
 
 static struct freq_attr *brcm_avs_cpufreq_attr[] = {
-	&cpufreq_freq_attr_scaling_available_freqs,
 	&brcm_avs_pstate,
 	&brcm_avs_mode,
 	&brcm_avs_pmap,
@@ -766,7 +765,7 @@ static void brcm_avs_cpufreq_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id brcm_avs_cpufreq_match[] = {
-	{ .compatible = BRCM_AVS_CPU_DATA },
+	{ .compatible = "brcm,avs-cpu-data-mem" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, brcm_avs_cpufreq_match);

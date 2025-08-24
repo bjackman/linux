@@ -16,12 +16,12 @@ struct io_nop {
 	struct file     *file;
 	int             result;
 	int		fd;
-	int		buffer;
 	unsigned int	flags;
 };
 
 #define NOP_FLAGS	(IORING_NOP_INJECT_RESULT | IORING_NOP_FIXED_FILE | \
-			 IORING_NOP_FIXED_BUFFER | IORING_NOP_FILE)
+			 IORING_NOP_FIXED_BUFFER | IORING_NOP_FILE | \
+			 IORING_NOP_TW)
 
 int io_nop_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
@@ -40,9 +40,7 @@ int io_nop_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	else
 		nop->fd = -1;
 	if (nop->flags & IORING_NOP_FIXED_BUFFER)
-		nop->buffer = READ_ONCE(sqe->buf_index);
-	else
-		nop->buffer = -1;
+		req->buf_index = READ_ONCE(sqe->buf_index);
 	return 0;
 }
 
@@ -64,21 +62,17 @@ int io_nop(struct io_kiocb *req, unsigned int issue_flags)
 		}
 	}
 	if (nop->flags & IORING_NOP_FIXED_BUFFER) {
-		struct io_ring_ctx *ctx = req->ctx;
-		struct io_rsrc_node *node;
-
-		ret = -EFAULT;
-		io_ring_submit_lock(ctx, issue_flags);
-		node = io_rsrc_node_lookup(&ctx->buf_table, nop->buffer);
-		if (node) {
-			io_req_assign_buf_node(req, node);
-			ret = 0;
-		}
-		io_ring_submit_unlock(ctx, issue_flags);
+		if (!io_find_buf_node(req, issue_flags))
+			ret = -EFAULT;
 	}
 done:
 	if (ret < 0)
 		req_set_fail(req);
 	io_req_set_res(req, nop->result, 0);
-	return IOU_OK;
+	if (nop->flags & IORING_NOP_TW) {
+		req->io_task_work.func = io_req_task_complete;
+		io_req_task_work_add(req);
+		return IOU_ISSUE_SKIP_COMPLETE;
+	}
+	return IOU_COMPLETE;
 }

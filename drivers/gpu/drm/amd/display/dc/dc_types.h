@@ -175,12 +175,14 @@ struct dc_panel_patch {
 	unsigned int embedded_tiled_slave;
 	unsigned int disable_fams;
 	unsigned int skip_avmute;
+	unsigned int skip_audio_sab_check;
 	unsigned int mst_start_top_delay;
 	unsigned int remove_sink_ext_caps;
 	unsigned int disable_colorimetry;
 	uint8_t blankstream_before_otg_off;
 	bool oled_optimize_display_on;
 	unsigned int force_mst_blocked_discovery;
+	unsigned int wait_after_dpcd_poweroff_ms;
 };
 
 struct dc_edid_caps {
@@ -209,6 +211,7 @@ struct dc_edid_caps {
 
 	bool edid_hdmi;
 	bool hdr_supported;
+	bool rr_capable;
 
 	struct dc_panel_patch panel_patch;
 };
@@ -261,6 +264,7 @@ enum dc_timing_source {
 	TIMING_SOURCE_EDID_4BYTE,
 	TIMING_SOURCE_EDID_CEA_DISPLAYID_VTDB,
 	TIMING_SOURCE_EDID_CEA_RID,
+	TIMING_SOURCE_EDID_DISPLAYID_TYPE5,
 	TIMING_SOURCE_VBIOS,
 	TIMING_SOURCE_CV,
 	TIMING_SOURCE_TV,
@@ -1033,6 +1037,13 @@ struct psr_settings {
 	unsigned int psr_sdp_transmit_line_num_deadline;
 	uint8_t force_ffu_mode;
 	unsigned int psr_power_opt;
+
+	/**
+	 * Some panels cannot handle idle pattern during PSR entry.
+	 * To power down phy before disable stream to avoid sending
+	 * idle pattern.
+	 */
+	uint8_t power_down_phy_before_disable_stream;
 };
 
 enum replay_coasting_vtotal_type {
@@ -1081,7 +1092,8 @@ union replay_low_refresh_rate_enable_options {
 	struct {
 	//BIT[0-3]: Replay Low Hz Support control
 		unsigned int ENABLE_LOW_RR_SUPPORT          :1;
-		unsigned int RESERVED_1_3                   :3;
+		unsigned int SKIP_ASIC_CHECK                :1;
+		unsigned int RESERVED_2_3                   :2;
 	//BIT[4-15]: Replay Low Hz Enable Scenarios
 		unsigned int ENABLE_STATIC_SCREEN           :1;
 		unsigned int ENABLE_FULL_SCREEN_VIDEO       :1;
@@ -1121,6 +1133,10 @@ struct replay_config {
 	union replay_low_refresh_rate_enable_options low_rr_enable_options;
 	/* Replay coasting vtotal is within low refresh rate range. */
 	bool low_rr_activated;
+	/* Replay low refresh rate supported*/
+	bool low_rr_supported;
+	/* Replay Video Conferencing Optimization Enabled */
+	bool replay_video_conferencing_optimization_enabled;
 };
 
 /* Replay feature flags*/
@@ -1216,7 +1232,6 @@ struct dc_dpia_bw_alloc {
 	int bw_granularity;    // BW Granularity
 	int dp_overhead;       // DP overhead in dp tunneling
 	bool bw_alloc_enabled; // The BW Alloc Mode Support is turned ON for all 3:  DP-Tx & Dpia & CM
-	bool response_ready;   // Response ready from the CM side
 	uint8_t nrd_max_lane_count; // Non-reduced max lane count
 	uint8_t nrd_max_link_rate; // Non-reduced max link rate
 };
@@ -1263,7 +1278,7 @@ struct dc_cm2_gpu_mem_format_parameters {
 
 enum dc_cm2_gpu_mem_size {
 	DC_CM2_GPU_MEM_SIZE_171717,
-	DC_CM2_GPU_MEM_SIZE_TRANSFORMED
+	DC_CM2_GPU_MEM_SIZE_TRANSFORMED,
 };
 
 struct dc_cm2_gpu_mem_parameters {
@@ -1272,6 +1287,7 @@ struct dc_cm2_gpu_mem_parameters {
 	struct dc_cm2_gpu_mem_format_parameters format_params;
 	enum dc_cm2_gpu_mem_pixel_component_order component_order;
 	enum dc_cm2_gpu_mem_size  size;
+	uint16_t bit_depth;
 };
 
 enum dc_cm2_transfer_func_source {
@@ -1295,6 +1311,11 @@ struct dc_cm2_func_luts {
 			const struct dc_3dlut *lut3d_func;
 			struct dc_cm2_gpu_mem_parameters gpu_mem_params;
 		};
+		bool rmcm_3dlut_shaper_select;
+		bool mpc_3dlut_enable;
+		bool rmcm_3dlut_enable;
+		bool mpc_mcm_post_blend;
+		uint8_t rmcm_tmz;
 	} lut3d_data;
 	const struct dc_transfer_func *lut1d_func;
 };
@@ -1350,6 +1371,21 @@ struct set_backlight_level_params {
 	uint32_t max_backlight_pwm;
 	/* AUX HW instance */
 	uint8_t aux_inst;
+};
+
+enum dc_validate_mode {
+	/* validate the mode and program HW */
+	DC_VALIDATE_MODE_AND_PROGRAMMING = 0,
+	/* only validate the mode */
+	DC_VALIDATE_MODE_ONLY = 1,
+	/* validate the mode and get the max state (voltage level) */
+	DC_VALIDATE_MODE_AND_STATE_INDEX = 2,
+};
+
+struct dc_validation_dpia_set {
+	const struct dc_link *link;
+	const struct dc_tunnel_settings *tunnel_settings;
+	uint32_t required_bw;
 };
 
 #endif /* DC_TYPES_H_ */

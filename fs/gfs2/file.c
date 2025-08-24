@@ -155,7 +155,7 @@ static inline u32 gfs2_gfsflags_to_fsflags(struct inode *inode, u32 gfsflags)
 	return fsflags;
 }
 
-int gfs2_fileattr_get(struct dentry *dentry, struct fileattr *fa)
+int gfs2_fileattr_get(struct dentry *dentry, struct file_kattr *fa)
 {
 	struct inode *inode = d_inode(dentry);
 	struct gfs2_inode *ip = GFS2_I(inode);
@@ -276,7 +276,7 @@ out:
 }
 
 int gfs2_fileattr_set(struct mnt_idmap *idmap,
-		      struct dentry *dentry, struct fileattr *fa)
+		      struct dentry *dentry, struct file_kattr *fa)
 {
 	struct inode *inode = d_inode(dentry);
 	u32 fsflags = fa->flags, gfsflags = 0;
@@ -820,7 +820,7 @@ static ssize_t gfs2_file_direct_read(struct kiocb *iocb, struct iov_iter *to,
 	/*
 	 * In this function, we disable page faults when we're holding the
 	 * inode glock while doing I/O.  If a page fault occurs, we indicate
-	 * that the inode glock may be dropped, fault in the pages manually,
+	 * that the inode glock should be dropped, fault in the pages manually,
 	 * and retry.
 	 *
 	 * Unlike generic_file_read_iter, for reads, iomap_dio_rw can trigger
@@ -885,7 +885,7 @@ static ssize_t gfs2_file_direct_write(struct kiocb *iocb, struct iov_iter *from,
 	/*
 	 * In this function, we disable page faults when we're holding the
 	 * inode glock while doing I/O.  If a page fault occurs, we indicate
-	 * that the inode glock may be dropped, fault in the pages manually,
+	 * that the inode glock should be dropped, fault in the pages manually,
 	 * and retry.
 	 *
 	 * For writes, iomap_dio_rw only triggers manual page faults, so we
@@ -957,7 +957,7 @@ static ssize_t gfs2_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	/*
 	 * In this function, we disable page faults when we're holding the
 	 * inode glock while doing I/O.  If a page fault occurs, we indicate
-	 * that the inode glock may be dropped, fault in the pages manually,
+	 * that the inode glock should be dropped, fault in the pages manually,
 	 * and retry.
 	 */
 
@@ -1024,7 +1024,7 @@ static ssize_t gfs2_file_buffered_write(struct kiocb *iocb,
 	/*
 	 * In this function, we disable page faults when we're holding the
 	 * inode glock while doing I/O.  If a page fault occurs, we indicate
-	 * that the inode glock may be dropped, fault in the pages manually,
+	 * that the inode glock should be dropped, fault in the pages manually,
 	 * and retry.
 	 */
 
@@ -1058,7 +1058,8 @@ retry:
 	}
 
 	pagefault_disable();
-	ret = iomap_file_buffered_write(iocb, from, &gfs2_iomap_ops, NULL);
+	ret = iomap_file_buffered_write(iocb, from, &gfs2_iomap_ops,
+			&gfs2_iomap_write_ops, NULL);
 	pagefault_enable();
 	if (ret > 0)
 		written += ret;

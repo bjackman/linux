@@ -19,12 +19,14 @@
 use crate::{
     alloc::{AllocError, Flags, KBox},
     bindings,
-    init::{self, InPlaceInit, Init, PinInit},
+    ffi::c_void,
+    init::InPlaceInit,
     try_init,
     types::{ForeignOwnable, Opaque},
 };
 use core::{
     alloc::Layout,
+    borrow::{Borrow, BorrowMut},
     fmt,
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
@@ -32,7 +34,7 @@ use core::{
     pin::Pin,
     ptr::NonNull,
 };
-use macros::pin_data;
+use pin_init::{self, pin_data, InPlaceWrite, Init, PinInit};
 
 mod std_vendor;
 
@@ -135,7 +137,7 @@ pub struct Arc<T: ?Sized> {
     // meaningful with respect to dropck - but this may change in the future so this is left here
     // out of an abundance of caution.
     //
-    // See https://doc.rust-lang.org/nomicon/phantom-data.html#generic-parameters-and-drop-checking
+    // See <https://doc.rust-lang.org/nomicon/phantom-data.html#generic-parameters-and-drop-checking>
     // for more detail on the semantics of dropck in the presence of `PhantomData`.
     _p: PhantomData<ArcInner<T>>,
 }
@@ -202,6 +204,26 @@ unsafe impl<T: ?Sized + Sync + Send> Send for Arc<T> {}
 // the reference count reaches zero and `T` is dropped.
 unsafe impl<T: ?Sized + Sync + Send> Sync for Arc<T> {}
 
+impl<T> InPlaceInit<T> for Arc<T> {
+    type PinnedSelf = Self;
+
+    #[inline]
+    fn try_pin_init<E>(init: impl PinInit<T, E>, flags: Flags) -> Result<Self::PinnedSelf, E>
+    where
+        E: From<AllocError>,
+    {
+        UniqueArc::try_pin_init(init, flags).map(|u| u.into())
+    }
+
+    #[inline]
+    fn try_init<E>(init: impl Init<T, E>, flags: Flags) -> Result<Self, E>
+    where
+        E: From<AllocError>,
+    {
+        UniqueArc::try_init(init, flags).map(|u| u.into())
+    }
+}
+
 impl<T> Arc<T> {
     /// Constructs a new reference counted instance of `T`.
     pub fn new(contents: T, flags: Flags) -> Result<Self, AllocError> {
@@ -243,6 +265,15 @@ impl<T: ?Sized> Arc<T> {
         let ptr = self.ptr.as_ptr();
         core::mem::forget(self);
         // SAFETY: The pointer is valid.
+        unsafe { core::ptr::addr_of!((*ptr).data) }
+    }
+
+    /// Return a raw pointer to the data in this arc.
+    pub fn as_ptr(this: &Self) -> *const T {
+        let ptr = this.ptr.as_ptr();
+
+        // SAFETY: As `ptr` points to a valid allocation of type `ArcInner`,
+        // field projection to `data`is within bounds of the allocation.
         unsafe { core::ptr::addr_of!((*ptr).data) }
     }
 
@@ -342,15 +373,19 @@ impl<T: ?Sized> Arc<T> {
     }
 }
 
-impl<T: 'static> ForeignOwnable for Arc<T> {
+// SAFETY: The pointer returned by `into_foreign` comes from a well aligned
+// pointer to `ArcInner<T>`.
+unsafe impl<T: 'static> ForeignOwnable for Arc<T> {
+    const FOREIGN_ALIGN: usize = core::mem::align_of::<ArcInner<T>>();
+
     type Borrowed<'a> = ArcBorrow<'a, T>;
     type BorrowedMut<'a> = Self::Borrowed<'a>;
 
-    fn into_foreign(self) -> *mut crate::ffi::c_void {
+    fn into_foreign(self) -> *mut c_void {
         ManuallyDrop::new(self).ptr.as_ptr().cast()
     }
 
-    unsafe fn from_foreign(ptr: *mut crate::ffi::c_void) -> Self {
+    unsafe fn from_foreign(ptr: *mut c_void) -> Self {
         // SAFETY: The safety requirements of this function ensure that `ptr` comes from a previous
         // call to `Self::into_foreign`.
         let inner = unsafe { NonNull::new_unchecked(ptr.cast::<ArcInner<T>>()) };
@@ -361,7 +396,7 @@ impl<T: 'static> ForeignOwnable for Arc<T> {
         unsafe { Self::from_inner(inner) }
     }
 
-    unsafe fn borrow<'a>(ptr: *mut crate::ffi::c_void) -> ArcBorrow<'a, T> {
+    unsafe fn borrow<'a>(ptr: *mut c_void) -> ArcBorrow<'a, T> {
         // SAFETY: The safety requirements of this function ensure that `ptr` comes from a previous
         // call to `Self::into_foreign`.
         let inner = unsafe { NonNull::new_unchecked(ptr.cast::<ArcInner<T>>()) };
@@ -371,10 +406,10 @@ impl<T: 'static> ForeignOwnable for Arc<T> {
         unsafe { ArcBorrow::new(inner) }
     }
 
-    unsafe fn borrow_mut<'a>(ptr: *mut crate::ffi::c_void) -> ArcBorrow<'a, T> {
+    unsafe fn borrow_mut<'a>(ptr: *mut c_void) -> ArcBorrow<'a, T> {
         // SAFETY: The safety requirements for `borrow_mut` are a superset of the safety
         // requirements for `borrow`.
-        unsafe { Self::borrow(ptr) }
+        unsafe { <Self as ForeignOwnable>::borrow(ptr) }
     }
 }
 
@@ -390,6 +425,31 @@ impl<T: ?Sized> Deref for Arc<T> {
 
 impl<T: ?Sized> AsRef<T> for Arc<T> {
     fn as_ref(&self) -> &T {
+        self.deref()
+    }
+}
+
+/// # Examples
+///
+/// ```
+/// # use core::borrow::Borrow;
+/// # use kernel::sync::Arc;
+/// struct Foo<B: Borrow<u32>>(B);
+///
+/// // Owned instance.
+/// let owned = Foo(1);
+///
+/// // Shared instance.
+/// let arc = Arc::new(1, GFP_KERNEL)?;
+/// let shared = Foo(arc.clone());
+///
+/// let i = 1;
+/// // Borrowed from `i`.
+/// let borrowed = Foo(&i);
+/// # Ok::<(), Error>(())
+/// ```
+impl<T: ?Sized> Borrow<T> for Arc<T> {
+    fn borrow(&self) -> &T {
         self.deref()
     }
 }
@@ -460,7 +520,7 @@ impl<T: ?Sized> From<Pin<UniqueArc<T>>> for Arc<T> {
 /// There are no mutable references to the underlying [`Arc`], and it remains valid for the
 /// lifetime of the [`ArcBorrow`] instance.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use kernel::sync::{Arc, ArcBorrow};
@@ -539,11 +599,11 @@ impl<T: ?Sized> ArcBorrow<'_, T> {
     }
 
     /// Creates an [`ArcBorrow`] to an [`Arc`] that has previously been deconstructed with
-    /// [`Arc::into_raw`].
+    /// [`Arc::into_raw`] or [`Arc::as_ptr`].
     ///
     /// # Safety
     ///
-    /// * The provided pointer must originate from a call to [`Arc::into_raw`].
+    /// * The provided pointer must originate from a call to [`Arc::into_raw`] or [`Arc::as_ptr`].
     /// * For the duration of the lifetime annotated on this `ArcBorrow`, the reference count must
     ///   not hit zero.
     /// * For the duration of the lifetime annotated on this `ArcBorrow`, there must not be a
@@ -659,6 +719,48 @@ pub struct UniqueArc<T: ?Sized> {
     inner: Arc<T>,
 }
 
+impl<T> InPlaceInit<T> for UniqueArc<T> {
+    type PinnedSelf = Pin<Self>;
+
+    #[inline]
+    fn try_pin_init<E>(init: impl PinInit<T, E>, flags: Flags) -> Result<Self::PinnedSelf, E>
+    where
+        E: From<AllocError>,
+    {
+        UniqueArc::new_uninit(flags)?.write_pin_init(init)
+    }
+
+    #[inline]
+    fn try_init<E>(init: impl Init<T, E>, flags: Flags) -> Result<Self, E>
+    where
+        E: From<AllocError>,
+    {
+        UniqueArc::new_uninit(flags)?.write_init(init)
+    }
+}
+
+impl<T> InPlaceWrite<T> for UniqueArc<MaybeUninit<T>> {
+    type Initialized = UniqueArc<T>;
+
+    fn write_init<E>(mut self, init: impl Init<T, E>) -> Result<Self::Initialized, E> {
+        let slot = self.as_mut_ptr();
+        // SAFETY: When init errors/panics, slot will get deallocated but not dropped,
+        // slot is valid.
+        unsafe { init.__init(slot)? };
+        // SAFETY: All fields have been initialized.
+        Ok(unsafe { self.assume_init() })
+    }
+
+    fn write_pin_init<E>(mut self, init: impl PinInit<T, E>) -> Result<Pin<Self::Initialized>, E> {
+        let slot = self.as_mut_ptr();
+        // SAFETY: When init errors/panics, slot will get deallocated but not dropped,
+        // slot is valid and will not be moved, because we pin it later.
+        unsafe { init.__pinned_init(slot)? };
+        // SAFETY: All fields have been initialized.
+        Ok(unsafe { self.assume_init() }.into())
+    }
+}
+
 impl<T> UniqueArc<T> {
     /// Tries to allocate a new [`UniqueArc`] instance.
     pub fn new(value: T, flags: Flags) -> Result<Self, AllocError> {
@@ -675,7 +777,7 @@ impl<T> UniqueArc<T> {
             try_init!(ArcInner {
                 // SAFETY: There are no safety requirements for this FFI call.
                 refcount: Opaque::new(unsafe { bindings::REFCOUNT_INIT(1) }),
-                data <- init::uninit::<T, AllocError>(),
+                data <- pin_init::uninit::<T, AllocError>(),
             }? AllocError),
             flags,
         )?;
@@ -757,6 +859,56 @@ impl<T: ?Sized> DerefMut for UniqueArc<T> {
         // it is safe to dereference it. Additionally, we know there is only one reference when
         // it's inside a `UniqueArc`, so it is safe to get a mutable reference.
         unsafe { &mut self.inner.ptr.as_mut().data }
+    }
+}
+
+/// # Examples
+///
+/// ```
+/// # use core::borrow::Borrow;
+/// # use kernel::sync::UniqueArc;
+/// struct Foo<B: Borrow<u32>>(B);
+///
+/// // Owned instance.
+/// let owned = Foo(1);
+///
+/// // Owned instance using `UniqueArc`.
+/// let arc = UniqueArc::new(1, GFP_KERNEL)?;
+/// let shared = Foo(arc);
+///
+/// let i = 1;
+/// // Borrowed from `i`.
+/// let borrowed = Foo(&i);
+/// # Ok::<(), Error>(())
+/// ```
+impl<T: ?Sized> Borrow<T> for UniqueArc<T> {
+    fn borrow(&self) -> &T {
+        self.deref()
+    }
+}
+
+/// # Examples
+///
+/// ```
+/// # use core::borrow::BorrowMut;
+/// # use kernel::sync::UniqueArc;
+/// struct Foo<B: BorrowMut<u32>>(B);
+///
+/// // Owned instance.
+/// let owned = Foo(1);
+///
+/// // Owned instance using `UniqueArc`.
+/// let arc = UniqueArc::new(1, GFP_KERNEL)?;
+/// let shared = Foo(arc);
+///
+/// let mut i = 1;
+/// // Borrowed from `i`.
+/// let borrowed = Foo(&mut i);
+/// # Ok::<(), Error>(())
+/// ```
+impl<T: ?Sized> BorrowMut<T> for UniqueArc<T> {
+    fn borrow_mut(&mut self) -> &mut T {
+        self.deref_mut()
     }
 }
 

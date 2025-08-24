@@ -150,6 +150,12 @@ bool dc_link_update_dsc_config(struct pipe_ctx *pipe_ctx)
 	return link->dc->link_srv->update_dsc_config(pipe_ctx);
 }
 
+struct ddc_service *
+dc_get_oem_i2c_device(struct dc *dc)
+{
+	return dc->res_pool->oem_device;
+}
+
 bool dc_is_oem_i2c_device_present(
 	struct dc *dc,
 	size_t slave_address)
@@ -364,15 +370,10 @@ bool dc_link_should_enable_fec(const struct dc_link *link)
 	return link->dc->link_srv->dp_should_enable_fec(link);
 }
 
-int dc_link_dp_dpia_handle_usb4_bandwidth_allocation_for_link(
+void dc_link_dp_dpia_handle_usb4_bandwidth_allocation_for_link(
 		struct dc_link *link, int peak_bw)
 {
-	return link->dc->link_srv->dpia_handle_usb4_bandwidth_allocation_for_link(link, peak_bw);
-}
-
-void dc_link_handle_usb4_bw_alloc_response(struct dc_link *link, uint8_t bw, uint8_t result)
-{
-	link->dc->link_srv->dpia_handle_bw_alloc_response(link, bw, result);
+	link->dc->link_srv->dpia_handle_usb4_bandwidth_allocation_for_link(link, peak_bw);
 }
 
 bool dc_link_check_link_loss_status(
@@ -514,7 +515,8 @@ void dc_link_enable_hpd_filter(struct dc_link *link, bool enable)
 	link->dc->link_srv->enable_hpd_filter(link, enable);
 }
 
-bool dc_link_dp_dpia_validate(struct dc *dc, const struct dc_stream_state *streams, const unsigned int count)
+enum dc_status dc_link_validate_dp_tunneling_bandwidth(const struct dc *dc, const struct dc_state *new_ctx)
 {
-	return dc->link_srv->validate_dpia_bandwidth(streams, count);
+	return dc->link_srv->validate_dp_tunnel_bandwidth(dc, new_ctx);
 }
+

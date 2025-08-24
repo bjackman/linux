@@ -1449,7 +1449,7 @@ static int spi_imx_calculate_timeout(struct spi_imx_data *spi_imx, int size)
 	timeout += 1;
 
 	/* Double calculated timeout */
-	return msecs_to_jiffies(2 * timeout * MSEC_PER_SEC);
+	return secs_to_jiffies(2 * timeout);
 }
 
 static int spi_imx_dma_transfer(struct spi_imx_data *spi_imx,
@@ -1695,9 +1695,12 @@ static int spi_imx_transfer_one(struct spi_controller *controller,
 				struct spi_device *spi,
 				struct spi_transfer *transfer)
 {
+	int ret;
 	struct spi_imx_data *spi_imx = spi_controller_get_devdata(spi->controller);
 
-	spi_imx_setupxfer(spi, transfer);
+	ret = spi_imx_setupxfer(spi, transfer);
+	if (ret < 0)
+		return ret;
 	transfer->effective_speed_hz = spi_imx->spi_bus_clk;
 
 	/* flush rxfifo before transfer */
@@ -1745,7 +1748,6 @@ spi_imx_prepare_message(struct spi_controller *controller, struct spi_message *m
 
 	ret = spi_imx->devtype_data->prepare_message(spi_imx, msg);
 	if (ret) {
-		pm_runtime_mark_last_busy(spi_imx->dev);
 		pm_runtime_put_autosuspend(spi_imx->dev);
 	}
 
@@ -1757,7 +1759,6 @@ spi_imx_unprepare_message(struct spi_controller *controller, struct spi_message 
 {
 	struct spi_imx_data *spi_imx = spi_controller_get_devdata(controller);
 
-	pm_runtime_mark_last_busy(spi_imx->dev);
 	pm_runtime_put_autosuspend(spi_imx->dev);
 	return 0;
 }
@@ -1930,7 +1931,6 @@ static int spi_imx_probe(struct platform_device *pdev)
 		goto out_register_controller;
 	}
 
-	pm_runtime_mark_last_busy(spi_imx->dev);
 	pm_runtime_put_autosuspend(spi_imx->dev);
 
 	return ret;

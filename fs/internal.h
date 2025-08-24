@@ -66,6 +66,7 @@ int do_linkat(int olddfd, struct filename *old, int newdfd,
 int vfs_tmpfile(struct mnt_idmap *idmap,
 		const struct path *parentpath,
 		struct file *file, umode_t mode);
+struct dentry *d_hash_and_lookup(struct dentry *, struct qstr *);
 
 /*
  * namespace.c
@@ -100,6 +101,7 @@ extern void chroot_fs_refs(const struct path *, const struct path *);
 struct file *alloc_empty_file(int flags, const struct cred *cred);
 struct file *alloc_empty_file_noaccount(int flags, const struct cred *cred);
 struct file *alloc_empty_backing_file(int flags, const struct cred *cred);
+void backing_file_set_user_path(struct file *f, const struct path *path);
 
 static inline void file_put_write_access(struct file *file)
 {
@@ -117,6 +119,9 @@ static inline void put_file_access(struct file *file)
 		file_put_write_access(file);
 	}
 }
+
+void fput_close_sync(struct file *);
+void fput_close(struct file *);
 
 /*
  * super.c
@@ -187,8 +192,8 @@ extern struct open_how build_open_how(int flags, umode_t mode);
 extern int build_open_flags(const struct open_how *how, struct open_flags *op);
 struct file *file_close_fd_locked(struct files_struct *files, unsigned fd);
 
-long do_ftruncate(struct file *file, loff_t length, int small);
-long do_sys_ftruncate(unsigned int fd, loff_t length, int small);
+int do_ftruncate(struct file *file, loff_t length, int small);
+int do_sys_ftruncate(unsigned int fd, loff_t length, int small);
 int chmod_common(const struct path *path, umode_t mode);
 int do_fchownat(int dfd, const char __user *filename, uid_t user, gid_t group,
 		int flag);
@@ -207,7 +212,6 @@ bool in_group_or_capable(struct mnt_idmap *idmap,
  * fs-writeback.c
  */
 extern long get_nr_dirty_inodes(void);
-void invalidate_inodes(struct super_block *sb);
 
 /*
  * dcache.c
@@ -319,12 +323,16 @@ struct mnt_idmap *alloc_mnt_idmap(struct user_namespace *mnt_userns);
 struct mnt_idmap *mnt_idmap_get(struct mnt_idmap *idmap);
 void mnt_idmap_put(struct mnt_idmap *idmap);
 struct stashed_operations {
+	struct dentry *(*stash_dentry)(struct dentry **stashed,
+				       struct dentry *dentry);
 	void (*put_data)(void *data);
 	int (*init_inode)(struct inode *inode, void *data);
 };
 int path_from_stashed(struct dentry **stashed, struct vfsmount *mnt, void *data,
 		      struct path *path);
 void stashed_dentry_prune(struct dentry *dentry);
+struct dentry *stash_dentry(struct dentry **stashed, struct dentry *dentry);
+struct dentry *stashed_dentry_get(struct dentry **stashed);
 /**
  * path_mounted - check whether path is mounted
  * @path: path to check
@@ -338,3 +346,12 @@ static inline bool path_mounted(const struct path *path)
 	return path->mnt->mnt_root == path->dentry;
 }
 void file_f_owner_release(struct file *file);
+bool file_seek_cur_needs_f_lock(struct file *file);
+int statmount_mnt_idmap(struct mnt_idmap *idmap, struct seq_file *seq, bool uid_map);
+struct dentry *find_next_child(struct dentry *parent, struct dentry *prev);
+int anon_inode_getattr(struct mnt_idmap *idmap, const struct path *path,
+		       struct kstat *stat, u32 request_mask,
+		       unsigned int query_flags);
+int anon_inode_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+		       struct iattr *attr);
+void pidfs_get_root(struct path *path);

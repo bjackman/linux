@@ -28,7 +28,7 @@
 const struct file_operations generic_ro_fops = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
-	.mmap		= generic_file_readonly_mmap,
+	.mmap_prepare	= generic_file_readonly_mmap_prepare,
 	.splice_read	= filemap_splice_read,
 };
 
@@ -169,11 +169,16 @@ generic_file_llseek_size(struct file *file, loff_t offset, int whence,
 
 	if (whence == SEEK_CUR) {
 		/*
-		 * f_lock protects against read/modify/write race with
-		 * other SEEK_CURs. Note that parallel writes and reads
-		 * behave like SEEK_SET.
+		 * If the file requires locking via f_pos_lock we know
+		 * that mutual exclusion for SEEK_CUR on the same file
+		 * is guaranteed. If the file isn't locked, we take
+		 * f_lock to protect against f_pos races with other
+		 * SEEK_CURs.
 		 */
-		guard(spinlock)(&file->f_lock);
+		if (file_seek_cur_needs_f_lock(file)) {
+			guard(spinlock)(&file->f_lock);
+			return vfs_setpos(file, file->f_pos + offset, maxsize);
+		}
 		return vfs_setpos(file, file->f_pos + offset, maxsize);
 	}
 
@@ -232,7 +237,7 @@ EXPORT_SYMBOL(generic_llseek_cookie);
  * @offset:	file offset to seek to
  * @whence:	type of seek
  *
- * This is a generic implemenation of ->llseek useable for all normal local
+ * This is a generic implementation of ->llseek useable for all normal local
  * filesystems.  It just updates the file offset to the value specified by
  * @offset and @whence.
  */
@@ -327,7 +332,9 @@ loff_t default_llseek(struct file *file, loff_t offset, int whence)
 	struct inode *inode = file_inode(file);
 	loff_t retval;
 
-	inode_lock(inode);
+	retval = inode_lock_killable(inode);
+	if (retval)
+		return retval;
 	switch (whence) {
 		case SEEK_END:
 			offset += i_size_read(inode);

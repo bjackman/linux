@@ -28,6 +28,7 @@
 
 #define RAS_TABLE_VER_V1           0x00010000
 #define RAS_TABLE_VER_V2_1         0x00021000
+#define RAS_TABLE_VER_V3           0x00030000
 
 struct amdgpu_device;
 
@@ -41,19 +42,6 @@ enum amdgpu_ras_eeprom_err_type {
 	AMDGPU_RAS_EEPROM_ERR_RECOVERABLE,
 	AMDGPU_RAS_EEPROM_ERR_NON_RECOVERABLE,
 	AMDGPU_RAS_EEPROM_ERR_COUNT,
-};
-
-/*
- * one UMC MCA address could map to multiply physical address (PA),
- * such as 1:16, we use eeprom_table_record.address to store MCA
- * address and use eeprom_table_record.retired_page to save PA.
- *
- * AMDGPU_RAS_EEPROM_REC_PA: one record store one PA
- * AMDGPU_RAS_EEPROM_REC_MCA: one record store one MCA address
- */
-enum amdgpu_ras_eeprom_rec_type {
-	AMDGPU_RAS_EEPROM_REC_PA,
-	AMDGPU_RAS_EEPROM_REC_MCA,
 };
 
 struct amdgpu_ras_eeprom_table_header {
@@ -100,6 +88,12 @@ struct amdgpu_ras_eeprom_control {
 	 */
 	u32 ras_num_bad_pages;
 
+	/* Number of records store mca address */
+	u32 ras_num_mca_recs;
+
+	/* Number of records store physical address */
+	u32 ras_num_pa_recs;
+
 	/* First record index to read, 0-based.
 	 * Range is [0, num_recs-1]. This is
 	 * an absolute index, starting right after
@@ -120,7 +114,8 @@ struct amdgpu_ras_eeprom_control {
 	/* Record channel info which occurred bad pages
 	 */
 	u32 bad_channel_bitmap;
-	enum amdgpu_ras_eeprom_rec_type rec_type;
+
+	bool is_eeprom_valid;
 };
 
 /*
@@ -165,6 +160,8 @@ uint32_t amdgpu_ras_eeprom_max_record_count(struct amdgpu_ras_eeprom_control *co
 void amdgpu_ras_debugfs_set_ret_size(struct amdgpu_ras_eeprom_control *control);
 
 int amdgpu_ras_eeprom_check(struct amdgpu_ras_eeprom_control *control);
+
+void amdgpu_ras_eeprom_check_and_recover(struct amdgpu_device *adev);
 
 extern const struct file_operations amdgpu_ras_debugfs_eeprom_size_ops;
 extern const struct file_operations amdgpu_ras_debugfs_eeprom_table_ops;

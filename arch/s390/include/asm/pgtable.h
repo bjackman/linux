@@ -14,6 +14,7 @@
 
 #include <linux/sched.h>
 #include <linux/mm_types.h>
+#include <linux/cpufeature.h>
 #include <linux/page-flags.h>
 #include <linux/radix-tree.h>
 #include <linux/atomic.h>
@@ -583,13 +584,14 @@ static inline int mm_is_protected(struct mm_struct *mm)
 	return 0;
 }
 
-static inline int mm_alloc_pgste(struct mm_struct *mm)
+static inline pgste_t clear_pgste_bit(pgste_t pgste, unsigned long mask)
 {
-#ifdef CONFIG_PGSTE
-	if (unlikely(mm->context.alloc_pgste))
-		return 1;
-#endif
-	return 0;
+	return __pgste(pgste_val(pgste) & ~mask);
+}
+
+static inline pgste_t set_pgste_bit(pgste_t pgste, unsigned long mask)
+{
+	return __pgste(pgste_val(pgste) | mask);
 }
 
 static inline pte_t clear_pte_bit(pte_t pte, pgprot_t prot)
@@ -913,7 +915,7 @@ static inline int pmd_protnone(pmd_t pmd)
 }
 #endif
 
-static inline int pte_swp_exclusive(pte_t pte)
+static inline bool pte_swp_exclusive(pte_t pte)
 {
 	return pte_val(pte) & _PAGE_SWP_EXCLUSIVE;
 }
@@ -960,6 +962,12 @@ static inline pmd_t pmd_clear_soft_dirty(pmd_t pmd)
 {
 	return clear_pmd_bit(pmd, __pgprot(_SEGMENT_ENTRY_SOFT_DIRTY));
 }
+
+#ifdef CONFIG_ARCH_ENABLE_THP_MIGRATION
+#define pmd_swp_soft_dirty(pmd)		pmd_soft_dirty(pmd)
+#define pmd_swp_mksoft_dirty(pmd)	pmd_mksoft_dirty(pmd)
+#define pmd_swp_clear_soft_dirty(pmd)	pmd_clear_soft_dirty(pmd)
+#endif
 
 /*
  * query functions pte_write/pte_dirty/pte_young only work if
@@ -1339,7 +1347,7 @@ static inline void flush_tlb_fix_spurious_fault(struct vm_area_struct *vma,
 	 * PTE does not have _PAGE_PROTECT set, to avoid unnecessary overhead.
 	 * A local RDP can be used to do the flush.
 	 */
-	if (MACHINE_HAS_RDP && !(pte_val(*ptep) & _PAGE_PROTECT))
+	if (cpu_has_rdp() && !(pte_val(*ptep) & _PAGE_PROTECT))
 		__ptep_rdp(address, ptep, 0, 0, 1);
 }
 #define flush_tlb_fix_spurious_fault flush_tlb_fix_spurious_fault
@@ -1354,7 +1362,7 @@ static inline int ptep_set_access_flags(struct vm_area_struct *vma,
 {
 	if (pte_same(*ptep, entry))
 		return 0;
-	if (MACHINE_HAS_RDP && !mm_has_pgste(vma->vm_mm) && pte_allow_rdp(*ptep, entry))
+	if (cpu_has_rdp() && !mm_has_pgste(vma->vm_mm) && pte_allow_rdp(*ptep, entry))
 		ptep_reset_dat_prot(vma->vm_mm, addr, ptep, entry);
 	else
 		ptep_xchg_direct(vma->vm_mm, addr, ptep, entry);
@@ -1402,9 +1410,6 @@ void gmap_pmdp_idte_global(struct mm_struct *mm, unsigned long vmaddr);
 #define pgprot_writecombine	pgprot_writecombine
 pgprot_t pgprot_writecombine(pgprot_t prot);
 
-#define pgprot_writethrough	pgprot_writethrough
-pgprot_t pgprot_writethrough(pgprot_t prot);
-
 #define PFN_PTE_SHIFT		PAGE_SHIFT
 
 /*
@@ -1447,16 +1452,6 @@ static inline pte_t mk_pte_phys(unsigned long physpage, pgprot_t pgprot)
 
 	__pte = __pte(physpage | pgprot_val(pgprot));
 	return pte_mkyoung(__pte);
-}
-
-static inline pte_t mk_pte(struct page *page, pgprot_t pgprot)
-{
-	unsigned long physpage = page_to_phys(page);
-	pte_t __pte = mk_pte_phys(physpage, pgprot);
-
-	if (pte_write(__pte) && PageDirty(page))
-		__pte = pte_mkdirty(__pte);
-	return __pte;
 }
 
 #define pgd_index(address) (((address) >> PGDIR_SHIFT) & (PTRS_PER_PGD-1))
@@ -1880,7 +1875,6 @@ static inline pmd_t pmdp_collapse_flush(struct vm_area_struct *vma,
 #define pmdp_collapse_flush pmdp_collapse_flush
 
 #define pfn_pmd(pfn, pgprot)	mk_pmd_phys(((pfn) << PAGE_SHIFT), (pgprot))
-#define mk_pmd(page, pgprot)	pfn_pmd(page_to_pfn(page), (pgprot))
 
 static inline int pmd_trans_huge(pmd_t pmd)
 {
@@ -1890,7 +1884,7 @@ static inline int pmd_trans_huge(pmd_t pmd)
 #define has_transparent_hugepage has_transparent_hugepage
 static inline int has_transparent_hugepage(void)
 {
-	return MACHINE_HAS_EDAT1 ? 1 : 0;
+	return cpu_has_edat1() ? 1 : 0;
 }
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
@@ -1990,6 +1984,45 @@ static inline unsigned long __swp_offset_rste(swp_entry_t entry)
 }
 
 #define __rste_to_swp_entry(rste)	((swp_entry_t) { rste })
+
+/*
+ * s390 has different layout for PTE and region / segment table entries (RSTE).
+ * This is also true for swap entries, and their swap type and offset encoding.
+ * For hugetlbfs PTE_MARKER support, s390 has internal __swp_type_rste() and
+ * __swp_offset_rste() helpers to correctly handle RSTE swap entries.
+ *
+ * But common swap code does not know about this difference, and only uses
+ * __swp_type(), __swp_offset() and __swp_entry() helpers for conversion between
+ * arch-dependent and arch-independent representation of swp_entry_t for all
+ * pagetable levels. On s390, those helpers only work for PTE swap entries.
+ *
+ * Therefore, implement __pmd_to_swp_entry() to build a fake PTE swap entry
+ * and return the arch-dependent representation of that. Correspondingly,
+ * implement __swp_entry_to_pmd() to convert that into a proper PMD swap
+ * entry again. With this, the arch-dependent swp_entry_t representation will
+ * always look like a PTE swap entry in common code.
+ *
+ * This is somewhat similar to fake PTEs in hugetlbfs code for s390, but only
+ * requires conversion of the swap type and offset, and not all the possible
+ * PTE bits.
+ */
+static inline swp_entry_t __pmd_to_swp_entry(pmd_t pmd)
+{
+	swp_entry_t arch_entry;
+	pte_t pte;
+
+	arch_entry = __rste_to_swp_entry(pmd_val(pmd));
+	pte = mk_swap_pte(__swp_type_rste(arch_entry), __swp_offset_rste(arch_entry));
+	return __pte_to_swp_entry(pte);
+}
+
+static inline pmd_t __swp_entry_to_pmd(swp_entry_t arch_entry)
+{
+	pmd_t pmd;
+
+	pmd = __pmd(mk_swap_rste(__swp_type(arch_entry), __swp_offset(arch_entry)));
+	return pmd;
+}
 
 extern int vmem_add_mapping(unsigned long start, unsigned long size);
 extern void vmem_remove_mapping(unsigned long start, unsigned long size);

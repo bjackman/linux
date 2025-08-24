@@ -243,7 +243,7 @@ static u64 arch_counter_read(struct clocksource *cs)
 	return arch_timer_read_counter();
 }
 
-static u64 arch_counter_read_cc(const struct cyclecounter *cc)
+static u64 arch_counter_read_cc(struct cyclecounter *cc)
 {
 	return arch_timer_read_counter();
 }
@@ -842,7 +842,7 @@ static u64 __arch_timer_check_delta(void)
 		{},
 	};
 
-	if (is_midr_in_range_list(read_cpuid_id(), broken_cval_midrs)) {
+	if (is_midr_in_range_list(broken_cval_midrs)) {
 		pr_warn_once("Broken CNTx_CVAL_EL1, using 31 bit TVAL instead.\n");
 		return CLOCKSOURCE_MASK(31);
 	}

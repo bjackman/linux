@@ -416,10 +416,6 @@
 			Format: { quiet (default) | verbose | debug }
 			Change the amount of debugging information output
 			when initialising the APIC and IO-APIC components.
-			For X86-32, this can also be used to specify an APIC
-			driver name.
-			Format: apic=driver_name
-			Examples: apic=bigsmp
 
 	apic_extnmi=	[APIC,X86,EARLY] External NMI delivery setting
 			Format: { bsp (default) | all | none }
@@ -461,6 +457,9 @@
 
 	arm64.nomops	[ARM64] Unconditionally disable Memory Copy and Memory
 			Set instructions support
+
+	arm64.nompam	[ARM64] Unconditionally disable Memory Partitioning And
+			Monitoring support
 
 	arm64.nomte	[ARM64] Unconditionally disable Memory Tagging Extension
 			support
@@ -633,6 +632,14 @@
 			"all" blacklists all controllers and "named" disables
 			named mounts. Specifying both "all" and "named" disables
 			all v1 hierarchies.
+
+	cgroup_v1_proc=	[KNL] Show also missing controllers in /proc/cgroups
+			Format: { "true" | "false" }
+			/proc/cgroups lists only v1 controllers by default.
+			This compatibility option enables listing also v2
+			controllers (whose v1 code is not compiled!), so that
+			semi-legacy software can check this file to decide
+			about usage of v2 (sic) controllers.
 
 	cgroup_favordynmods= [KNL] Enable or Disable favordynmods.
 			Format: { "true" | "false" }
@@ -987,6 +994,28 @@
 			0: to disable low allocation.
 			It will be ignored when crashkernel=X,high is not used
 			or memory reserved is below 4G.
+	crashkernel=size[KMG],cma
+			[KNL, X86] Reserve additional crash kernel memory from
+			CMA. This reservation is usable by the first system's
+			userspace memory and kernel movable allocations (memory
+			balloon, zswap). Pages allocated from this memory range
+			will not be included in the vmcore so this should not
+			be used if dumping of userspace memory is intended and
+			it has to be expected that some movable kernel pages
+			may be missing from the dump.
+
+			A standard crashkernel reservation, as described above,
+			is still needed to hold the crash kernel and initrd.
+
+			This option increases the risk of a kdump failure: DMA
+			transfers configured by the first kernel may end up
+			corrupting the second kernel's memory.
+
+			This reservation method is intended for systems that
+			can't afford to sacrifice enough memory for standard
+			crashkernel reservation and where less reliable and
+			possibly incomplete kdump is preferable to no kdump at
+			all.
 
 	cryptomgr.notests
 			[KNL] Disable crypto self-tests
@@ -1411,13 +1440,17 @@
 			earlyprintk=serial[,0x...[,baudrate]]
 			earlyprintk=ttySn[,baudrate]
 			earlyprintk=dbgp[debugController#]
-			earlyprintk=pciserial[,force],bus:device.function[,baudrate]
+			earlyprintk=mmio32,membase[,{nocfg|baudrate}]
+			earlyprintk=pciserial[,force],bus:device.function[,{nocfg|baudrate}]
 			earlyprintk=xdbc[xhciController#]
 			earlyprintk=bios
 
 			earlyprintk is useful when the kernel crashes before
 			the normal console is initialized. It is not enabled by
 			default because it has some cosmetic problems.
+
+			Use "nocfg" to skip UART configuration, assume
+			BIOS/firmware has configured UART correctly.
 
 			Append ",keep" to not disable it when the real console
 			takes over.
@@ -1785,13 +1818,36 @@
 			allocation boundaries as a proactive defense
 			against bounds-checking flaws in the kernel's
 			copy_to_user()/copy_from_user() interface.
-		on	Perform hardened usercopy checks (default).
+			The default is determined by
+			CONFIG_HARDENED_USERCOPY_DEFAULT_ON.
+		on	Perform hardened usercopy checks.
 		off	Disable hardened usercopy checks.
 
 	hardlockup_all_cpu_backtrace=
 			[KNL] Should the hard-lockup detector generate
 			backtraces on all cpus.
 			Format: 0 | 1
+
+	hash_pointers=
+			[KNL,EARLY]
+			By default, when pointers are printed to the console
+			or buffers via the %p format string, that pointer is
+			"hashed", i.e. obscured by hashing the pointer value.
+			This is a security feature that hides actual kernel
+			addresses from unprivileged users, but it also makes
+			debugging the kernel more difficult since unequal
+			pointers can no longer be compared. The choices are:
+			Format: { auto | always | never }
+			Default: auto
+
+			auto   - Hash pointers unless slab_debug is enabled.
+			always - Always hash pointers (even if slab_debug is
+				 enabled).
+			never  - Never hash pointers. This option should only
+				 be specified when debugging the kernel. Do
+				 not use on production kernels. The boot
+				 param "no_hash_pointers" is an alias for
+				 this mode.
 
 	hashdist=	[KNL,NUMA] Large hashes allocated during boot
 			are distributed across NUMA nodes.  Defaults on
@@ -1825,6 +1881,13 @@
 
 				lz4: Select LZ4 compression algorithm to
 				compress/decompress hibernation image.
+
+	hibernate.pm_test_delay=
+			[HIBERNATION]
+			Sets the number of seconds to remain in a hibernation test
+			mode before resuming the system (see
+			/sys/power/pm_test). Only available when CONFIG_PM_DEBUG
+			is set. Default value is 5.
 
 	highmem=nn[KMG]	[KNL,BOOT,EARLY] forces the highmem zone to have an exact
 			size of <nn>. This works even on boxes that have no
@@ -1948,6 +2011,12 @@
 			Disables the paravirt spinlock optimizations
 			which allow the hypervisor to 'idle' the guest
 			on lock contention.
+
+	hw_protection=	[HW]
+			Format: reboot | shutdown
+
+			Hardware protection action taken on critical events like
+			overtemperature or imminent voltage loss.
 
 	i2c_bus=	[HW]	Override the default board specific I2C bus speed
 				or register an additional I2C bus that is not
@@ -2194,6 +2263,28 @@
 			different crypto accelerators. This option can be used
 			to achieve best performance for particular HW.
 
+	ima=		[IMA] Enable or disable IMA
+			Format: { "off" | "on" }
+			Default: "on"
+			Note that disabling IMA is limited to kdump kernel.
+
+	indirect_target_selection= [X86,Intel] Mitigation control for Indirect
+			Target Selection(ITS) bug in Intel CPUs. Updated
+			microcode is also required for a fix in IBPB.
+
+			on:     Enable mitigation (default).
+			off:    Disable mitigation.
+			force:	Force the ITS bug and deploy default
+				mitigation.
+			vmexit: Only deploy mitigation if CPU is affected by
+				guest/host isolation part of ITS.
+			stuff:	Deploy RSB-fill mitigation when retpoline is
+				also deployed. Otherwise, deploy the default
+				mitigation.
+
+			For details see:
+			Documentation/admin-guide/hw-vuln/indirect-target-selection.rst
+
 	init=		[KNL]
 			Format: <full_path>
 			Run specified binary instead of /sbin/init as init
@@ -2332,6 +2423,9 @@
 			per_cpu_perf_limits
 			  Allow per-logical-CPU P-State performance control limits using
 			  cpufreq sysfs interface
+			no_cas
+			  Do not enable capacity-aware scheduling (CAS) on
+			  hybrid systems
 
 	intremap=	[X86-64,Intel-IOMMU,EARLY]
 			on	enable Interrupt Remapping (default)
@@ -2499,6 +2593,13 @@
 			Enables support for pseudo-NMIs in the kernel. This
 			requires the kernel to be built with
 			CONFIG_ARM64_PSEUDO_NMI.
+
+	irqchip.riscv_imsic_noipi
+			[RISC-V,EARLY]
+			Force the kernel to not use IMSIC software injected MSIs
+			as IPIs. Intended for system where IMSIC is trap-n-emulated,
+			and thus want to reduce MMIO traps when triggering IPIs
+			to multiple harts.
 
 	irqfixup	[HW]
 			When an interrupt is not handled search all handlers
@@ -2713,6 +2814,31 @@
 
 	kgdbwait	[KGDB,EARLY] Stop kernel execution and enter the
 			kernel debugger at the earliest opportunity.
+
+	kho=		[KEXEC,EARLY]
+			Format: { "0" | "1" | "off" | "on" | "y" | "n" }
+			Enables or disables Kexec HandOver.
+			"0" | "off" | "n" - kexec handover is disabled
+			"1" | "on" | "y" - kexec handover is enabled
+
+	kho_scratch=	[KEXEC,EARLY]
+			Format: ll[KMG],mm[KMG],nn[KMG] | nn%
+			Defines the size of the KHO scratch region. The KHO
+			scratch regions are physically contiguous memory
+			ranges that can only be used for non-kernel
+			allocations. That way, even when memory is heavily
+			fragmented with handed over memory, the kexeced
+			kernel will always have enough contiguous ranges to
+			bootstrap itself.
+
+			It is possible to specify the exact amount of
+			memory in the form of "ll[KMG],mm[KMG],nn[KMG]"
+			where the first parameter defines the size of a low
+			memory scratch area, the second parameter defines
+			the size of a global scratch area and the third
+			parameter defines the size of additional per-node
+			scratch areas.  The form "nn%" defines scale factor
+			(in percents) of memory that was used during boot.
 
 	kmac=		[MIPS] Korina ethernet MAC address.
 			Configure the RouterBoard 532 series on-chip
@@ -3131,6 +3257,8 @@
 
 			* max_sec_lba48: Set or clear transfer size limit to
 			  65535 sectors.
+
+			* external: Mark port as external (hotplug-capable).
 
 			* [no]lpm: Enable or disable link power management.
 
@@ -3680,6 +3808,7 @@
 				expose users to several CPU vulnerabilities.
 				Equivalent to: if nokaslr then kpti=0 [ARM64]
 					       gather_data_sampling=off [X86]
+					       indirect_target_selection=off [X86]
 					       kvm.nx_huge_pages=off [X86]
 					       l1tf=off [X86]
 					       mds=off [X86]
@@ -3723,6 +3852,10 @@
 					       tsx_async_abort=full,nosmt [X86]
 					       mmio_stale_data=full,nosmt [X86]
 					       retbleed=auto,nosmt [X86]
+
+			[X86] After one of the above options, additionally
+			supports attack-vector based controls as documented in
+			Documentation/admin-guide/hw-vuln/attack_vector_controls.rst
 
 	mminit_loglevel=
 			[KNL,EARLY] When CONFIG_DEBUG_MEMORY_INIT is set, this
@@ -4104,18 +4237,7 @@
 
 	no_hash_pointers
 			[KNL,EARLY]
-			Force pointers printed to the console or buffers to be
-			unhashed.  By default, when a pointer is printed via %p
-			format string, that pointer is "hashed", i.e. obscured
-			by hashing the pointer value.  This is a security feature
-			that hides actual kernel addresses from unprivileged
-			users, but it also makes debugging the kernel more
-			difficult since unequal pointers can no longer be
-			compared.  However, if this command-line option is
-			specified, then all normal pointers will have their true
-			value printed. This option should only be specified when
-			debugging the kernel.  Please do not use on production
-			kernels.
+			Alias for "hash_pointers=never".
 
 	nohibernate	[HIBERNATION] Disable hibernation and resume.
 
@@ -4249,10 +4371,10 @@
 	nosmp		[SMP,EARLY] Tells an SMP kernel to act as a UP kernel,
 			and disable the IO APIC.  legacy for "maxcpus=0".
 
-	nosmt		[KNL,MIPS,PPC,S390,EARLY] Disable symmetric multithreading (SMT).
+	nosmt		[KNL,MIPS,PPC,EARLY] Disable symmetric multithreading (SMT).
 			Equivalent to smt=1.
 
-			[KNL,X86,PPC] Disable symmetric multithreading (SMT).
+			[KNL,X86,PPC,S390] Disable symmetric multithreading (SMT).
 			nosmt=force: Force disable SMT, cannot be undone
 				     via the sysfs control file.
 
@@ -4467,13 +4589,32 @@
 			bit 2: print timer info
 			bit 3: print locks info if CONFIG_LOCKDEP is on
 			bit 4: print ftrace buffer
-			bit 5: print all printk messages in buffer
+			bit 5: replay all messages on consoles at the end of panic
 			bit 6: print all CPUs backtrace (if available in the arch)
 			bit 7: print only tasks in uninterruptible (blocked) state
 			*Be aware* that this option may print a _lot_ of lines,
 			so there are risks of losing older messages in the log.
 			Use this option carefully, maybe worth to setup a
 			bigger log buffer with "log_buf_len" along with this.
+
+	panic_sys_info= A comma separated list of extra information to be dumped
+                        on panic.
+                        Format: val[,val...]
+                        Where @val can be any of the following:
+
+                        tasks:          print all tasks info
+                        mem:            print system memory info
+			timers:         print timers info
+                        locks:          print locks info if CONFIG_LOCKDEP is on
+                        ftrace:         print ftrace buffer
+                        all_bt:         print all CPUs backtrace (if available in the arch)
+                        blocked_tasks:  print only tasks in uninterruptible (blocked) state
+
+                        This is a human readable alternative to the 'panic_print' option.
+
+	panic_console_replay
+			When panic happens, replay all kernel messages on
+			consoles at the end of panic.
 
 	parkbd.port=	[HW] Parallel port number the keyboard adapter is
 			connected to, default is 0.
@@ -4934,6 +5075,18 @@
 			that number, otherwise (e.g., 'pmu_override=on'), MMCR1
 			remains 0.
 
+	pm_async=	[PM]
+			Format: off
+			This parameter sets the initial value of the
+			/sys/power/pm_async sysfs knob at boot time.
+			If set to "off", disables asynchronous suspend and
+			resume of devices during system-wide power transitions.
+			This can be useful on platforms where device
+			dependencies are not well-defined, or for debugging
+			power management issues. Asynchronous operations are
+			enabled by default.
+
+
 	pm_debug_messages	[SUSPEND,KNL]
 			Enable suspend/resume debug messages during boot up.
 
@@ -5032,6 +5185,14 @@
 			in order to provide more debug information.
 			Format: <bool>
 			default: 0 (auto_verbose is enabled)
+
+	printk.debug_non_panic_cpus=
+			Allows storing messages from non-panic CPUs into
+			the printk log buffer during panic(). They are
+			flushed to consoles by the panic-CPU on
+			a best-effort basis.
+			Format: <bool> (1/Y/y=enable, 0/N/n=disable)
+			Default: disabled
 
 	printk.devkmsg={on,off,ratelimit}
 			Control writing to /dev/kmsg.
@@ -5411,7 +5572,8 @@
 			echo 1 > /sys/module/rcutree/parameters/rcu_normal_wake_from_gp
 			or pass a boot parameter "rcutree.rcu_normal_wake_from_gp=1"
 
-			Default is 0.
+			Default is 1 if num_possible_cpus() <= 16 and it is not explicitly
+			disabled by the boot parameter passing 0.
 
 	rcuscale.gp_async= [KNL]
 			Measure performance of asynchronous
@@ -5633,6 +5795,31 @@
 			are zero, rcutorture acts as if is interpreted
 			they are all non-zero.
 
+	rcutorture.gpwrap_lag= [KNL]
+			Enable grace-period wrap lag testing. Setting
+			to false prevents the gpwrap lag test from
+			running. Default is true.
+
+	rcutorture.gpwrap_lag_gps= [KNL]
+			Set the value for grace-period wrap lag during
+			active lag testing periods. This controls how many
+			grace periods differences we tolerate between
+			rdp and rnp's gp_seq before setting overflow flag.
+			The default is always set to 8.
+
+	rcutorture.gpwrap_lag_cycle_mins= [KNL]
+			Set the total cycle duration for gpwrap lag
+			testing in minutes. This is the total time for
+			one complete cycle of active and inactive
+			testing periods. Default is 30 minutes.
+
+	rcutorture.gpwrap_lag_active_mins= [KNL]
+			Set the duration for which gpwrap lag is active
+			within each cycle, in minutes. During this time,
+			the grace-period wrap lag will be set to the
+			value specified by gpwrap_lag_gps. Default is
+			5 minutes.
+
 	rcutorture.irqreader= [KNL]
 			Run RCU readers from irq handlers, or, more
 			accurately, from a timer handler.  Not all RCU
@@ -5773,6 +5960,11 @@
 
 	rcutorture.test_boost_duration= [KNL]
 			Duration (s) of each individual boost test.
+
+	rcutorture.test_boost_holdoff= [KNL]
+			Holdoff time (s) from start of test to the start
+			of RCU priority-boost testing.	Defaults to zero,
+			that is, no holdoff.
 
 	rcutorture.test_boost_interval= [KNL]
 			Interval (s) between each boost test.
@@ -6098,7 +6290,7 @@
 			is assumed to be I/O ports; otherwise it is memory.
 
 	reserve_mem=	[RAM]
-			Format: nn[KNG]:<align>:<label>
+			Format: nn[KMG]:<align>:<label>
 			Reserve physical memory and label it with a name that
 			other subsystems can use to access it. This is typically
 			used for systems that do not wipe the RAM, and this command
@@ -6224,7 +6416,7 @@
 			port and the regular usb controller gets disabled.
 
 	root=		[KNL] Root filesystem
-			Usually this a a block device specifier of some kind,
+			Usually this is a block device specifier of some kind,
 			see the early_lookup_bdev comment in
 			block/early-lookup.c for details.
 			Alternatively this can be "ram" for the legacy initial
@@ -6250,6 +6442,11 @@
 			[KNL,ARM,CMA] Remoteproc physical memory block.
 			Memory area to be used by remote processor image,
 			managed by CMA.
+
+	rt_group_sched=	[KNL] Enable or disable SCHED_RR/FIFO group scheduling
+			when CONFIG_RT_GROUP_SCHED=y. Defaults to
+			!CONFIG_RT_GROUP_SCHED_DEFAULT_DISABLED.
+			Format: <bool>
 
 	rw		[KNL] Mount root device read-write on boot
 
@@ -6277,6 +6474,11 @@
 
 	sa1100ir	[NET]
 			See drivers/net/irda/sa1100_ir.c.
+
+	sched_proxy_exec= [KNL]
+			Enables or disables "proxy execution" style
+			solution to mutex-based priority inversion.
+			Format: <bool>
 
 	sched_verbose	[KNL,EARLY] Enables verbose scheduler debug messages.
 
@@ -6449,14 +6651,18 @@
 			slab_debug can create guard zones around objects and
 			may poison objects when not in use. Also tracks the
 			last alloc / free. For more information see
-			Documentation/mm/slub.rst.
+			Documentation/admin-guide/mm/slab.rst.
 			(slub_debug legacy name also accepted for now)
+
+			Using this option implies the "no_hash_pointers"
+			option which can be undone by adding the
+			"hash_pointers=always" option.
 
 	slab_max_order= [MM]
 			Determines the maximum allowed order for slabs.
 			A high setting may cause OOMs due to memory
 			fragmentation. For more information see
-			Documentation/mm/slub.rst.
+			Documentation/admin-guide/mm/slab.rst.
 			(slub_max_order legacy name also accepted for now)
 
 	slab_merge	[MM]
@@ -6471,13 +6677,14 @@
 			the number of objects indicated. The higher the number
 			of objects the smaller the overhead of tracking slabs
 			and the less frequently locks need to be acquired.
-			For more information see Documentation/mm/slub.rst.
+			For more information see
+			Documentation/admin-guide/mm/slab.rst.
 			(slub_min_objects legacy name also accepted for now)
 
 	slab_min_order=	[MM]
 			Determines the minimum page order for slabs. Must be
 			lower or equal to slab_max_order. For more information see
-			Documentation/mm/slub.rst.
+			Documentation/admin-guide/mm/slab.rst.
 			(slub_min_order legacy name also accepted for now)
 
 	slab_nomerge	[MM]
@@ -6491,7 +6698,8 @@
 			cache (risks via metadata attacks are mostly
 			unchanged). Debug options disable merging on their
 			own.
-			For more information see Documentation/mm/slub.rst.
+			For more information see
+			Documentation/admin-guide/mm/slab.rst.
 			(slub_nomerge legacy name also accepted for now)
 
 	slab_strict_numa	[MM]
@@ -6598,6 +6806,8 @@
 
 			Selecting 'on' will also enable the mitigation
 			against user space to user space task attacks.
+			Selecting specific mitigation does not force enable
+			user mitigations.
 
 			Selecting 'off' will disable both the kernel and
 			the user space protections.
@@ -6877,6 +7087,11 @@
 			consumed by the stack hash table. By default this is set
 			to false.
 
+	stack_depot_max_pools= [KNL,EARLY]
+			Specify the maximum number of pools to use for storing
+			stack traces. Pools are allocated on-demand up to this
+			limit. Default value is 8191 pools.
+
 	stacktrace	[FTRACE]
 			Enabled the stack tracer on boot up.
 
@@ -7103,6 +7318,14 @@
 			causing a major performance hit, and the space where
 			machines are deployed is by other means guarded.
 
+	tpm_crb_ffa.busy_timeout_ms= [ARM64,TPM]
+			Maximum time in milliseconds to retry sending a message
+			to the TPM service before giving up. This parameter controls
+			how long the system will continue retrying when the TPM
+			service is busy.
+			Format: <unsigned int>
+			Default: 2000 (2 seconds)
+
 	tpm_suspend_pcr=[HW,TPM]
 			Format: integer pcr id
 			Specify that at suspend time, the tpm driver
@@ -7257,6 +7480,8 @@
 			This is just one of many ways that can clear memory. Make sure your system
 			keeps the content of memory across reboots before relying on this option.
 
+			NB: Both the mapped address and size must be page aligned for the architecture.
+
 			See also Documentation/trace/debugging.rst
 
 
@@ -7294,6 +7519,15 @@
 
 			See also "Event triggers" in Documentation/trace/events.rst
 
+
+	traceoff_after_boot
+			[FTRACE] Sometimes tracing is used to debug issues
+			during the boot process. Since the trace buffer has a
+			limited amount of storage, it may be prudent to
+			disable tracing after the boot is finished, otherwise
+			the critical information may be overwritten.  With this
+			option, the main tracing buffer will be turned off at
+			the end of the boot process.
 
 	traceoff_on_warning
 			[FTRACE] enable this option to disable tracing when a
@@ -7365,6 +7599,19 @@
 			blob key is all zeros. This is helpful for situations where
 			having this key zero'ed is acceptable. E.g. in testing
 			scenarios.
+
+	tsa=		[X86] Control mitigation for Transient Scheduler
+			Attacks on AMD CPUs. Search the following in your
+			favourite search engine for more details:
+
+			"Technical guidance for mitigating transient scheduler
+			attacks".
+
+			off		- disable the mitigation
+			on		- enable the mitigation (default)
+			user		- mitigate only user/kernel transitions
+			vm		- mitigate only guest/host transitions
+
 
 	tsc=		Disable clocksource stability checks for TSC.
 			Format: <string>
@@ -7492,6 +7739,22 @@
 			anything.  Set this parameter to avoid log spamming.
 			Note that genuine overcurrent events won't be
 			reported either.
+
+	unaligned_scalar_speed=
+			[RISCV]
+			Format: {slow | fast | unsupported}
+			Allow skipping scalar unaligned access speed tests. This
+			is useful for testing alternative code paths and to skip
+			the tests in environments where they run too slowly. All
+			CPUs must have the same scalar unaligned access speed.
+
+	unaligned_vector_speed=
+			[RISCV]
+			Format: {slow | fast | unsupported}
+			Allow skipping vector unaligned access speed tests. This
+			is useful for testing alternative code paths and to skip
+			the tests in environments where they run too slowly. All
+			CPUs must have the same vector unaligned access speed.
 
 	unknown_nmi_panic
 			[X86] Cause panic on unknown NMI.
@@ -7687,13 +7950,6 @@
 				 8 - SIGSEGV faults
 				16 - SIGBUS faults
 			Example: user_debug=31
-
-	userpte=
-			[X86,EARLY] Flags controlling user PTE allocations.
-
-				nohigh = do not allocate PTE pages in
-					HIGHMEM regardless of setting
-					of CONFIG_HIGHPTE.
 
 	vdso=		[X86,SH,SPARC]
 			On X86_32, this is an alias for vdso32=.  Otherwise:

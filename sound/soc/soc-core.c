@@ -32,6 +32,7 @@
 #include <linux/of_graph.h>
 #include <linux/dmi.h>
 #include <linux/acpi.h>
+#include <linux/string_choices.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -111,7 +112,7 @@ static umode_t soc_dev_attr_is_visible(struct kobject *kobj,
 }
 
 static const struct attribute_group soc_dapm_dev_group = {
-	.attrs = soc_dapm_dev_attrs,
+	.attrs = snd_soc_dapm_dev_attrs,
 	.is_visible = soc_dev_attr_is_visible,
 };
 
@@ -430,7 +431,7 @@ void snd_soc_close_delayed_work(struct snd_soc_pcm_runtime *rtd)
 		codec_dai->driver->playback.stream_name,
 		snd_soc_dai_stream_active(codec_dai, playback) ?
 		"active" : "inactive",
-		rtd->pop_wait ? "yes" : "no");
+		str_yes_no(rtd->pop_wait));
 
 	/* are we waiting on this codec DAI stream */
 	if (rtd->pop_wait == 1) {
@@ -680,7 +681,7 @@ int snd_soc_suspend(struct device *dev)
 	soc_dapm_suspend_resume(card, SND_SOC_DAPM_STREAM_SUSPEND);
 
 	/* Recheck all endpoints too, their state is affected by suspend */
-	dapm_mark_endpoints_dirty(card);
+	snd_soc_dapm_mark_endpoints_dirty(card);
 	snd_soc_dapm_sync(&card->dapm);
 
 	/* suspend all COMPONENTs */
@@ -777,7 +778,7 @@ static void soc_resume_deferred(struct work_struct *work)
 	dev_dbg(card->dev, "ASoC: resume work completed\n");
 
 	/* Recheck all endpoints too, their state is affected by suspend */
-	dapm_mark_endpoints_dirty(card);
+	snd_soc_dapm_mark_endpoints_dirty(card);
 	snd_soc_dapm_sync(&card->dapm);
 
 	/* userspace can access us now we are back as we were before */
@@ -1138,6 +1139,9 @@ sanity_check:
 void snd_soc_remove_pcm_runtime(struct snd_soc_card *card,
 				struct snd_soc_pcm_runtime *rtd)
 {
+	if (!rtd)
+		return;
+
 	lockdep_assert_held(&client_mutex);
 
 	/*
@@ -1887,7 +1891,6 @@ static void append_dmi_string(struct snd_soc_card *card, const char *str)
 /**
  * snd_soc_set_dmi_name() - Register DMI names to card
  * @card: The card to register DMI names
- * @flavour: The flavour "differentiator" for the card amongst its peers.
  *
  * An Intel machine driver may be used by many different devices but are
  * difficult for userspace to differentiate, since machine drivers usually
@@ -1915,7 +1918,7 @@ static void append_dmi_string(struct snd_soc_card *card, const char *str)
  *
  * Returns 0 on success, otherwise a negative error code.
  */
-int snd_soc_set_dmi_name(struct snd_soc_card *card, const char *flavour)
+static int snd_soc_set_dmi_name(struct snd_soc_card *card)
 {
 	const char *vendor, *product, *board;
 
@@ -1959,16 +1962,16 @@ int snd_soc_set_dmi_name(struct snd_soc_card *card, const char *flavour)
 		return 0;
 	}
 
-	/* Add flavour to dmi long name */
-	if (flavour)
-		append_dmi_string(card, flavour);
-
 	/* set the card long name */
 	card->long_name = card->dmi_longname;
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(snd_soc_set_dmi_name);
+#else
+static inline int snd_soc_set_dmi_name(struct snd_soc_card *card)
+{
+	return 0;
+}
 #endif /* CONFIG_DMI */
 
 static void soc_check_tplg_fes(struct snd_soc_card *card)
@@ -2134,18 +2137,13 @@ static void soc_cleanup_card_resources(struct snd_soc_card *card)
 	}
 }
 
-static void snd_soc_unbind_card(struct snd_soc_card *card, bool unregister)
+static void snd_soc_unbind_card(struct snd_soc_card *card)
 {
 	if (snd_soc_card_is_instantiated(card)) {
 		card->instantiated = false;
 		snd_soc_flush_all_delayed_work(card);
 
 		soc_cleanup_card_resources(card);
-		if (!unregister)
-			list_add(&card->list, &unbind_card_list);
-	} else {
-		if (unregister)
-			list_del(&card->list);
 	}
 }
 
@@ -2155,9 +2153,7 @@ static int snd_soc_bind_card(struct snd_soc_card *card)
 	struct snd_soc_component *component;
 	int ret;
 
-	mutex_lock(&client_mutex);
 	snd_soc_card_mutex_lock_root(card);
-
 	snd_soc_fill_dummy_dai(card);
 
 	snd_soc_dapm_init(&card->dapm, card, NULL);
@@ -2256,7 +2252,7 @@ static int snd_soc_bind_card(struct snd_soc_card *card)
 		goto probe_end;
 
 	/* try to set some sane longname if DMI is available */
-	snd_soc_set_dmi_name(card, NULL);
+	snd_soc_set_dmi_name(card);
 
 	soc_setup_card_name(card, card->snd_card->shortname,
 			    card->name, NULL);
@@ -2293,7 +2289,7 @@ static int snd_soc_bind_card(struct snd_soc_card *card)
 	}
 
 	card->instantiated = 1;
-	dapm_mark_endpoints_dirty(card);
+	snd_soc_dapm_mark_endpoints_dirty(card);
 	snd_soc_dapm_sync(&card->dapm);
 
 	/* deactivate pins to sleep state */
@@ -2304,9 +2300,49 @@ static int snd_soc_bind_card(struct snd_soc_card *card)
 probe_end:
 	if (ret < 0)
 		soc_cleanup_card_resources(card);
-
 	snd_soc_card_mutex_unlock(card);
-	mutex_unlock(&client_mutex);
+
+	return ret;
+}
+
+static void devm_card_bind_release(struct device *dev, void *res)
+{
+	snd_soc_unregister_card(*(struct snd_soc_card **)res);
+}
+
+static int devm_snd_soc_bind_card(struct device *dev, struct snd_soc_card *card)
+{
+	struct snd_soc_card **ptr;
+	int ret;
+
+	ptr = devres_alloc(devm_card_bind_release, sizeof(*ptr), GFP_KERNEL);
+	if (!ptr)
+		return -ENOMEM;
+
+	ret = snd_soc_bind_card(card);
+	if (ret == 0 || ret == -EPROBE_DEFER) {
+		*ptr = card;
+		devres_add(dev, ptr);
+	} else {
+		devres_free(ptr);
+	}
+
+	return ret;
+}
+
+static int snd_soc_rebind_card(struct snd_soc_card *card)
+{
+	int ret;
+
+	if (card->devres_dev) {
+		devres_destroy(card->devres_dev, devm_card_bind_release, NULL, NULL);
+		ret = devm_snd_soc_bind_card(card->devres_dev, card);
+	} else {
+		ret = snd_soc_bind_card(card);
+	}
+
+	if (ret != -EPROBE_DEFER)
+		list_del_init(&card->list);
 
 	return ret;
 }
@@ -2506,6 +2542,8 @@ EXPORT_SYMBOL_GPL(snd_soc_add_dai_controls);
  */
 int snd_soc_register_card(struct snd_soc_card *card)
 {
+	int ret;
+
 	if (!card->name || !card->dev)
 		return -EINVAL;
 
@@ -2526,7 +2564,21 @@ int snd_soc_register_card(struct snd_soc_card *card)
 	mutex_init(&card->dapm_mutex);
 	mutex_init(&card->pcm_mutex);
 
-	return snd_soc_bind_card(card);
+	mutex_lock(&client_mutex);
+
+	if (card->devres_dev) {
+		ret = devm_snd_soc_bind_card(card->devres_dev, card);
+		if (ret == -EPROBE_DEFER) {
+			list_add(&card->list, &unbind_card_list);
+			ret = 0;
+		}
+	} else {
+		ret = snd_soc_bind_card(card);
+	}
+
+	mutex_unlock(&client_mutex);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_soc_register_card);
 
@@ -2539,7 +2591,8 @@ EXPORT_SYMBOL_GPL(snd_soc_register_card);
 void snd_soc_unregister_card(struct snd_soc_card *card)
 {
 	mutex_lock(&client_mutex);
-	snd_soc_unbind_card(card, true);
+	snd_soc_unbind_card(card);
+	list_del(&card->list);
 	mutex_unlock(&client_mutex);
 	dev_dbg(card->dev, "ASoC: Unregistered card '%s'\n", card->name);
 }
@@ -2554,6 +2607,7 @@ static char *fmt_single_name(struct device *dev, int *id)
 	const char *devname = dev_name(dev);
 	char *found, *name;
 	unsigned int id1, id2;
+	int __id;
 
 	if (devname == NULL)
 		return NULL;
@@ -2566,10 +2620,10 @@ static char *fmt_single_name(struct device *dev, int *id)
 	found = strstr(name, dev->driver->name);
 	if (found) {
 		/* get ID */
-		if (sscanf(&found[strlen(dev->driver->name)], ".%d", id) == 1) {
+		if (sscanf(&found[strlen(dev->driver->name)], ".%d", &__id) == 1) {
 
 			/* discard ID from name if ID == -1 */
-			if (*id == -1)
+			if (__id == -1)
 				found[strlen(dev->driver->name)] = '\0';
 		}
 
@@ -2577,15 +2631,18 @@ static char *fmt_single_name(struct device *dev, int *id)
 	} else if (sscanf(name, "%x-%x", &id1, &id2) == 2) {
 
 		/* create unique ID number from I2C addr and bus */
-		*id = ((id1 & 0xffff) << 16) + id2;
+		__id = ((id1 & 0xffff) << 16) + id2;
 
 		devm_kfree(dev, name);
 
 		/* sanitize component name for DAI link creation */
 		name = devm_kasprintf(dev, GFP_KERNEL, "%s.%s", dev->driver->name, devname);
 	} else {
-		*id = 0;
+		__id = 0;
 	}
+
+	if (id)
+		*id = __id;
 
 	return name;
 }
@@ -2753,23 +2810,19 @@ static void convert_endianness_formats(struct snd_soc_pcm_stream *stream)
 			stream->formats |= endianness_format_map[i];
 }
 
-static void snd_soc_try_rebind_card(void)
-{
-	struct snd_soc_card *card, *c;
-
-	list_for_each_entry_safe(card, c, &unbind_card_list, list)
-		if (!snd_soc_bind_card(card))
-			list_del(&card->list);
-}
-
 static void snd_soc_del_component_unlocked(struct snd_soc_component *component)
 {
 	struct snd_soc_card *card = component->card;
+	bool instantiated;
 
 	snd_soc_unregister_dais(component);
 
-	if (card)
-		snd_soc_unbind_card(card, false);
+	if (card) {
+		instantiated = card->instantiated;
+		snd_soc_unbind_card(card);
+		if (instantiated)
+			list_add(&card->list, &unbind_card_list);
+	}
 
 	list_del(&component->list);
 }
@@ -2785,7 +2838,7 @@ int snd_soc_component_initialize(struct snd_soc_component *component,
 	mutex_init(&component->io_mutex);
 
 	if (!component->name) {
-		component->name = fmt_single_name(dev, &component->id);
+		component->name = fmt_single_name(dev, NULL);
 		if (!component->name) {
 			dev_err(dev, "ASoC: Failed to allocate name\n");
 			return -ENOMEM;
@@ -2808,6 +2861,7 @@ int snd_soc_add_component(struct snd_soc_component *component,
 			  struct snd_soc_dai_driver *dai_drv,
 			  int num_dai)
 {
+	struct snd_soc_card *card, *c;
 	int ret;
 	int i;
 
@@ -2838,15 +2892,14 @@ int snd_soc_add_component(struct snd_soc_component *component,
 	/* see for_each_component */
 	list_add(&component->list, &component_list);
 
+	list_for_each_entry_safe(card, c, &unbind_card_list, list)
+		snd_soc_rebind_card(card);
+
 err_cleanup:
 	if (ret < 0)
 		snd_soc_del_component_unlocked(component);
 
 	mutex_unlock(&client_mutex);
-
-	if (ret == 0)
-		snd_soc_try_rebind_card();
-
 	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_soc_add_component);
@@ -2881,34 +2934,14 @@ EXPORT_SYMBOL_GPL(snd_soc_register_component);
 void snd_soc_unregister_component_by_driver(struct device *dev,
 					    const struct snd_soc_component_driver *component_driver)
 {
-	struct snd_soc_component *component;
+	const char *driver_name = NULL;
 
-	if (!component_driver)
-		return;
+	if (component_driver)
+		driver_name = component_driver->name;
 
-	mutex_lock(&client_mutex);
-	component = snd_soc_lookup_component_nolocked(dev, component_driver->name);
-	if (!component)
-		goto out;
-
-	snd_soc_del_component_unlocked(component);
-
-out:
-	mutex_unlock(&client_mutex);
-}
-EXPORT_SYMBOL_GPL(snd_soc_unregister_component_by_driver);
-
-/**
- * snd_soc_unregister_component - Unregister all related component
- * from the ASoC core
- *
- * @dev: The device to unregister
- */
-void snd_soc_unregister_component(struct device *dev)
-{
 	mutex_lock(&client_mutex);
 	while (1) {
-		struct snd_soc_component *component = snd_soc_lookup_component_nolocked(dev, NULL);
+		struct snd_soc_component *component = snd_soc_lookup_component_nolocked(dev, driver_name);
 
 		if (!component)
 			break;
@@ -2917,7 +2950,7 @@ void snd_soc_unregister_component(struct device *dev)
 	}
 	mutex_unlock(&client_mutex);
 }
-EXPORT_SYMBOL_GPL(snd_soc_unregister_component);
+EXPORT_SYMBOL_GPL(snd_soc_unregister_component_by_driver);
 
 /* Retrieve a card's name from device tree */
 int snd_soc_of_parse_card_name(struct snd_soc_card *card,
@@ -3046,7 +3079,7 @@ int snd_soc_of_parse_pin_switches(struct snd_soc_card *card, const char *prop)
 	unsigned int i, nb_controls;
 	int ret;
 
-	if (!of_property_read_bool(dev->of_node, prop))
+	if (!of_property_present(dev->of_node, prop))
 		return 0;
 
 	strings = devm_kcalloc(dev, nb_controls_max,
@@ -3120,23 +3153,17 @@ int snd_soc_of_parse_tdm_slot(struct device_node *np,
 	if (rx_mask)
 		snd_soc_of_get_slot_mask(np, "dai-tdm-slot-rx-mask", rx_mask);
 
-	if (of_property_read_bool(np, "dai-tdm-slot-num")) {
-		ret = of_property_read_u32(np, "dai-tdm-slot-num", &val);
-		if (ret)
-			return ret;
+	ret = of_property_read_u32(np, "dai-tdm-slot-num", &val);
+	if (ret && ret != -EINVAL)
+		return ret;
+	if (!ret && slots)
+		*slots = val;
 
-		if (slots)
-			*slots = val;
-	}
-
-	if (of_property_read_bool(np, "dai-tdm-slot-width")) {
-		ret = of_property_read_u32(np, "dai-tdm-slot-width", &val);
-		if (ret)
-			return ret;
-
-		if (slot_width)
-			*slot_width = val;
-	}
+	ret = of_property_read_u32(np, "dai-tdm-slot-width", &val);
+	if (ret && ret != -EINVAL)
+		return ret;
+	if (!ret && slot_width)
+		*slot_width = val;
 
 	return 0;
 }
@@ -3403,12 +3430,12 @@ unsigned int snd_soc_daifmt_parse_clock_provider_raw(struct device_node *np,
 	 * check "[prefix]frame-master"
 	 */
 	snprintf(prop, sizeof(prop), "%sbitclock-master", prefix);
-	bit = of_property_read_bool(np, prop);
+	bit = of_property_present(np, prop);
 	if (bit && bitclkmaster)
 		*bitclkmaster = of_parse_phandle(np, prop, 0);
 
 	snprintf(prop, sizeof(prop), "%sframe-master", prefix);
-	frame = of_property_read_bool(np, prop);
+	frame = of_property_present(np, prop);
 	if (frame && framemaster)
 		*framemaster = of_parse_phandle(np, prop, 0);
 

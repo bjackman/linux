@@ -919,7 +919,7 @@ static int acp_max98388_hw_params(struct snd_pcm_substream *substream,
 	int ret;
 
 	ret = snd_soc_dai_set_fmt(codec_dai,
-				  SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_I2S |
+				  SND_SOC_DAIFMT_CBC_CFC | SND_SOC_DAIFMT_I2S |
 				  SND_SOC_DAIFMT_NB_NF);
 	if (ret < 0)
 		return ret;
@@ -1772,6 +1772,7 @@ int acp_legacy_dai_links_create(struct snd_soc_card *card)
 			break;
 		case ACP70_PCI_ID:
 		case ACP71_PCI_ID:
+		case ACP72_PCI_ID:
 			links[i].platforms = platform_acp70_component;
 			links[i].num_platforms = ARRAY_SIZE(platform_acp70_component);
 			break;

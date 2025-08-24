@@ -865,7 +865,7 @@ __ftrace_return_to_handler(struct ftrace_regs *fregs, unsigned long frame_pointe
 }
 
 /*
- * After all architecures have selected HAVE_FUNCTION_GRAPH_FREGS, we can
+ * After all architectures have selected HAVE_FUNCTION_GRAPH_FREGS, we can
  * leave only ftrace_return_to_handler(fregs).
  */
 #ifdef CONFIG_HAVE_FUNCTION_GRAPH_FREGS
@@ -1325,6 +1325,10 @@ int register_ftrace_graph(struct fgraph_ops *gops)
 	int ret = 0;
 	int i = -1;
 
+	if (WARN_ONCE(gops->ops.flags & FTRACE_OPS_FL_GRAPH,
+		      "function graph ops registered again"))
+		return -EBUSY;
+
 	guard(mutex)(&ftrace_lock);
 
 	if (!fgraph_stack_cachep) {
@@ -1382,6 +1386,8 @@ int register_ftrace_graph(struct fgraph_ops *gops)
 	/* Always save the function, and reset at unregistering */
 	gops->saved_func = gops->entryfunc;
 
+	gops->ops.flags |= FTRACE_OPS_FL_GRAPH;
+
 	ret = ftrace_startup_subops(&graph_ops, &gops->ops, command);
 	if (!ret)
 		fgraph_array[i] = gops;
@@ -1399,17 +1405,21 @@ void unregister_ftrace_graph(struct fgraph_ops *gops)
 {
 	int command = 0;
 
+	if (WARN_ONCE(!(gops->ops.flags & FTRACE_OPS_FL_GRAPH),
+		      "function graph ops unregistered without registering"))
+		return;
+
 	guard(mutex)(&ftrace_lock);
 
 	if (unlikely(!ftrace_graph_active))
-		return;
+		goto out;
 
 	if (unlikely(gops->idx < 0 || gops->idx >= FGRAPH_ARRAY_SIZE ||
 		     fgraph_array[gops->idx] != gops))
-		return;
+		goto out;
 
 	if (fgraph_lru_release_index(gops->idx) < 0)
-		return;
+		goto out;
 
 	fgraph_array[gops->idx] = &fgraph_stub;
 
@@ -1432,4 +1442,6 @@ void unregister_ftrace_graph(struct fgraph_ops *gops)
 		unregister_trace_sched_switch(ftrace_graph_probe_sched_switch, NULL);
 	}
 	gops->saved_func = NULL;
+ out:
+	gops->ops.flags &= ~FTRACE_OPS_FL_GRAPH;
 }

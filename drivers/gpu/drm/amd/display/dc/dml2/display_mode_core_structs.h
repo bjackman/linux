@@ -38,6 +38,7 @@ enum dml_project_id {
 	dml_project_dcn35 = 3,
 	dml_project_dcn351 = 4,
 	dml_project_dcn401 = 5,
+	dml_project_dcn36 = 6,
 };
 enum dml_prefetch_modes {
 	dml_prefetch_support_uclk_fclk_and_stutter_if_possible = 0,
@@ -1916,6 +1917,7 @@ struct display_mode_lib_st {
 struct dml_mode_support_ex_params_st {
 	struct display_mode_lib_st *mode_lib;
 	const struct dml_display_cfg_st *in_display_cfg;
+	dml_uint_t in_start_state_idx;
 	dml_uint_t out_lowest_state_idx;
 	struct dml_mode_support_info_st *out_evaluation_info;
 };

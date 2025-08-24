@@ -63,6 +63,7 @@ enum tb_tunnel_state {
  * @allocated_down: Allocated downstream bandwidth (only for USB3)
  * @bw_mode: DP bandwidth allocation mode registers can be used to
  *	     determine consumed and allocated bandwidth
+ * @dprx_started: DPRX negotiation was started (tb_dp_dprx_start() was called for it)
  * @dprx_canceled: Was DPRX capabilities read poll canceled
  * @dprx_timeout: If set DPRX capabilities read poll work will timeout after this passes
  * @dprx_work: Worker that is scheduled to poll completion of DPRX capabilities read
@@ -100,6 +101,7 @@ struct tb_tunnel {
 	int allocated_up;
 	int allocated_down;
 	bool bw_mode;
+	bool dprx_started;
 	bool dprx_canceled;
 	ktime_t dprx_timeout;
 	struct delayed_work dprx_work;
@@ -191,6 +193,29 @@ static inline bool tb_tunnel_direction_downstream(const struct tb_tunnel *tunnel
 	return tb_port_path_direction_downstream(tunnel->src_port,
 						 tunnel->dst_port);
 }
+
+/**
+ * enum tb_tunnel_event - Tunnel related events
+ * @TB_TUNNEL_ACTIVATED: A tunnel was activated
+ * @TB_TUNNEL_CHANGED: There is a tunneling change in the domain. Includes
+ *		       full %TUNNEL_DETAILS if the tunnel in question is known
+ *		       (ICM does not provide that information).
+ * @TB_TUNNEL_DEACTIVATED: A tunnel was torn down
+ * @TB_TUNNEL_LOW_BANDWIDTH: Tunnel bandwidth is not optimal
+ * @TB_TUNNEL_NO_BANDWIDTH: There is not enough bandwidth for a tunnel
+ */
+enum tb_tunnel_event {
+	TB_TUNNEL_ACTIVATED,
+	TB_TUNNEL_CHANGED,
+	TB_TUNNEL_DEACTIVATED,
+	TB_TUNNEL_LOW_BANDWIDTH,
+	TB_TUNNEL_NO_BANDWIDTH,
+};
+
+void tb_tunnel_event(struct tb *tb, enum tb_tunnel_event event,
+		     enum tb_tunnel_type type,
+		     const struct tb_port *src_port,
+		     const struct tb_port *dst_port);
 
 const char *tb_tunnel_type_name(const struct tb_tunnel *tunnel);
 

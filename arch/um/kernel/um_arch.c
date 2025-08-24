@@ -12,6 +12,7 @@
 #include <linux/panic_notifier.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
+#include <linux/string_choices.h>
 #include <linux/utsname.h>
 #include <linux/sched.h>
 #include <linux/sched/task.h>
@@ -78,7 +79,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	seq_printf(m, "model name\t: UML\n");
 	seq_printf(m, "mode\t\t: skas\n");
 	seq_printf(m, "host\t\t: %s\n", host_info);
-	seq_printf(m, "fpu\t\t: %s\n", cpu_has(&boot_cpu_data, X86_FEATURE_FPU) ? "yes" : "no");
+	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
 	seq_printf(m, "flags\t\t:");
 	for (i = 0; i < 32*NCAPINTS; i++)
 		if (cpu_has(&boot_cpu_data, i) && (x86_cap_flags[i] != NULL))
@@ -438,25 +439,24 @@ void __init arch_cpu_finalize_init(void)
 	os_check_bugs();
 }
 
-void apply_seal_endbr(s32 *start, s32 *end, struct module *mod)
+void apply_seal_endbr(s32 *start, s32 *end)
 {
 }
 
-void apply_retpolines(s32 *start, s32 *end, struct module *mod)
+void apply_retpolines(s32 *start, s32 *end)
 {
 }
 
-void apply_returns(s32 *start, s32 *end, struct module *mod)
+void apply_returns(s32 *start, s32 *end)
 {
 }
 
 void apply_fineibt(s32 *start_retpoline, s32 *end_retpoline,
-		   s32 *start_cfi, s32 *end_cfi, struct module *mod)
+		   s32 *start_cfi, s32 *end_cfi)
 {
 }
 
-void apply_alternatives(struct alt_instr *start, struct alt_instr *end,
-			struct module *mod)
+void apply_alternatives(struct alt_instr *start, struct alt_instr *end)
 {
 }
 
@@ -477,7 +477,7 @@ void *text_poke_copy(void *addr, const void *opcode, size_t len)
 	return text_poke(addr, opcode, len);
 }
 
-void text_poke_sync(void)
+void smp_text_poke_sync_each_cpu(void)
 {
 }
 

@@ -6,6 +6,7 @@
 #include <linux/pci.h>
 #include <linux/rtnetlink.h>
 #include <linux/types.h>
+#include <net/devlink.h>
 
 #include "fbnic.h"
 #include "fbnic_drvinfo.h"
@@ -283,15 +284,27 @@ static int fbnic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto free_irqs;
 	}
 
-	err = fbnic_fw_enable_mbx(fbd);
+	err = fbnic_fw_request_mbx(fbd);
 	if (err) {
 		dev_err(&pdev->dev,
 			"Firmware mailbox initialization failure\n");
 		goto free_irqs;
 	}
 
+	/* Send the request to enable the FW logging to host. Note if this
+	 * fails we ignore the error and just display a message as it is
+	 * possible the FW is just too old to support the logging and needs
+	 * to be updated.
+	 */
+	err = fbnic_fw_log_init(fbd);
+	if (err)
+		dev_warn(fbd->dev,
+			 "Unable to initialize firmware log buffer: %d\n",
+			 err);
+
 	fbnic_devlink_register(fbd);
 	fbnic_dbg_fbd_init(fbd);
+	spin_lock_init(&fbd->hw_stats_lock);
 
 	/* Capture snapshot of hardware stats so netdev can calculate delta */
 	fbnic_reset_hw_stats(fbd);
@@ -363,7 +376,8 @@ static void fbnic_remove(struct pci_dev *pdev)
 	fbnic_hwmon_unregister(fbd);
 	fbnic_dbg_fbd_exit(fbd);
 	fbnic_devlink_unregister(fbd);
-	fbnic_fw_disable_mbx(fbd);
+	fbnic_fw_log_free(fbd);
+	fbnic_fw_free_mbx(fbd);
 	fbnic_free_irqs(fbd);
 
 	fbnic_devlink_free(fbd);
@@ -387,7 +401,13 @@ static int fbnic_pm_suspend(struct device *dev)
 	rtnl_unlock();
 
 null_uc_addr:
-	fbnic_fw_disable_mbx(fbd);
+	fbnic_fw_log_disable(fbd);
+
+	devl_lock(priv_to_devlink(fbd));
+
+	fbnic_fw_free_mbx(fbd);
+
+	devl_unlock(priv_to_devlink(fbd));
 
 	/* Free the IRQs so they aren't trying to occupy sleeping CPUs */
 	fbnic_free_irqs(fbd);
@@ -419,10 +439,19 @@ static int __fbnic_pm_resume(struct device *dev)
 
 	fbd->mac->init_regs(fbd);
 
+	devl_lock(priv_to_devlink(fbd));
+
 	/* Re-enable mailbox */
-	err = fbnic_fw_enable_mbx(fbd);
+	err = fbnic_fw_request_mbx(fbd);
 	if (err)
 		goto err_free_irqs;
+
+	devl_unlock(priv_to_devlink(fbd));
+
+	/* Only send log history if log buffer is empty to prevent duplicate
+	 * log entries.
+	 */
+	fbnic_fw_log_enable(fbd, list_empty(&fbd->fw_log.entries));
 
 	/* No netdev means there isn't a network interface to bring up */
 	if (fbnic_init_failure(fbd))
@@ -438,15 +467,17 @@ static int __fbnic_pm_resume(struct device *dev)
 	if (netif_running(netdev)) {
 		err = __fbnic_open(fbn);
 		if (err)
-			goto err_disable_mbx;
+			goto err_free_mbx;
 	}
 
 	rtnl_unlock();
 
 	return 0;
-err_disable_mbx:
+err_free_mbx:
+	fbnic_fw_log_disable(fbd);
+
 	rtnl_unlock();
-	fbnic_fw_disable_mbx(fbd);
+	fbnic_fw_free_mbx(fbd);
 err_free_irqs:
 	fbnic_free_irqs(fbd);
 err_invalidate_uc_addr:

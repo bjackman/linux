@@ -24,7 +24,6 @@
  *          Alex Deucher
  */
 
-#include <linux/export.h>
 #include <linux/pci.h>
 
 #include <drm/drm_edid.h>
@@ -223,6 +222,25 @@ void amdgpu_i2c_destroy(struct amdgpu_i2c_chan *i2c)
 	WARN_ON(i2c->has_aux);
 	i2c_del_adapter(&i2c->adapter);
 	kfree(i2c);
+}
+
+void amdgpu_i2c_init(struct amdgpu_device *adev)
+{
+	if (!adev->is_atom_fw) {
+		if (!amdgpu_device_has_dc_support(adev)) {
+			amdgpu_atombios_i2c_init(adev);
+		} else {
+			switch (adev->asic_type) {
+			case CHIP_POLARIS10:
+			case CHIP_POLARIS11:
+			case CHIP_POLARIS12:
+				amdgpu_atombios_oem_i2c_init(adev, 0x97);
+				break;
+			default:
+				break;
+			}
+		}
+	}
 }
 
 /* remove all the buses */

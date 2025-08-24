@@ -17,7 +17,6 @@
 
 #include <drm/drm_drv.h>
 #include <drm/drm_prime.h>
-#include <drm/tegra_drm.h>
 
 #include "drm.h"
 #include "gem.h"
@@ -524,10 +523,10 @@ void tegra_bo_free_object(struct drm_gem_object *gem)
 	if (tegra->domain) {
 		tegra_bo_iommu_unmap(tegra, bo);
 
-		if (gem->import_attach) {
+		if (drm_gem_is_imported(gem)) {
 			dma_buf_unmap_attachment_unlocked(gem->import_attach, bo->sgt,
 							  DMA_TO_DEVICE);
-			dma_buf_detach(gem->import_attach->dmabuf, gem->import_attach);
+			dma_buf_detach(gem->dma_buf, gem->import_attach);
 		}
 	}
 

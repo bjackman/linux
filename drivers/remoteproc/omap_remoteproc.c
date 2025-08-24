@@ -724,6 +724,7 @@ out:
  * @rproc: remote processor to apply the address translation for
  * @da: device address to translate
  * @len: length of the memory buffer
+ * @is_iomem: pointer filled in to indicate if @da is iomapped memory
  *
  * Custom function implementing the rproc .da_to_va ops to provide address
  * translation (device address to kernel virtual address) for internal RAMs
@@ -1210,7 +1211,7 @@ static int omap_rproc_of_get_internal_memories(struct platform_device *pdev,
 		oproc->mem[i].dev_addr = data->mems[i].dev_addr;
 		oproc->mem[i].size = resource_size(res);
 
-		dev_dbg(dev, "memory %8s: bus addr %pa size 0x%x va %pK da 0x%x\n",
+		dev_dbg(dev, "memory %8s: bus addr %pa size 0x%x va %p da 0x%x\n",
 			data->mems[i].name, &oproc->mem[i].bus_addr,
 			oproc->mem[i].size, oproc->mem[i].cpu_addr,
 			oproc->mem[i].dev_addr);

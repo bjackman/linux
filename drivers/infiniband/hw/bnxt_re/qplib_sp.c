@@ -176,6 +176,9 @@ int bnxt_qplib_get_dev_attr(struct bnxt_qplib_rcfw *rcfw)
 	attr->dev_cap_flags = le16_to_cpu(sb->dev_cap_flags);
 	attr->dev_cap_flags2 = le16_to_cpu(sb->dev_cap_ext_flags_2);
 
+	if (_is_max_srq_ext_supported(attr->dev_cap_flags2))
+		attr->max_srq += le16_to_cpu(sb->max_srq_ext);
+
 	bnxt_qplib_query_version(rcfw, attr->fw_ver);
 
 	for (i = 0; i < MAX_TQM_ALLOC_REQ / 4; i++) {
@@ -671,7 +674,7 @@ int bnxt_qplib_reg_mr(struct bnxt_qplib_res *res, struct bnxt_qplib_mrw *mr,
 	req.log2_pbl_pg_size = cpu_to_le16(((ilog2(PAGE_SIZE) <<
 				 CMDQ_REGISTER_MR_LOG2_PBL_PG_SIZE_SFT) &
 				CMDQ_REGISTER_MR_LOG2_PBL_PG_SIZE_MASK));
-	req.access = (mr->access_flags & 0xFFFF);
+	req.access = (mr->access_flags & BNXT_QPLIB_MR_ACCESS_MASK);
 	req.va = cpu_to_le64(mr->va);
 	req.key = cpu_to_le32(mr->lkey);
 	if (_is_alloc_mr_unified(res->dattr->dev_cap_flags))
@@ -843,7 +846,12 @@ int bnxt_qplib_qext_stat(struct bnxt_qplib_rcfw *rcfw, u32 fid,
 
 	req.resp_size = sbuf.size / BNXT_QPLIB_CMDQE_UNITS;
 	req.resp_addr = cpu_to_le64(sbuf.dma_addr);
-	req.function_id = cpu_to_le32(fid);
+	if (bnxt_qplib_is_chip_gen_p7(rcfw->res->cctx) && rcfw->res->is_vf)
+		req.function_id =
+			cpu_to_le32(CMDQ_QUERY_ROCE_STATS_EXT_VF_VALID |
+				    (fid << CMDQ_QUERY_ROCE_STATS_EXT_VF_NUM_SFT));
+	else
+		req.function_id = cpu_to_le32(fid);
 	req.flags = cpu_to_le16(CMDQ_QUERY_ROCE_STATS_EXT_FLAGS_FUNCTION_ID);
 
 	bnxt_qplib_fill_cmdqmsg(&msg, &req, &resp, &sbuf, sizeof(req),

@@ -128,7 +128,6 @@
 #include <linux/blk-cgroup.h>
 #include <linux/fadvise.h>
 #include <linux/sched/mm.h>
-#include <linux/fsnotify.h>
 
 #include "internal.h"
 
@@ -458,7 +457,7 @@ static inline int ra_alloc_folio(struct readahead_control *ractl, pgoff_t index,
 }
 
 void page_cache_ra_order(struct readahead_control *ractl,
-		struct file_ra_state *ra, unsigned int new_order)
+		struct file_ra_state *ra)
 {
 	struct address_space *mapping = ractl->mapping;
 	pgoff_t start = readahead_index(ractl);
@@ -469,23 +468,20 @@ void page_cache_ra_order(struct readahead_control *ractl,
 	unsigned int nofs;
 	int err = 0;
 	gfp_t gfp = readahead_gfp_mask(mapping);
-	unsigned int min_ra_size = max(4, mapping_min_folio_nrpages(mapping));
+	unsigned int new_order = ra->order;
 
-	/*
-	 * Fallback when size < min_nrpages as each folio should be
-	 * at least min_nrpages anyway.
-	 */
-	if (!mapping_large_folio_support(mapping) || ra->size < min_ra_size)
+	if (!mapping_large_folio_support(mapping)) {
+		ra->order = 0;
 		goto fallback;
+	}
 
 	limit = min(limit, index + ra->size - 1);
-
-	if (new_order < mapping_max_folio_order(mapping))
-		new_order += 2;
 
 	new_order = min(mapping_max_folio_order(mapping), new_order);
 	new_order = min_t(unsigned int, new_order, ilog2(ra->size));
 	new_order = max(new_order, min_order);
+
+	ra->order = new_order;
 
 	/* See comment in page_cache_ra_unbounded() */
 	nofs = memalloc_nofs_save();
@@ -559,15 +555,6 @@ void page_cache_sync_ra(struct readahead_control *ractl,
 	pgoff_t prev_index, miss;
 
 	/*
-	 * If we have pre-content watches we need to disable readahead to make
-	 * sure that we don't find 0 filled pages in cache that we never emitted
-	 * events for. Filesystems supporting HSM must make sure to not call
-	 * this function with ractl->file unset for files handled by HSM.
-	 */
-	if (ractl->file && unlikely(FMODE_FSNOTIFY_HSM(ractl->file->f_mode)))
-		return;
-
-	/*
 	 * Even if readahead is disabled, issue this request as readahead
 	 * as we'll need it to satisfy the requested range. The forced
 	 * readahead will do the right thing and limit the read to just the
@@ -627,8 +614,9 @@ void page_cache_sync_ra(struct readahead_control *ractl,
 	ra->size = min(contig_count + req_count, max_pages);
 	ra->async_size = 1;
 readit:
+	ra->order = 0;
 	ractl->_index = ra->start;
-	page_cache_ra_order(ractl, ra, 0);
+	page_cache_ra_order(ractl, ra);
 }
 EXPORT_SYMBOL_GPL(page_cache_sync_ra);
 
@@ -638,15 +626,10 @@ void page_cache_async_ra(struct readahead_control *ractl,
 	unsigned long max_pages;
 	struct file_ra_state *ra = ractl->ra;
 	pgoff_t index = readahead_index(ractl);
-	pgoff_t expected, start;
-	unsigned int order = folio_order(folio);
+	pgoff_t expected, start, end, aligned_end, align;
 
 	/* no readahead */
 	if (!ra->ra_pages)
-		return;
-
-	/* See the comment in page_cache_sync_ra. */
-	if (ractl->file && unlikely(FMODE_FSNOTIFY_HSM(ractl->file->f_mode)))
 		return;
 
 	/*
@@ -666,7 +649,7 @@ void page_cache_async_ra(struct readahead_control *ractl,
 	 * Ramp up sizes, and push forward the readahead window.
 	 */
 	expected = round_down(ra->start + ra->size - ra->async_size,
-			1UL << order);
+			folio_nr_pages(folio));
 	if (index == expected) {
 		ra->start += ra->size;
 		/*
@@ -674,7 +657,6 @@ void page_cache_async_ra(struct readahead_control *ractl,
 		 * the readahead window.
 		 */
 		ra->size = max(ra->size, get_next_ra_size(ra, max_pages));
-		ra->async_size = ra->size;
 		goto readit;
 	}
 
@@ -695,18 +677,30 @@ void page_cache_async_ra(struct readahead_control *ractl,
 	ra->size = start - index;	/* old async_size */
 	ra->size += req_count;
 	ra->size = get_next_ra_size(ra, max_pages);
-	ra->async_size = ra->size;
 readit:
+	ra->order += 2;
+	align = 1UL << min(ra->order, ffs(max_pages) - 1);
+	end = ra->start + ra->size;
+	aligned_end = round_down(end, align);
+	if (aligned_end > ra->start)
+		ra->size -= end - aligned_end;
+	ra->async_size = ra->size;
 	ractl->_index = ra->start;
-	page_cache_ra_order(ractl, ra, order);
+	page_cache_ra_order(ractl, ra);
 }
 EXPORT_SYMBOL_GPL(page_cache_async_ra);
 
 ssize_t ksys_readahead(int fd, loff_t offset, size_t count)
 {
-	CLASS(fd, f)(fd);
+	struct file *file;
+	const struct inode *inode;
 
-	if (fd_empty(f) || !(fd_file(f)->f_mode & FMODE_READ))
+	CLASS(fd, f)(fd);
+	if (fd_empty(f))
+		return -EBADF;
+
+	file = fd_file(f);
+	if (!(file->f_mode & FMODE_READ))
 		return -EBADF;
 
 	/*
@@ -714,9 +708,15 @@ ssize_t ksys_readahead(int fd, loff_t offset, size_t count)
 	 * that can execute readahead. If readahead is not possible
 	 * on this file, then we must return -EINVAL.
 	 */
-	if (!fd_file(f)->f_mapping || !fd_file(f)->f_mapping->a_ops ||
-	    (!S_ISREG(file_inode(fd_file(f))->i_mode) &&
-	    !S_ISBLK(file_inode(fd_file(f))->i_mode)))
+	if (!file->f_mapping)
+		return -EINVAL;
+	if (!file->f_mapping->a_ops)
+		return -EINVAL;
+
+	inode = file_inode(file);
+	if (!S_ISREG(inode->i_mode) && !S_ISBLK(inode->i_mode))
+		return -EINVAL;
+	if (IS_ANON_FILE(inode))
 		return -EINVAL;
 
 	return vfs_fadvise(fd_file(f), offset, count, POSIX_FADV_WILLNEED);

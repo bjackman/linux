@@ -14,11 +14,6 @@
 
 struct dml2_instance;
 
-enum dml2_status {
-	dml2_success = 0,
-	dml2_error_generic = 1
-};
-
 enum dml2_project_id {
 	dml2_project_invalid = 0,
 	dml2_project_dcn4x_stage1 = 1,
@@ -58,7 +53,9 @@ enum dml2_output_type_and_rate__rate {
 	dml2_output_rate_hdmi_rate_6x4 = 9,
 	dml2_output_rate_hdmi_rate_8x4 = 10,
 	dml2_output_rate_hdmi_rate_10x4 = 11,
-	dml2_output_rate_hdmi_rate_12x4 = 12
+	dml2_output_rate_hdmi_rate_12x4 = 12,
+	dml2_output_rate_hdmi_rate_16x4 = 13,
+	dml2_output_rate_hdmi_rate_20x4 = 14
 };
 
 struct dml2_pmo_options {
@@ -245,6 +242,7 @@ struct dml2_per_plane_programming {
 	struct {
 		bool valid;
 		struct dml2_plane_parameters descriptor;
+		struct dml2_mcache_surface_allocation mcache_allocation;
 		struct dml2_dchub_per_pipe_register_set *pipe_regs[DML2_MAX_PLANES];
 	} phantom_plane;
 };
@@ -283,7 +281,10 @@ struct dml2_per_stream_programming {
 	} phantom_stream;
 
 	union dmub_cmd_fams2_config fams2_base_params;
-	union dmub_cmd_fams2_config fams2_sub_params;
+	union {
+		union dmub_cmd_fams2_config fams2_sub_params;
+		union dmub_fams2_stream_static_sub_state_v2 fams2_sub_params_v2;
+	};
 };
 
 //-----------------
@@ -456,6 +457,10 @@ struct dml2_display_cfg_programming {
 			unsigned int meta_row_height_plane0;
 			unsigned int meta_row_height_plane1;
 		} plane_info[DML2_MAX_PLANES];
+
+		struct {
+			unsigned int total_num_dpps_required;
+		} dpp;
 
 		struct {
 			unsigned long long total_surface_size_in_mall_bytes;
@@ -674,9 +679,14 @@ struct dml2_display_cfg_programming {
 		// unlimited # of mcache
 		struct dml2_mcache_surface_allocation non_optimized_mcache_allocation[DML2_MAX_PLANES];
 
+		bool failed_prefetch;
+		bool failed_uclk_pstate;
 		bool failed_mcache_validation;
 		bool failed_dpmm;
 		bool failed_mode_programming;
+		bool failed_mode_programming_dcfclk;
+		bool failed_mode_programming_prefetch;
+		bool failed_mode_programming_flip;
 		bool failed_map_watermarks;
 	} informative;
 };

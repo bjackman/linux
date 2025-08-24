@@ -56,7 +56,7 @@
 #include <asm/cacheflush.h>
 #include <asm/cputable.h>
 #include <asm/sections.h>
-#include <asm/copro.h>
+#include <asm/spu.h>
 #include <asm/udbg.h>
 #include <asm/text-patching.h>
 #include <asm/fadump.h>
@@ -343,7 +343,7 @@ static inline bool hash_supports_debug_pagealloc(void)
 static u8 *linear_map_hash_slots;
 static unsigned long linear_map_hash_count;
 static DEFINE_RAW_SPINLOCK(linear_map_hash_lock);
-static void hash_debug_pagealloc_alloc_slots(void)
+static __init void hash_debug_pagealloc_alloc_slots(void)
 {
 	if (!hash_supports_debug_pagealloc())
 		return;
@@ -409,7 +409,7 @@ static DEFINE_RAW_SPINLOCK(linear_map_kf_hash_lock);
 
 static phys_addr_t kfence_pool;
 
-static inline void hash_kfence_alloc_pool(void)
+static __init void hash_kfence_alloc_pool(void)
 {
 	if (!kfence_early_init_enabled())
 		goto err;
@@ -445,7 +445,7 @@ err:
 	disable_kfence();
 }
 
-static inline void hash_kfence_map_pool(void)
+static __init void hash_kfence_map_pool(void)
 {
 	unsigned long kfence_pool_start, kfence_pool_end;
 	unsigned long prot = pgprot_val(PAGE_KERNEL);
@@ -1358,18 +1358,6 @@ static void __init htab_initialize(void)
 	} else {
 		unsigned long limit = MEMBLOCK_ALLOC_ANYWHERE;
 
-#ifdef CONFIG_PPC_CELL
-		/*
-		 * Cell may require the hash table down low when using the
-		 * Axon IOMMU in order to fit the dynamic region over it, see
-		 * comments in cell/iommu.c
-		 */
-		if (fdt_subnode_offset(initial_boot_params, 0, "axon") > 0) {
-			limit = 0x80000000;
-			pr_info("Hash table forced below 2G for Axon IOMMU\n");
-		}
-#endif /* CONFIG_PPC_CELL */
-
 		table = memblock_phys_alloc_range(htab_size_bytes,
 						  htab_size_bytes,
 						  0, limit);
@@ -1612,7 +1600,9 @@ void demote_segment_4k(struct mm_struct *mm, unsigned long addr)
 	if (get_slice_psize(mm, addr) == MMU_PAGE_4K)
 		return;
 	slice_set_range_psize(mm, addr, 1, MMU_PAGE_4K);
-	copro_flush_all_slbs(mm);
+#ifdef CONFIG_SPU_BASE
+	spu_flush_all_slbs(mm);
+#endif
 	if ((get_paca_psize(addr) != MMU_PAGE_4K) && (current->mm == mm)) {
 
 		copy_mm_to_paca(mm);
@@ -1881,7 +1871,9 @@ int hash_page_mm(struct mm_struct *mm, unsigned long ea,
 			       "to 4kB pages because of "
 			       "non-cacheable mapping\n");
 			psize = mmu_vmalloc_psize = MMU_PAGE_4K;
-			copro_flush_all_slbs(mm);
+#ifdef CONFIG_SPU_BASE
+			spu_flush_all_slbs(mm);
+#endif
 		}
 	}
 

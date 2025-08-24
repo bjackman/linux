@@ -1015,10 +1015,10 @@ static int adc3xxx_gpio_direction_out(struct gpio_chip *chip,
  * so we set the output mode and output value in the same call. Hence
  * .set in practice does the same thing as .direction_out .
  */
-static void adc3xxx_gpio_set(struct gpio_chip *chip, unsigned int offset,
-			     int value)
+static int adc3xxx_gpio_set(struct gpio_chip *chip, unsigned int offset,
+			    int value)
 {
-	(void) adc3xxx_gpio_direction_out(chip, offset, value);
+	return adc3xxx_gpio_direction_out(chip, offset, value);
 }
 
 /* Even though we only support GPIO output for now, some GPIO clients
@@ -1493,8 +1493,7 @@ static void adc3xxx_i2c_remove(struct i2c_client *client)
 {
 	struct adc3xxx *adc3xxx = i2c_get_clientdata(client);
 
-	if (adc3xxx->mclk)
-		clk_disable_unprepare(adc3xxx->mclk);
+	clk_disable_unprepare(adc3xxx->mclk);
 	adc3xxx_free_gpio(adc3xxx);
 	snd_soc_unregister_component(&client->dev);
 }

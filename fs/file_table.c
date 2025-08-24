@@ -52,16 +52,19 @@ struct backing_file {
 	};
 };
 
-static inline struct backing_file *backing_file(struct file *f)
-{
-	return container_of(f, struct backing_file, file);
-}
+#define backing_file(f) container_of(f, struct backing_file, file)
 
-struct path *backing_file_user_path(struct file *f)
+struct path *backing_file_user_path(const struct file *f)
 {
 	return &backing_file(f)->user_path;
 }
 EXPORT_SYMBOL_GPL(backing_file_user_path);
+
+void backing_file_set_user_path(struct file *f, const struct path *path)
+{
+	backing_file(f)->user_path = *path;
+}
+EXPORT_SYMBOL_GPL(backing_file_set_user_path);
 
 static inline void file_free(struct file *f)
 {
@@ -102,7 +105,7 @@ EXPORT_SYMBOL_GPL(get_max_files);
 static int proc_nr_files(const struct ctl_table *table, int write, void *buffer,
 			 size_t *lenp, loff_t *ppos)
 {
-	files_stat.nr_files = get_nr_files();
+	files_stat.nr_files = percpu_counter_sum_positive(&nr_files);
 	return proc_doulongvec_minmax(table, write, buffer, lenp, ppos);
 }
 
@@ -196,7 +199,7 @@ static int init_file(struct file *f, int flags, const struct cred *cred)
 	file_ref_init(&f->f_ref, 1);
 	/*
 	 * Disable permission and pre-content events for all files by default.
-	 * They may be enabled later by file_set_fsnotify_mode_from_watchers().
+	 * They may be enabled later by fsnotify_open_perm_and_set_mode().
 	 */
 	file_set_fsnotify_mode(f, FMODE_NONOTIFY_PERM);
 	return 0;
@@ -221,7 +224,8 @@ struct file *alloc_empty_file(int flags, const struct cred *cred)
 	/*
 	 * Privileged users can go above max_files
 	 */
-	if (get_nr_files() >= files_stat.max_files && !capable(CAP_SYS_ADMIN)) {
+	if (unlikely(get_nr_files() >= files_stat.max_files) &&
+	    !capable(CAP_SYS_ADMIN)) {
 		/*
 		 * percpu_counters are inaccurate.  Do an expensive check before
 		 * we go and fail.
@@ -511,30 +515,36 @@ void flush_delayed_fput(void)
 }
 EXPORT_SYMBOL_GPL(flush_delayed_fput);
 
+static void __fput_deferred(struct file *file)
+{
+	struct task_struct *task = current;
+
+	if (unlikely(!(file->f_mode & (FMODE_BACKING | FMODE_OPENED)))) {
+		file_free(file);
+		return;
+	}
+
+	if (likely(!in_interrupt() && !(task->flags & PF_KTHREAD))) {
+		init_task_work(&file->f_task_work, ____fput);
+		if (!task_work_add(task, &file->f_task_work, TWA_RESUME))
+			return;
+		/*
+		 * After this task has run exit_task_work(),
+		 * task_work_add() will fail.  Fall through to delayed
+		 * fput to avoid leaking *file.
+		 */
+	}
+
+	if (llist_add(&file->f_llist, &delayed_fput_list))
+		schedule_delayed_work(&delayed_fput_work, 1);
+}
+
 void fput(struct file *file)
 {
-	if (file_ref_put(&file->f_ref)) {
-		struct task_struct *task = current;
-
-		if (unlikely(!(file->f_mode & (FMODE_BACKING | FMODE_OPENED)))) {
-			file_free(file);
-			return;
-		}
-		if (likely(!in_interrupt() && !(task->flags & PF_KTHREAD))) {
-			init_task_work(&file->f_task_work, ____fput);
-			if (!task_work_add(task, &file->f_task_work, TWA_RESUME))
-				return;
-			/*
-			 * After this task has run exit_task_work(),
-			 * task_work_add() will fail.  Fall through to delayed
-			 * fput to avoid leaking *file.
-			 */
-		}
-
-		if (llist_add(&file->f_llist, &delayed_fput_list))
-			schedule_delayed_work(&delayed_fput_work, 1);
-	}
+	if (unlikely(file_ref_put(&file->f_ref)))
+		__fput_deferred(file);
 }
+EXPORT_SYMBOL(fput);
 
 /*
  * synchronous analog of fput(); for kernel threads that might be needed
@@ -549,9 +559,31 @@ void __fput_sync(struct file *file)
 	if (file_ref_put(&file->f_ref))
 		__fput(file);
 }
-
-EXPORT_SYMBOL(fput);
 EXPORT_SYMBOL(__fput_sync);
+
+/*
+ * Equivalent to __fput_sync(), but optimized for being called with the last
+ * reference.
+ *
+ * See file_ref_put_close() for details.
+ */
+void fput_close_sync(struct file *file)
+{
+	if (likely(file_ref_put_close(&file->f_ref)))
+		__fput(file);
+}
+
+/*
+ * Equivalent to fput(), but optimized for being called with the last
+ * reference.
+ *
+ * See file_ref_put_close() for details.
+ */
+void fput_close(struct file *file)
+{
+	if (file_ref_put_close(&file->f_ref))
+		__fput_deferred(file);
+}
 
 void __init files_init(void)
 {

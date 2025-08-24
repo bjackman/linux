@@ -26,7 +26,7 @@
 #define STUB_DATA_PAGES 2 /* must be a power of two */
 #define STUB_END (STUB_DATA + STUB_DATA_PAGES * UM_KERN_PAGE_SIZE)
 
-#ifndef __ASSEMBLY__
+#ifndef __ASSEMBLER__
 
 #include <sysdep/ptrace.h>
 
@@ -50,7 +50,7 @@ extern int linux_main(int argc, char **argv, char **envp);
 extern void uml_finishsetup(void);
 
 struct siginfo;
-extern void (*sig_info[])(int, struct siginfo *si, struct uml_pt_regs *);
+extern void (*sig_info[])(int, struct siginfo *si, struct uml_pt_regs *, void *);
 
 #endif
 

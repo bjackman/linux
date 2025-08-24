@@ -1753,6 +1753,42 @@ TEST_F(tls_basic, rekey_tx)
 	EXPECT_EQ(memcmp(buf, test_str, send_len), 0);
 }
 
+TEST_F(tls_basic, disconnect)
+{
+	char const *test_str = "test_message";
+	int send_len = strlen(test_str) + 1;
+	struct tls_crypto_info_keys key;
+	struct sockaddr_in addr;
+	char buf[20];
+	int ret;
+
+	if (self->notls)
+		return;
+
+	tls_crypto_info_init(TLS_1_3_VERSION, TLS_CIPHER_AES_GCM_128,
+			     &key, 0);
+
+	ret = setsockopt(self->fd, SOL_TLS, TLS_TX, &key, key.len);
+	ASSERT_EQ(ret, 0);
+
+	/* Pre-queue the data so that setsockopt parses it but doesn't
+	 * dequeue it from the TCP socket. recvmsg would dequeue.
+	 */
+	EXPECT_EQ(send(self->fd, test_str, send_len, 0), send_len);
+
+	ret = setsockopt(self->cfd, SOL_TLS, TLS_RX, &key, key.len);
+	ASSERT_EQ(ret, 0);
+
+	addr.sin_family = AF_UNSPEC;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	addr.sin_port = 0;
+	ret = connect(self->cfd, &addr, sizeof(addr));
+	EXPECT_EQ(ret, -1);
+	EXPECT_EQ(errno, EOPNOTSUPP);
+
+	EXPECT_EQ(recv(self->cfd, buf, send_len, 0), send_len);
+}
+
 TEST_F(tls, rekey)
 {
 	char const *test_str_1 = "test_message_before_rekey";
@@ -2670,6 +2706,69 @@ TEST(prequeue) {
 
 	close(fd);
 	close(cfd);
+}
+
+TEST(data_steal) {
+	struct tls_crypto_info_keys tls;
+	char buf[20000], buf2[20000];
+	struct sockaddr_in addr;
+	int sfd, cfd, ret, fd;
+	int pid, status;
+	socklen_t len;
+
+	len = sizeof(addr);
+	memrnd(buf, sizeof(buf));
+
+	tls_crypto_info_init(TLS_1_2_VERSION, TLS_CIPHER_AES_GCM_256, &tls, 0);
+
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	addr.sin_port = 0;
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	sfd = socket(AF_INET, SOCK_STREAM, 0);
+
+	ASSERT_EQ(bind(sfd, &addr, sizeof(addr)), 0);
+	ASSERT_EQ(listen(sfd, 10), 0);
+	ASSERT_EQ(getsockname(sfd, &addr, &len), 0);
+	ASSERT_EQ(connect(fd, &addr, sizeof(addr)), 0);
+	ASSERT_GE(cfd = accept(sfd, &addr, &len), 0);
+	close(sfd);
+
+	ret = setsockopt(fd, IPPROTO_TCP, TCP_ULP, "tls", sizeof("tls"));
+	if (ret) {
+		ASSERT_EQ(errno, ENOENT);
+		SKIP(return, "no TLS support");
+	}
+	ASSERT_EQ(setsockopt(cfd, IPPROTO_TCP, TCP_ULP, "tls", sizeof("tls")), 0);
+
+	/* Spawn a child and get it into the read wait path of the underlying
+	 * TCP socket.
+	 */
+	pid = fork();
+	ASSERT_GE(pid, 0);
+	if (!pid) {
+		EXPECT_EQ(recv(cfd, buf, sizeof(buf), MSG_WAITALL),
+			  sizeof(buf));
+		exit(!__test_passed(_metadata));
+	}
+
+	usleep(2000);
+	ASSERT_EQ(setsockopt(fd, SOL_TLS, TLS_TX, &tls, tls.len), 0);
+	ASSERT_EQ(setsockopt(cfd, SOL_TLS, TLS_RX, &tls, tls.len), 0);
+
+	EXPECT_EQ(send(fd, buf, sizeof(buf), 0), sizeof(buf));
+	usleep(2000);
+	EXPECT_EQ(recv(cfd, buf2, sizeof(buf2), MSG_DONTWAIT), -1);
+	/* Don't check errno, the error will be different depending
+	 * on what random bytes TLS interpreted as the record length.
+	 */
+
+	close(fd);
+	close(cfd);
+
+	EXPECT_EQ(wait(&status), pid);
+	EXPECT_EQ(status, 0);
 }
 
 static void __attribute__((constructor)) fips_check(void) {

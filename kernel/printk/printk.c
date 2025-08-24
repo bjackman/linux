@@ -2375,6 +2375,22 @@ void printk_legacy_allow_panic_sync(void)
 	}
 }
 
+bool __read_mostly debug_non_panic_cpus;
+
+#ifdef CONFIG_PRINTK_CALLER
+static int __init debug_non_panic_cpus_setup(char *str)
+{
+	debug_non_panic_cpus = true;
+	pr_info("allow messages from non-panic CPUs in panic()\n");
+
+	return 0;
+}
+early_param("debug_non_panic_cpus", debug_non_panic_cpus_setup);
+module_param(debug_non_panic_cpus, bool, 0644);
+MODULE_PARM_DESC(debug_non_panic_cpus,
+		 "allow messages from non-panic CPUs in panic()");
+#endif
+
 asmlinkage int vprintk_emit(int facility, int level,
 			    const struct dev_printk_info *dev_info,
 			    const char *fmt, va_list args)
@@ -2391,7 +2407,9 @@ asmlinkage int vprintk_emit(int facility, int level,
 	 * non-panic CPUs are generating any messages, they will be
 	 * silently dropped.
 	 */
-	if (other_cpu_in_panic() && !panic_triggering_all_cpu_backtrace)
+	if (other_cpu_in_panic() &&
+	    !debug_non_panic_cpus &&
+	    !panic_triggering_all_cpu_backtrace)
 		return 0;
 
 	printk_get_console_flush_type(&ft);
@@ -2461,7 +2479,6 @@ asmlinkage __visible int _printk(const char *fmt, ...)
 }
 EXPORT_SYMBOL(_printk);
 
-static bool pr_flush(int timeout_ms, bool reset_on_progress);
 static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progress);
 
 #else /* CONFIG_PRINTK */
@@ -2474,7 +2491,6 @@ static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progre
 
 static u64 syslog_seq;
 
-static bool pr_flush(int timeout_ms, bool reset_on_progress) { return true; }
 static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progress) { return true; }
 
 #endif /* CONFIG_PRINTK */
@@ -2733,11 +2749,11 @@ module_param_named(console_no_auto_verbose, printk_console_no_auto_verbose, bool
 MODULE_PARM_DESC(console_no_auto_verbose, "Disable console loglevel raise to highest on oops/panic/etc");
 
 /**
- * suspend_console - suspend the console subsystem
+ * console_suspend_all - suspend the console subsystem
  *
  * This disables printk() while we go into suspend states
  */
-void suspend_console(void)
+void console_suspend_all(void)
 {
 	struct console *con;
 
@@ -2760,7 +2776,7 @@ void suspend_console(void)
 	synchronize_srcu(&console_srcu);
 }
 
-void resume_console(void)
+void console_resume_all(void)
 {
 	struct console_flush_type ft;
 	struct console *con;
@@ -3342,7 +3358,12 @@ void console_unblank(void)
 	 */
 	cookie = console_srcu_read_lock();
 	for_each_console_srcu(c) {
-		if ((console_srcu_read_flags(c) & CON_ENABLED) && c->unblank) {
+		short flags = console_srcu_read_flags(c);
+
+		if (flags & CON_SUSPENDED)
+			continue;
+
+		if ((flags & CON_ENABLED) && c->unblank) {
 			found_unblank = true;
 			break;
 		}
@@ -3379,7 +3400,12 @@ void console_unblank(void)
 
 	cookie = console_srcu_read_lock();
 	for_each_console_srcu(c) {
-		if ((console_srcu_read_flags(c) & CON_ENABLED) && c->unblank)
+		short flags = console_srcu_read_flags(c);
+
+		if (flags & CON_SUSPENDED)
+			continue;
+
+		if ((flags & CON_ENABLED) && c->unblank)
 			c->unblank();
 	}
 	console_srcu_read_unlock(cookie);
@@ -3497,10 +3523,10 @@ struct tty_driver *console_device(int *index)
 
 /*
  * Prevent further output on the passed console device so that (for example)
- * serial drivers can disable console output before suspending a port, and can
+ * serial drivers can suspend console output before suspending a port, and can
  * re-enable output afterwards.
  */
-void console_stop(struct console *console)
+void console_suspend(struct console *console)
 {
 	__pr_flush(console, 1000, true);
 	console_list_lock();
@@ -3515,9 +3541,9 @@ void console_stop(struct console *console)
 	 */
 	synchronize_srcu(&console_srcu);
 }
-EXPORT_SYMBOL(console_stop);
+EXPORT_SYMBOL(console_suspend);
 
-void console_start(struct console *console)
+void console_resume(struct console *console)
 {
 	struct console_flush_type ft;
 	bool is_nbcon;
@@ -3542,13 +3568,13 @@ void console_start(struct console *console)
 
 	__pr_flush(console, 1000, true);
 }
-EXPORT_SYMBOL(console_start);
+EXPORT_SYMBOL(console_resume);
 
 #ifdef CONFIG_PRINTK
 static int unregister_console_locked(struct console *console);
 
 /* True when system boot is far enough to create printer threads. */
-static bool printk_kthreads_ready __ro_after_init;
+bool printk_kthreads_ready __ro_after_init;
 
 static struct task_struct *printk_legacy_kthread;
 
@@ -3687,6 +3713,7 @@ static void printk_kthreads_check_locked(void)
 	if (!printk_kthreads_ready)
 		return;
 
+	/* Start or stop the legacy kthread when needed. */
 	if (have_legacy_console || have_boot_console) {
 		if (!printk_legacy_kthread &&
 		    force_legacy_kthread() &&
@@ -4178,14 +4205,6 @@ static int unregister_console_locked(struct console *console)
 	 */
 	synchronize_srcu(&console_srcu);
 
-	if (console->flags & CON_NBCON)
-		nbcon_free(console);
-
-	console_sysfs_notify();
-
-	if (console->exit)
-		res = console->exit(console);
-
 	/*
 	 * With this console gone, the global flags tracking registered
 	 * console types may have changed. Update them.
@@ -4205,6 +4224,15 @@ static int unregister_console_locked(struct console *console)
 		have_legacy_console = found_legacy_con;
 	if (!found_nbcon_con)
 		have_nbcon_console = found_nbcon_con;
+
+	/* @have_nbcon_console must be updated before calling nbcon_free(). */
+	if (console->flags & CON_NBCON)
+		nbcon_free(console);
+
+	console_sysfs_notify();
+
+	if (console->exit)
+		res = console->exit(console);
 
 	/* Changed console list, may require printer threads to start/stop. */
 	printk_kthreads_check_locked();
@@ -4276,6 +4304,11 @@ void __init console_init(void)
 	int ret;
 	initcall_t call;
 	initcall_entry_t *ce;
+
+#ifdef CONFIG_NULL_TTY_DEFAULT_CONSOLE
+	if (!console_set_on_cmdline)
+		add_preferred_console("ttynull", 0, NULL);
+#endif
 
 	/* Setup the default TTY line discipline. */
 	n_tty_init();
@@ -4466,7 +4499,7 @@ static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progre
  * Context: Process context. May sleep while acquiring console lock.
  * Return: true if all usable printers are caught up.
  */
-static bool pr_flush(int timeout_ms, bool reset_on_progress)
+bool pr_flush(int timeout_ms, bool reset_on_progress)
 {
 	return __pr_flush(NULL, timeout_ms, reset_on_progress);
 }

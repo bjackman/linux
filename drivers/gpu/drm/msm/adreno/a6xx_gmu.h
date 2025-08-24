@@ -62,7 +62,7 @@ struct a6xx_gmu {
 	/* For serializing communication with the GMU: */
 	struct mutex lock;
 
-	struct msm_gem_address_space *aspace;
+	struct drm_gpuvm *vm;
 
 	void __iomem *mmio;
 	void __iomem *rscc;
@@ -93,6 +93,7 @@ struct a6xx_gmu {
 	int nr_gpu_freqs;
 	unsigned long gpu_freqs[GMU_MAX_GX_FREQS];
 	u32 gx_arc_votes[GMU_MAX_GX_FREQS];
+	struct a6xx_hfi_acd_table acd_table;
 
 	int nr_gpu_bws;
 	unsigned long gpu_bw_table[GMU_MAX_GX_FREQS];

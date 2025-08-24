@@ -121,6 +121,8 @@ struct xe_gt {
 		enum xe_gt_type type;
 		/** @info.reference_clock: clock frequency */
 		u32 reference_clock;
+		/** @info.timestamp_base: GT timestamp base */
+		u32 timestamp_base;
 		/**
 		 * @info.engine_mask: mask of engines present on GT. Some of
 		 * them may be reserved in runtime and not available for user.
@@ -139,7 +141,7 @@ struct xe_gt {
 	/** @stats: GT stats */
 	struct {
 		/** @stats.counters: counters for various GT stats */
-		atomic_t counters[__XE_GT_STATS_NUM_IDS];
+		atomic64_t counters[__XE_GT_STATS_NUM_IDS];
 	} stats;
 #endif
 
@@ -375,6 +377,8 @@ struct xe_gt {
 		u16 group_target;
 		/** @steering.instance_target: instance to steer accesses to */
 		u16 instance_target;
+		/** @steering.initialized: Whether this steering range is initialized */
+		bool initialized;
 	} steering[NUM_STEERING_TYPES];
 
 	/**
@@ -413,6 +417,16 @@ struct xe_gt {
 		bool oob_initialized;
 	} wa_active;
 
+	/** @tuning_active: keep track of active tunings */
+	struct {
+		/** @tuning_active.gt: bitmap with active GT tunings */
+		unsigned long *gt;
+		/** @tuning_active.engine: bitmap with active engine tunings */
+		unsigned long *engine;
+		/** @tuning_active.lrc: bitmap with active LRC tunings */
+		unsigned long *lrc;
+	} tuning_active;
+
 	/** @user_engines: engines present in GT and available to userspace */
 	struct {
 		/**
@@ -430,6 +444,9 @@ struct xe_gt {
 
 	/** @oa: oa observation subsystem per gt info */
 	struct xe_oa_gt oa;
+
+	/** @eu_stall: EU stall counters subsystem per gt info */
+	struct xe_eu_stall_gt *eu_stall;
 };
 
 #endif

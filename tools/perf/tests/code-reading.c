@@ -479,19 +479,25 @@ static int process_sample_event(struct machine *machine,
 	struct thread *thread;
 	int ret;
 
-	if (evlist__parse_sample(evlist, event, &sample)) {
+	perf_sample__init(&sample, /*all=*/false);
+	ret = evlist__parse_sample(evlist, event, &sample);
+	if (ret) {
 		pr_debug("evlist__parse_sample failed\n");
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	thread = machine__findnew_thread(machine, sample.pid, sample.tid);
 	if (!thread) {
 		pr_debug("machine__findnew_thread failed\n");
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	ret = read_object_code(sample.ip, READLEN, sample.cpumode, thread, state);
 	thread__put(thread);
+out:
+	perf_sample__exit(&sample);
 	return ret;
 }
 
@@ -645,11 +651,12 @@ static int do_test_code_reading(bool try_kcore)
 	struct dso *dso;
 	const char *events[] = { "cycles", "cycles:u", "cpu-clock", "cpu-clock:u", NULL };
 	int evidx = 0;
+	struct perf_env host_env;
 
 	pid = getpid();
 
-	machine = machine__new_host();
-	machine->env = &perf_env;
+	perf_env__init(&host_env);
+	machine = machine__new_host(&host_env);
 
 	ret = machine__create_kernel_maps(machine);
 	if (ret < 0) {
@@ -743,13 +750,6 @@ static int do_test_code_reading(bool try_kcore)
 				pr_debug("perf_evlist__open() failed!\n%s\n", errbuf);
 			}
 
-			/*
-			 * Both cpus and threads are now owned by evlist
-			 * and will be freed by following perf_evlist__set_maps
-			 * call. Getting reference to keep them alive.
-			 */
-			perf_cpu_map__get(cpus);
-			perf_thread_map__get(threads);
 			perf_evlist__set_maps(&evlist->core, NULL, NULL);
 			evlist__delete(evlist);
 			evlist = NULL;
@@ -792,6 +792,7 @@ out_err:
 	perf_cpu_map__put(cpus);
 	perf_thread_map__put(threads);
 	machine__delete(machine);
+	perf_env__exit(&host_env);
 
 	return err;
 }

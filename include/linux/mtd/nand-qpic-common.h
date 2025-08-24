@@ -101,6 +101,8 @@
 #define	ECC_SW_RESET			BIT(1)
 #define	ECC_MODE			4
 #define	ECC_MODE_MASK			GENMASK(5, 4)
+#define	ECC_MODE_4BIT			0
+#define	ECC_MODE_8BIT			1
 #define	ECC_PARITY_SIZE_BYTES_BCH	8
 #define	ECC_PARITY_SIZE_BYTES_BCH_MASK	GENMASK(12, 8)
 #define	ECC_NUM_DATA_BYTES		16
@@ -108,7 +110,7 @@
 #define	ECC_FORCE_CLK_OPEN		BIT(30)
 
 /* NAND_DEV_CMD1 bits */
-#define	READ_ADDR			0
+#define	READ_ADDR_MASK			GENMASK(7, 0)
 
 /* NAND_DEV_CMD_VLD bits */
 #define	READ_START_VLD			BIT(0)
@@ -119,6 +121,7 @@
 
 /* NAND_EBI2_ECC_BUF_CFG bits */
 #define	NUM_STEPS			0
+#define	NUM_STEPS_MASK			GENMASK(9, 0)
 
 /* NAND_ERASED_CW_DETECT_CFG bits */
 #define	ERASED_CW_ECC_MASK		1
@@ -139,8 +142,11 @@
 
 /* NAND_READ_LOCATION_n bits */
 #define READ_LOCATION_OFFSET		0
+#define READ_LOCATION_OFFSET_MASK	GENMASK(9, 0)
 #define READ_LOCATION_SIZE		16
+#define READ_LOCATION_SIZE_MASK		GENMASK(25, 16)
 #define READ_LOCATION_LAST		31
+#define READ_LOCATION_LAST_MASK		BIT(31)
 
 /* Version Mask */
 #define	NAND_VERSION_MAJOR_MASK		0xf0000000
@@ -195,9 +201,6 @@
  */
 #define dev_cmd_reg_addr(nandc, reg) ((nandc)->props->dev_cmd_reg_start + (reg))
 
-/* Returns the NAND register physical address */
-#define nandc_reg_phys(chip, offset) ((chip)->base_phys + (offset))
-
 /* Returns the dma address for reg read buffer */
 #define reg_buf_dma_addr(chip, vaddr) \
 	((chip)->reg_read_dma + \
@@ -236,6 +239,9 @@
  * @last_data_desc - last DMA desc in data channel (tx/rx).
  * @last_cmd_desc - last DMA desc in command channel.
  * @txn_done - completion for NAND transfer.
+ * @bam_ce_nitems - the number of elements in the @bam_ce array
+ * @cmd_sgl_nitems - the number of elements in the @cmd_sgl array
+ * @data_sgl_nitems - the number of elements in the @data_sgl array
  * @bam_ce_pos - the index in bam_ce which is available for next sgl
  * @bam_ce_start - the index in bam_ce which marks the start position ce
  *		   for current sgl. It will be used for size calculation
@@ -254,6 +260,11 @@ struct bam_transaction {
 	struct dma_async_tx_descriptor *last_data_desc;
 	struct dma_async_tx_descriptor *last_cmd_desc;
 	struct completion txn_done;
+
+	unsigned int bam_ce_nitems;
+	unsigned int cmd_sgl_nitems;
+	unsigned int data_sgl_nitems;
+
 	struct_group(bam_positions,
 		u32 bam_ce_pos;
 		u32 bam_ce_start;
@@ -325,6 +336,10 @@ struct nandc_regs {
 	__le32 read_location_last1;
 	__le32 read_location_last2;
 	__le32 read_location_last3;
+	__le32 spi_cfg;
+	__le32 num_addr_cycle;
+	__le32 busy_wait_cnt;
+	__le32 flash_feature;
 
 	__le32 erased_cw_detect_cfg_clr;
 	__le32 erased_cw_detect_cfg_set;
@@ -339,6 +354,7 @@ struct nandc_regs {
  *
  * @core_clk:			controller clock
  * @aon_clk:			another controller clock
+ * @iomacro_clk:		io macro clock
  *
  * @regs:			a contiguous chunk of memory for DMA register
  *				writes. contains the register values to be
@@ -348,6 +364,7 @@ struct nandc_regs {
  *				initialized via DT match data
  *
  * @controller:			base controller structure
+ * @qspi:			qpic spi structure
  * @host_list:			list containing all the chips attached to the
  *				controller
  *
@@ -392,6 +409,7 @@ struct qcom_nand_controller {
 	const struct qcom_nandc_props *props;
 
 	struct nand_controller *controller;
+	struct qpic_spi_nand *qspi;
 	struct list_head host_list;
 
 	union {
@@ -443,6 +461,7 @@ struct qcom_nand_controller {
 struct qcom_nandc_props {
 	u32 ecc_modes;
 	u32 dev_cmd_reg_start;
+	u32 bam_offset;
 	bool supports_bam;
 	bool nandc_part_of_qpic;
 	bool qpic_version2;

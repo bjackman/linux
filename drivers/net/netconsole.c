@@ -45,12 +45,12 @@ MODULE_DESCRIPTION("Console driver for network interfaces");
 MODULE_LICENSE("GPL");
 
 #define MAX_PARAM_LENGTH		256
-#define MAX_USERDATA_ENTRY_LENGTH	256
-#define MAX_USERDATA_VALUE_LENGTH	200
+#define MAX_EXTRADATA_ENTRY_LEN		256
+#define MAX_EXTRADATA_VALUE_LEN	200
 /* The number 3 comes from userdata entry format characters (' ', '=', '\n') */
-#define MAX_USERDATA_NAME_LENGTH	(MAX_USERDATA_ENTRY_LENGTH - \
-					MAX_USERDATA_VALUE_LENGTH - 3)
-#define MAX_USERDATA_ITEMS		16
+#define MAX_EXTRADATA_NAME_LEN		(MAX_EXTRADATA_ENTRY_LEN - \
+					MAX_EXTRADATA_VALUE_LEN - 3)
+#define MAX_EXTRADATA_ITEMS		16
 #define MAX_PRINT_CHUNK			1000
 
 static char config[MAX_PARAM_LENGTH];
@@ -86,10 +86,10 @@ static DEFINE_SPINLOCK(target_list_lock);
 static DEFINE_MUTEX(target_cleanup_list_lock);
 
 /*
- * Console driver for extended netconsoles.  Registered on the first use to
- * avoid unnecessarily enabling ext message formatting.
+ * Console driver for netconsoles.  Register only consoles that have
+ * an associated target of the same type.
  */
-static struct console netconsole_ext;
+static struct console netconsole_ext, netconsole;
 
 struct netconsole_target_stats  {
 	u64_stats_t xmit_drop_count;
@@ -97,13 +97,35 @@ struct netconsole_target_stats  {
 	struct u64_stats_sync syncp;
 };
 
+enum console_type {
+	CONS_BASIC = BIT(0),
+	CONS_EXTENDED = BIT(1),
+};
+
+/* Features enabled in sysdata. Contrary to userdata, this data is populated by
+ * the kernel. The fields are designed as bitwise flags, allowing multiple
+ * features to be set in sysdata_fields.
+ */
+enum sysdata_feature {
+	/* Populate the CPU that sends the message */
+	SYSDATA_CPU_NR = BIT(0),
+	/* Populate the task name (as in current->comm) in sysdata */
+	SYSDATA_TASKNAME = BIT(1),
+	/* Kernel release/version as part of sysdata */
+	SYSDATA_RELEASE = BIT(2),
+	/* Include a per-target message ID as part of sysdata */
+	SYSDATA_MSGID = BIT(3),
+};
+
 /**
  * struct netconsole_target - Represents a configured netconsole target.
  * @list:	Links this target into the target_list.
  * @group:	Links us into the configfs subsystem hierarchy.
  * @userdata_group:	Links to the userdata configfs hierarchy
- * @userdata_complete:	Cached, formatted string of append
- * @userdata_length:	String length of userdata_complete
+ * @extradata_complete:	Cached, formatted string of append
+ * @userdata_length:	String length of usedata in extradata_complete.
+ * @sysdata_fields:	Sysdata features enabled.
+ * @msgcounter:	Message sent counter.
  * @stats:	Packet send stats for the target. Used for debugging.
  * @enabled:	On / off knob to enable / disable target.
  *		Visible from userspace (read-write).
@@ -123,20 +145,27 @@ struct netconsole_target_stats  {
  *		remote_ip	(read-write)
  *		local_mac	(read-only)
  *		remote_mac	(read-write)
+ * @buf:	The buffer used to send the full msg to the network stack
  */
 struct netconsole_target {
 	struct list_head	list;
 #ifdef	CONFIG_NETCONSOLE_DYNAMIC
 	struct config_group	group;
 	struct config_group	userdata_group;
-	char userdata_complete[MAX_USERDATA_ENTRY_LENGTH * MAX_USERDATA_ITEMS];
+	char extradata_complete[MAX_EXTRADATA_ENTRY_LEN * MAX_EXTRADATA_ITEMS];
 	size_t			userdata_length;
+	/* bit-wise with sysdata_feature bits */
+	u32			sysdata_fields;
+	/* protected by target_list_lock */
+	u32			msgcounter;
 #endif
 	struct netconsole_target_stats stats;
 	bool			enabled;
 	bool			extended;
 	bool			release;
 	struct netpoll		np;
+	/* protected by target_list_lock */
+	char			buf[MAX_PRINT_CHUNK];
 };
 
 #ifdef	CONFIG_NETCONSOLE_DYNAMIC
@@ -252,6 +281,23 @@ static void netconsole_process_cleanups_core(void)
 	}
 	WARN_ON_ONCE(!list_empty(&target_cleanup_list));
 	mutex_unlock(&target_cleanup_list_lock);
+}
+
+static void netconsole_print_banner(struct netpoll *np)
+{
+	np_info(np, "local port %d\n", np->local_port);
+	if (np->ipv6)
+		np_info(np, "local IPv6 address %pI6c\n", &np->local_ip.in6);
+	else
+		np_info(np, "local IPv4 address %pI4\n", &np->local_ip.ip);
+	np_info(np, "interface name '%s'\n", np->dev_name);
+	np_info(np, "local ethernet address '%pM'\n", np->dev_mac);
+	np_info(np, "remote port %d\n", np->remote_port);
+	if (np->ipv6)
+		np_info(np, "remote IPv6 address %pI6c\n", &np->remote_ip.in6);
+	else
+		np_info(np, "remote IPv4 address %pI4\n", &np->remote_ip.ip);
+	np_info(np, "remote ethernet address %pM\n", np->remote_mac);
 }
 
 #ifdef	CONFIG_NETCONSOLE_DYNAMIC
@@ -396,6 +442,86 @@ static ssize_t transmit_errors_show(struct config_item *item, char *buf)
 	return sysfs_emit(buf, "%llu\n", xmit_drop_count + enomem_count);
 }
 
+/* configfs helper to display if cpu_nr sysdata feature is enabled */
+static ssize_t sysdata_cpu_nr_enabled_show(struct config_item *item, char *buf)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool cpu_nr_enabled;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	cpu_nr_enabled = !!(nt->sysdata_fields & SYSDATA_CPU_NR);
+	mutex_unlock(&dynamic_netconsole_mutex);
+
+	return sysfs_emit(buf, "%d\n", cpu_nr_enabled);
+}
+
+/* configfs helper to display if taskname sysdata feature is enabled */
+static ssize_t sysdata_taskname_enabled_show(struct config_item *item,
+					     char *buf)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool taskname_enabled;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	taskname_enabled = !!(nt->sysdata_fields & SYSDATA_TASKNAME);
+	mutex_unlock(&dynamic_netconsole_mutex);
+
+	return sysfs_emit(buf, "%d\n", taskname_enabled);
+}
+
+static ssize_t sysdata_release_enabled_show(struct config_item *item,
+					    char *buf)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool release_enabled;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	release_enabled = !!(nt->sysdata_fields & SYSDATA_TASKNAME);
+	mutex_unlock(&dynamic_netconsole_mutex);
+
+	return sysfs_emit(buf, "%d\n", release_enabled);
+}
+
+/* Iterate in the list of target, and make sure we don't have any console
+ * register without targets of the same type
+ */
+static void unregister_netcons_consoles(void)
+{
+	struct netconsole_target *nt;
+	u32 console_type_needed = 0;
+	unsigned long flags;
+
+	spin_lock_irqsave(&target_list_lock, flags);
+	list_for_each_entry(nt, &target_list, list) {
+		if (nt->extended)
+			console_type_needed |= CONS_EXTENDED;
+		else
+			console_type_needed |= CONS_BASIC;
+	}
+	spin_unlock_irqrestore(&target_list_lock, flags);
+
+	if (!(console_type_needed & CONS_EXTENDED) &&
+	    console_is_registered(&netconsole_ext))
+		unregister_console(&netconsole_ext);
+
+	if (!(console_type_needed & CONS_BASIC) &&
+	    console_is_registered(&netconsole))
+		unregister_console(&netconsole);
+}
+
+static ssize_t sysdata_msgid_enabled_show(struct config_item *item,
+					  char *buf)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool msgid_enabled;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	msgid_enabled = !!(nt->sysdata_fields & SYSDATA_MSGID);
+	mutex_unlock(&dynamic_netconsole_mutex);
+
+	return sysfs_emit(buf, "%d\n", msgid_enabled);
+}
+
 /*
  * This one is special -- targets created through the configfs interface
  * are not enabled (and the corresponding netpoll activated) by default.
@@ -429,14 +555,24 @@ static ssize_t enabled_store(struct config_item *item,
 			goto out_unlock;
 		}
 
-		if (nt->extended && !console_is_registered(&netconsole_ext))
+		if (nt->extended && !console_is_registered(&netconsole_ext)) {
+			netconsole_ext.flags |= CON_ENABLED;
 			register_console(&netconsole_ext);
+		}
+
+		/* User might be enabling the basic format target for the very
+		 * first time, make sure the console is registered.
+		 */
+		if (!nt->extended && !console_is_registered(&netconsole)) {
+			netconsole.flags |= CON_ENABLED;
+			register_console(&netconsole);
+		}
 
 		/*
-		 * Skip netpoll_parse_options() -- all the attributes are
+		 * Skip netconsole_parser_cmdline() -- all the attributes are
 		 * already configured via configfs. Just print them out.
 		 */
-		netpoll_print_options(&nt->np);
+		netconsole_print_banner(&nt->np);
 
 		ret = netpoll_setup(&nt->np);
 		if (ret)
@@ -458,6 +594,10 @@ static ssize_t enabled_store(struct config_item *item,
 		list_move(&nt->list, &target_cleanup_list);
 		spin_unlock_irqrestore(&target_list_lock, flags);
 		mutex_unlock(&target_cleanup_list_lock);
+		/* Unregister consoles, whose the last target of that type got
+		 * disabled.
+		 */
+		unregister_netcons_consoles();
 	}
 
 	ret = strnlen(buf, count);
@@ -659,6 +799,30 @@ out_unlock:
 	return ret;
 }
 
+/* Count number of entries we have in extradata.
+ * This is important because the extradata_complete only supports
+ * MAX_EXTRADATA_ITEMS entries. Before enabling any new {user,sys}data
+ * feature, number of entries needs to checked for available space.
+ */
+static size_t count_extradata_entries(struct netconsole_target *nt)
+{
+	size_t entries;
+
+	/* Userdata entries */
+	entries = list_count_nodes(&nt->userdata_group.cg_children);
+	/* Plus sysdata entries */
+	if (nt->sysdata_fields & SYSDATA_CPU_NR)
+		entries += 1;
+	if (nt->sysdata_fields & SYSDATA_TASKNAME)
+		entries += 1;
+	if (nt->sysdata_fields & SYSDATA_RELEASE)
+		entries += 1;
+	if (nt->sysdata_fields & SYSDATA_MSGID)
+		entries += 1;
+
+	return entries;
+}
+
 static ssize_t remote_mac_store(struct config_item *item, const char *buf,
 		size_t count)
 {
@@ -675,7 +839,7 @@ static ssize_t remote_mac_store(struct config_item *item, const char *buf,
 
 	if (!mac_pton(buf, remote_mac))
 		goto out_unlock;
-	if (buf[3 * ETH_ALEN - 1] && buf[3 * ETH_ALEN - 1] != '\n')
+	if (buf[MAC_ADDR_STR_LEN] && buf[MAC_ADDR_STR_LEN] != '\n')
 		goto out_unlock;
 	memcpy(nt->np.remote_mac, remote_mac, ETH_ALEN);
 
@@ -687,7 +851,7 @@ out_unlock:
 
 struct userdatum {
 	struct config_item item;
-	char value[MAX_USERDATA_VALUE_LENGTH];
+	char value[MAX_EXTRADATA_VALUE_LEN];
 };
 
 static struct userdatum *to_userdatum(struct config_item *item)
@@ -724,13 +888,13 @@ static void update_userdata(struct netconsole_target *nt)
 
 	/* Clear the current string in case the last userdatum was deleted */
 	nt->userdata_length = 0;
-	nt->userdata_complete[0] = 0;
+	nt->extradata_complete[0] = 0;
 
 	list_for_each(entry, &nt->userdata_group.cg_children) {
 		struct userdatum *udm_item;
 		struct config_item *item;
 
-		if (WARN_ON_ONCE(child_count >= MAX_USERDATA_ITEMS))
+		if (WARN_ON_ONCE(child_count >= MAX_EXTRADATA_ITEMS))
 			break;
 		child_count++;
 
@@ -738,19 +902,19 @@ static void update_userdata(struct netconsole_target *nt)
 		udm_item = to_userdatum(item);
 
 		/* Skip userdata with no value set */
-		if (strnlen(udm_item->value, MAX_USERDATA_VALUE_LENGTH) == 0)
+		if (strnlen(udm_item->value, MAX_EXTRADATA_VALUE_LEN) == 0)
 			continue;
 
-		/* This doesn't overflow userdata_complete since it will write
-		 * one entry length (1/MAX_USERDATA_ITEMS long), entry count is
+		/* This doesn't overflow extradata_complete since it will write
+		 * one entry length (1/MAX_EXTRADATA_ITEMS long), entry count is
 		 * checked to not exceed MAX items with child_count above
 		 */
-		complete_idx += scnprintf(&nt->userdata_complete[complete_idx],
-					  MAX_USERDATA_ENTRY_LENGTH, " %s=%s\n",
+		complete_idx += scnprintf(&nt->extradata_complete[complete_idx],
+					  MAX_EXTRADATA_ENTRY_LEN, " %s=%s\n",
 					  item->ci_name, udm_item->value);
 	}
-	nt->userdata_length = strnlen(nt->userdata_complete,
-				      sizeof(nt->userdata_complete));
+	nt->userdata_length = strnlen(nt->extradata_complete,
+				      sizeof(nt->extradata_complete));
 }
 
 static ssize_t userdatum_value_store(struct config_item *item, const char *buf,
@@ -761,7 +925,7 @@ static ssize_t userdatum_value_store(struct config_item *item, const char *buf,
 	struct userdata *ud;
 	ssize_t ret;
 
-	if (count > MAX_USERDATA_VALUE_LENGTH)
+	if (count > MAX_EXTRADATA_VALUE_LEN)
 		return -EMSGSIZE;
 
 	mutex_lock(&dynamic_netconsole_mutex);
@@ -780,7 +944,167 @@ out_unlock:
 	return ret;
 }
 
+/* disable_sysdata_feature - Disable sysdata feature and clean sysdata
+ * @nt: target that is disabling the feature
+ * @feature: feature being disabled
+ */
+static void disable_sysdata_feature(struct netconsole_target *nt,
+				    enum sysdata_feature feature)
+{
+	nt->sysdata_fields &= ~feature;
+	nt->extradata_complete[nt->userdata_length] = 0;
+}
+
+static ssize_t sysdata_msgid_enabled_store(struct config_item *item,
+					   const char *buf, size_t count)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool msgid_enabled, curr;
+	ssize_t ret;
+
+	ret = kstrtobool(buf, &msgid_enabled);
+	if (ret)
+		return ret;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	curr = !!(nt->sysdata_fields & SYSDATA_MSGID);
+	if (msgid_enabled == curr)
+		goto unlock_ok;
+
+	if (msgid_enabled &&
+	    count_extradata_entries(nt) >= MAX_EXTRADATA_ITEMS) {
+		ret = -ENOSPC;
+		goto unlock;
+	}
+
+	if (msgid_enabled)
+		nt->sysdata_fields |= SYSDATA_MSGID;
+	else
+		disable_sysdata_feature(nt, SYSDATA_MSGID);
+
+unlock_ok:
+	ret = strnlen(buf, count);
+unlock:
+	mutex_unlock(&dynamic_netconsole_mutex);
+	return ret;
+}
+
+static ssize_t sysdata_release_enabled_store(struct config_item *item,
+					     const char *buf, size_t count)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool release_enabled, curr;
+	ssize_t ret;
+
+	ret = kstrtobool(buf, &release_enabled);
+	if (ret)
+		return ret;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	curr = !!(nt->sysdata_fields & SYSDATA_RELEASE);
+	if (release_enabled == curr)
+		goto unlock_ok;
+
+	if (release_enabled &&
+	    count_extradata_entries(nt) >= MAX_EXTRADATA_ITEMS) {
+		ret = -ENOSPC;
+		goto unlock;
+	}
+
+	if (release_enabled)
+		nt->sysdata_fields |= SYSDATA_RELEASE;
+	else
+		disable_sysdata_feature(nt, SYSDATA_RELEASE);
+
+unlock_ok:
+	ret = strnlen(buf, count);
+unlock:
+	mutex_unlock(&dynamic_netconsole_mutex);
+	return ret;
+}
+
+static ssize_t sysdata_taskname_enabled_store(struct config_item *item,
+					      const char *buf, size_t count)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool taskname_enabled, curr;
+	ssize_t ret;
+
+	ret = kstrtobool(buf, &taskname_enabled);
+	if (ret)
+		return ret;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	curr = !!(nt->sysdata_fields & SYSDATA_TASKNAME);
+	if (taskname_enabled == curr)
+		goto unlock_ok;
+
+	if (taskname_enabled &&
+	    count_extradata_entries(nt) >= MAX_EXTRADATA_ITEMS) {
+		ret = -ENOSPC;
+		goto unlock;
+	}
+
+	if (taskname_enabled)
+		nt->sysdata_fields |= SYSDATA_TASKNAME;
+	else
+		disable_sysdata_feature(nt, SYSDATA_TASKNAME);
+
+unlock_ok:
+	ret = strnlen(buf, count);
+unlock:
+	mutex_unlock(&dynamic_netconsole_mutex);
+	return ret;
+}
+
+/* configfs helper to sysdata cpu_nr feature */
+static ssize_t sysdata_cpu_nr_enabled_store(struct config_item *item,
+					    const char *buf, size_t count)
+{
+	struct netconsole_target *nt = to_target(item->ci_parent);
+	bool cpu_nr_enabled, curr;
+	ssize_t ret;
+
+	ret = kstrtobool(buf, &cpu_nr_enabled);
+	if (ret)
+		return ret;
+
+	mutex_lock(&dynamic_netconsole_mutex);
+	curr = !!(nt->sysdata_fields & SYSDATA_CPU_NR);
+	if (cpu_nr_enabled == curr)
+		/* no change requested */
+		goto unlock_ok;
+
+	if (cpu_nr_enabled &&
+	    count_extradata_entries(nt) >= MAX_EXTRADATA_ITEMS) {
+		/* user wants the new feature, but there is no space in the
+		 * buffer.
+		 */
+		ret = -ENOSPC;
+		goto unlock;
+	}
+
+	if (cpu_nr_enabled)
+		nt->sysdata_fields |= SYSDATA_CPU_NR;
+	else
+		/* This is special because extradata_complete might have
+		 * remaining data from previous sysdata, and it needs to be
+		 * cleaned.
+		 */
+		disable_sysdata_feature(nt, SYSDATA_CPU_NR);
+
+unlock_ok:
+	ret = strnlen(buf, count);
+unlock:
+	mutex_unlock(&dynamic_netconsole_mutex);
+	return ret;
+}
+
 CONFIGFS_ATTR(userdatum_, value);
+CONFIGFS_ATTR(sysdata_, cpu_nr_enabled);
+CONFIGFS_ATTR(sysdata_, taskname_enabled);
+CONFIGFS_ATTR(sysdata_, release_enabled);
+CONFIGFS_ATTR(sysdata_, msgid_enabled);
 
 static struct configfs_attribute *userdatum_attrs[] = {
 	&userdatum_attr_value,
@@ -808,15 +1132,13 @@ static struct config_item *userdatum_make_item(struct config_group *group,
 	struct netconsole_target *nt;
 	struct userdatum *udm;
 	struct userdata *ud;
-	size_t child_count;
 
-	if (strlen(name) > MAX_USERDATA_NAME_LENGTH)
+	if (strlen(name) > MAX_EXTRADATA_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
 	ud = to_userdata(&group->cg_item);
 	nt = userdata_to_target(ud);
-	child_count = list_count_nodes(&nt->userdata_group.cg_children);
-	if (child_count >= MAX_USERDATA_ITEMS)
+	if (count_extradata_entries(nt) >= MAX_EXTRADATA_ITEMS)
 		return ERR_PTR(-ENOSPC);
 
 	udm = kzalloc(sizeof(*udm), GFP_KERNEL);
@@ -842,6 +1164,10 @@ static void userdatum_drop(struct config_group *group, struct config_item *item)
 }
 
 static struct configfs_attribute *userdata_attrs[] = {
+	&sysdata_attr_cpu_nr_enabled,
+	&sysdata_attr_taskname_enabled,
+	&sysdata_attr_release_enabled,
+	&sysdata_attr_msgid_enabled,
 	NULL,
 };
 
@@ -1017,6 +1343,72 @@ static void populate_configfs_item(struct netconsole_target *nt,
 	init_target_config_group(nt, target_name);
 }
 
+static int sysdata_append_cpu_nr(struct netconsole_target *nt, int offset)
+{
+	/* Append cpu=%d at extradata_complete after userdata str */
+	return scnprintf(&nt->extradata_complete[offset],
+			 MAX_EXTRADATA_ENTRY_LEN, " cpu=%u\n",
+			 raw_smp_processor_id());
+}
+
+static int sysdata_append_taskname(struct netconsole_target *nt, int offset)
+{
+	return scnprintf(&nt->extradata_complete[offset],
+			 MAX_EXTRADATA_ENTRY_LEN, " taskname=%s\n",
+			 current->comm);
+}
+
+static int sysdata_append_release(struct netconsole_target *nt, int offset)
+{
+	return scnprintf(&nt->extradata_complete[offset],
+			 MAX_EXTRADATA_ENTRY_LEN, " release=%s\n",
+			 init_utsname()->release);
+}
+
+static int sysdata_append_msgid(struct netconsole_target *nt, int offset)
+{
+	wrapping_assign_add(nt->msgcounter, 1);
+	return scnprintf(&nt->extradata_complete[offset],
+			 MAX_EXTRADATA_ENTRY_LEN, " msgid=%u\n",
+			 nt->msgcounter);
+}
+
+/*
+ * prepare_extradata - append sysdata at extradata_complete in runtime
+ * @nt: target to send message to
+ */
+static int prepare_extradata(struct netconsole_target *nt)
+{
+	int extradata_len;
+
+	/* userdata was appended when configfs write helper was called
+	 * by update_userdata().
+	 */
+	extradata_len = nt->userdata_length;
+
+	if (!nt->sysdata_fields)
+		goto out;
+
+	if (nt->sysdata_fields & SYSDATA_CPU_NR)
+		extradata_len += sysdata_append_cpu_nr(nt, extradata_len);
+	if (nt->sysdata_fields & SYSDATA_TASKNAME)
+		extradata_len += sysdata_append_taskname(nt, extradata_len);
+	if (nt->sysdata_fields & SYSDATA_RELEASE)
+		extradata_len += sysdata_append_release(nt, extradata_len);
+	if (nt->sysdata_fields & SYSDATA_MSGID)
+		extradata_len += sysdata_append_msgid(nt, extradata_len);
+
+	WARN_ON_ONCE(extradata_len >
+		     MAX_EXTRADATA_ENTRY_LEN * MAX_EXTRADATA_ITEMS);
+
+out:
+	return extradata_len;
+}
+#else /* CONFIG_NETCONSOLE_DYNAMIC not set */
+static int prepare_extradata(struct netconsole_target *nt)
+{
+	return 0;
+}
 #endif	/* CONFIG_NETCONSOLE_DYNAMIC */
 
 /* Handle network interface device notifications */
@@ -1117,29 +1509,28 @@ static void send_msg_no_fragmentation(struct netconsole_target *nt,
 				      int msg_len,
 				      int release_len)
 {
-	static char buf[MAX_PRINT_CHUNK]; /* protected by target_list_lock */
-	const char *userdata = NULL;
+	const char *extradata = NULL;
 	const char *release;
 
 #ifdef CONFIG_NETCONSOLE_DYNAMIC
-	userdata = nt->userdata_complete;
+	extradata = nt->extradata_complete;
 #endif
 
 	if (release_len) {
 		release = init_utsname()->release;
 
-		scnprintf(buf, MAX_PRINT_CHUNK, "%s,%s", release, msg);
+		scnprintf(nt->buf, MAX_PRINT_CHUNK, "%s,%s", release, msg);
 		msg_len += release_len;
 	} else {
-		memcpy(buf, msg, msg_len);
+		memcpy(nt->buf, msg, msg_len);
 	}
 
-	if (userdata)
-		msg_len += scnprintf(&buf[msg_len],
+	if (extradata)
+		msg_len += scnprintf(&nt->buf[msg_len],
 				     MAX_PRINT_CHUNK - msg_len,
-				     "%s", userdata);
+				     "%s", extradata);
 
-	send_udp(nt, buf, msg_len);
+	send_udp(nt, nt->buf, msg_len);
 }
 
 static void append_release(char *buf)
@@ -1150,28 +1541,27 @@ static void append_release(char *buf)
 	scnprintf(buf, MAX_PRINT_CHUNK, "%s,", release);
 }
 
-static void send_fragmented_body(struct netconsole_target *nt, char *buf,
+static void send_fragmented_body(struct netconsole_target *nt,
 				 const char *msgbody, int header_len,
-				 int msgbody_len)
+				 int msgbody_len, int extradata_len)
 {
-	const char *userdata = NULL;
+	int sent_extradata, preceding_bytes;
+	const char *extradata = NULL;
 	int body_len, offset = 0;
-	int userdata_len = 0;
 
 #ifdef CONFIG_NETCONSOLE_DYNAMIC
-	userdata = nt->userdata_complete;
-	userdata_len = nt->userdata_length;
+	extradata = nt->extradata_complete;
 #endif
 
 	/* body_len represents the number of bytes that will be sent. This is
 	 * bigger than MAX_PRINT_CHUNK, thus, it will be split in multiple
 	 * packets
 	 */
-	body_len = msgbody_len + userdata_len;
+	body_len = msgbody_len + extradata_len;
 
 	/* In each iteration of the while loop below, we send a packet
 	 * containing the header and a portion of the body. The body is
-	 * composed of two parts: msgbody and userdata. We keep track of how
+	 * composed of two parts: msgbody and extradata. We keep track of how
 	 * many bytes have been sent so far using the offset variable, which
 	 * ranges from 0 to the total length of the body.
 	 */
@@ -1181,7 +1571,7 @@ static void send_fragmented_body(struct netconsole_target *nt, char *buf,
 		int this_offset = 0;
 		int this_chunk = 0;
 
-		this_header += scnprintf(buf + this_header,
+		this_header += scnprintf(nt->buf + this_header,
 					 MAX_PRINT_CHUNK - this_header,
 					 ",ncfrag=%d/%d;", offset,
 					 body_len);
@@ -1192,47 +1582,48 @@ static void send_fragmented_body(struct netconsole_target *nt, char *buf,
 					 MAX_PRINT_CHUNK - this_header);
 			if (WARN_ON_ONCE(this_chunk <= 0))
 				return;
-			memcpy(buf + this_header, msgbody + offset, this_chunk);
+			memcpy(nt->buf + this_header, msgbody + offset,
+			       this_chunk);
 			this_offset += this_chunk;
 		}
 
 		/* msgbody was finally written, either in the previous
 		 * messages and/or in the current buf. Time to write
-		 * the userdata.
+		 * the extradata.
 		 */
 		msgbody_written |= offset + this_offset >= msgbody_len;
 
-		/* Msg body is fully written and there is pending userdata to
-		 * write, append userdata in this chunk
+		/* Msg body is fully written and there is pending extradata to
+		 * write, append extradata in this chunk
 		 */
 		if (msgbody_written && offset + this_offset < body_len) {
 			/* Track how much user data was already sent. First
 			 * time here, sent_userdata is zero
 			 */
-			int sent_userdata = (offset + this_offset) - msgbody_len;
+			sent_extradata = (offset + this_offset) - msgbody_len;
 			/* offset of bytes used in current buf */
-			int preceding_bytes = this_chunk + this_header;
+			preceding_bytes = this_chunk + this_header;
 
-			if (WARN_ON_ONCE(sent_userdata < 0))
+			if (WARN_ON_ONCE(sent_extradata < 0))
 				return;
 
-			this_chunk = min(userdata_len - sent_userdata,
+			this_chunk = min(extradata_len - sent_extradata,
 					 MAX_PRINT_CHUNK - preceding_bytes);
 			if (WARN_ON_ONCE(this_chunk < 0))
 				/* this_chunk could be zero if all the previous
 				 * message used all the buffer. This is not a
-				 * problem, userdata will be sent in the next
+				 * problem, extradata will be sent in the next
 				 * iteration
 				 */
 				return;
 
-			memcpy(buf + this_header + this_offset,
-			       userdata + sent_userdata,
+			memcpy(nt->buf + this_header + this_offset,
+			       extradata + sent_extradata,
 			       this_chunk);
 			this_offset += this_chunk;
 		}
 
-		send_udp(nt, buf, this_header + this_offset);
+		send_udp(nt, nt->buf, this_header + this_offset);
 		offset += this_offset;
 	}
 }
@@ -1240,9 +1631,9 @@ static void send_fragmented_body(struct netconsole_target *nt, char *buf,
 static void send_msg_fragmented(struct netconsole_target *nt,
 				const char *msg,
 				int msg_len,
-				int release_len)
+				int release_len,
+				int extradata_len)
 {
-	static char buf[MAX_PRINT_CHUNK]; /* protected by target_list_lock */
 	int header_len, msgbody_len;
 	const char *msgbody;
 
@@ -1260,16 +1651,17 @@ static void send_msg_fragmented(struct netconsole_target *nt,
 	 * "ncfrag=<byte-offset>/<total-bytes>"
 	 */
 	if (release_len)
-		append_release(buf);
+		append_release(nt->buf);
 
 	/* Copy the header into the buffer */
-	memcpy(buf + release_len, msg, header_len);
+	memcpy(nt->buf + release_len, msg, header_len);
 	header_len += release_len;
 
 	/* for now on, the header will be persisted, and the msgbody
 	 * will be replaced
 	 */
-	send_fragmented_body(nt, buf, msgbody, header_len, msgbody_len);
+	send_fragmented_body(nt, msgbody, header_len, msgbody_len,
+			     extradata_len);
 }
 
 /**
@@ -1285,20 +1677,19 @@ static void send_msg_fragmented(struct netconsole_target *nt,
 static void send_ext_msg_udp(struct netconsole_target *nt, const char *msg,
 			     int msg_len)
 {
-	int userdata_len = 0;
 	int release_len = 0;
+	int extradata_len;
 
-#ifdef CONFIG_NETCONSOLE_DYNAMIC
-	userdata_len = nt->userdata_length;
-#endif
+	extradata_len = prepare_extradata(nt);
 
 	if (nt->release)
 		release_len = strlen(init_utsname()->release) + 1;
 
-	if (msg_len + release_len + userdata_len <= MAX_PRINT_CHUNK)
+	if (msg_len + release_len + extradata_len <= MAX_PRINT_CHUNK)
 		return send_msg_no_fragmentation(nt, msg, msg_len, release_len);
 
-	return send_msg_fragmented(nt, msg, msg_len, release_len);
+	return send_msg_fragmented(nt, msg, msg_len, release_len,
+				   extradata_len);
 }
 
 static void write_ext_msg(struct console *con, const char *msg,
@@ -1351,6 +1742,120 @@ static void write_msg(struct console *con, const char *msg, unsigned int len)
 	spin_unlock_irqrestore(&target_list_lock, flags);
 }
 
+static int netpoll_parse_ip_addr(const char *str, union inet_addr *addr)
+{
+	const char *end;
+
+	if (!strchr(str, ':') &&
+	    in4_pton(str, -1, (void *)addr, -1, &end) > 0) {
+		if (!*end)
+			return 0;
+	}
+	if (in6_pton(str, -1, addr->in6.s6_addr, -1, &end) > 0) {
+#if IS_ENABLED(CONFIG_IPV6)
+		if (!*end)
+			return 1;
+#else
+		return -1;
+#endif
+	}
+	return -1;
+}
+
+static int netconsole_parser_cmdline(struct netpoll *np, char *opt)
+{
+	bool ipversion_set = false;
+	char *cur = opt;
+	char *delim;
+	int ipv6;
+
+	if (*cur != '@') {
+		delim = strchr(cur, '@');
+		if (!delim)
+			goto parse_failed;
+		*delim = 0;
+		if (kstrtou16(cur, 10, &np->local_port))
+			goto parse_failed;
+		cur = delim;
+	}
+	cur++;
+
+	if (*cur != '/') {
+		ipversion_set = true;
+		delim = strchr(cur, '/');
+		if (!delim)
+			goto parse_failed;
+		*delim = 0;
+		ipv6 = netpoll_parse_ip_addr(cur, &np->local_ip);
+		if (ipv6 < 0)
+			goto parse_failed;
+		else
+			np->ipv6 = (bool)ipv6;
+		cur = delim;
+	}
+	cur++;
+
+	if (*cur != ',') {
+		/* parse out dev_name or dev_mac */
+		delim = strchr(cur, ',');
+		if (!delim)
+			goto parse_failed;
+		*delim = 0;
+
+		np->dev_name[0] = '\0';
+		eth_broadcast_addr(np->dev_mac);
+		if (!strchr(cur, ':'))
+			strscpy(np->dev_name, cur, sizeof(np->dev_name));
+		else if (!mac_pton(cur, np->dev_mac))
+			goto parse_failed;
+
+		cur = delim;
+	}
+	cur++;
+
+	if (*cur != '@') {
+		/* dst port */
+		delim = strchr(cur, '@');
+		if (!delim)
+			goto parse_failed;
+		*delim = 0;
+		if (*cur == ' ' || *cur == '\t')
+			np_info(np, "warning: whitespace is not allowed\n");
+		if (kstrtou16(cur, 10, &np->remote_port))
+			goto parse_failed;
+		cur = delim;
+	}
+	cur++;
+
+	/* dst ip */
+	delim = strchr(cur, '/');
+	if (!delim)
+		goto parse_failed;
+	*delim = 0;
+	ipv6 = netpoll_parse_ip_addr(cur, &np->remote_ip);
+	if (ipv6 < 0)
+		goto parse_failed;
+	else if (ipversion_set && np->ipv6 != (bool)ipv6)
+		goto parse_failed;
+	else
+		np->ipv6 = (bool)ipv6;
+	cur = delim + 1;
+
+	if (*cur != 0) {
+		/* MAC address */
+		if (!mac_pton(cur, np->remote_mac))
+			goto parse_failed;
+	}
+
+	netconsole_print_banner(np);
+
+	return 0;
+
+ parse_failed:
+	np_info(np, "couldn't parse config at '%s'!\n", cur);
+	return -1;
+}
+
 /* Allocate new target (from boot/module param) and setup netpoll for it */
 static struct netconsole_target *alloc_param_target(char *target_config,
 						    int cmdline_count)
@@ -1380,7 +1885,7 @@ static struct netconsole_target *alloc_param_target(char *target_config,
 	}
 
 	/* Parse parameters and setup netpoll */
-	err = netpoll_parse_options(&nt->np, target_config);
+	err = netconsole_parser_cmdline(&nt->np, target_config);
 	if (err)
 		goto fail;
 
@@ -1428,8 +1933,8 @@ static int __init init_netconsole(void)
 {
 	int err;
 	struct netconsole_target *nt, *tmp;
+	u32 console_type_needed = 0;
 	unsigned int count = 0;
-	bool extended = false;
 	unsigned long flags;
 	char *target_config;
 	char *input = config;
@@ -1445,9 +1950,10 @@ static int __init init_netconsole(void)
 			}
 			/* Dump existing printks when we register */
 			if (nt->extended) {
-				extended = true;
+				console_type_needed |= CONS_EXTENDED;
 				netconsole_ext.flags |= CON_PRINTBUFFER;
 			} else {
+				console_type_needed |= CONS_BASIC;
 				netconsole.flags |= CON_PRINTBUFFER;
 			}
 
@@ -1466,9 +1972,10 @@ static int __init init_netconsole(void)
 	if (err)
 		goto undonotifier;
 
-	if (extended)
+	if (console_type_needed & CONS_EXTENDED)
 		register_console(&netconsole_ext);
-	register_console(&netconsole);
+	if (console_type_needed & CONS_BASIC)
+		register_console(&netconsole);
 	pr_info("network logging started\n");
 
 	return err;
@@ -1498,7 +2005,8 @@ static void __exit cleanup_netconsole(void)
 
 	if (console_is_registered(&netconsole_ext))
 		unregister_console(&netconsole_ext);
-	unregister_console(&netconsole);
+	if (console_is_registered(&netconsole))
+		unregister_console(&netconsole);
 	dynamic_netconsole_exit();
 	unregister_netdevice_notifier(&netconsole_netdev_notifier);
 

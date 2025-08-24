@@ -14,6 +14,7 @@
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/compiler.h>
+#include <linux/export.h>
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/hrtimer.h>
@@ -23,6 +24,7 @@
 #include <linux/mman.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/cpufeature.h>
 #include <linux/random.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
@@ -36,8 +38,10 @@
 #include <asm/access-regs.h>
 #include <asm/asm-offsets.h>
 #include <asm/lowcore.h>
+#include <asm/machine.h>
 #include <asm/stp.h>
 #include <asm/gmap.h>
+#include <asm/gmap_helpers.h>
 #include <asm/nmi.h>
 #include <asm/isc.h>
 #include <asm/sclp.h>
@@ -50,7 +54,6 @@
 #include "kvm-s390.h"
 #include "gaccess.h"
 #include "pci.h"
-#include "gmap.h"
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
@@ -443,13 +446,13 @@ static void __init kvm_s390_cpu_feat_init(void)
 	if (test_facility(201))	/* PFCR */
 		pfcr_query(&kvm_s390_available_subfunc.pfcr);
 
-	if (MACHINE_HAS_ESOP)
+	if (machine_has_esop())
 		allow_cpu_feat(KVM_S390_VM_CPU_FEAT_ESOP);
 	/*
 	 * We need SIE support, ESOP (PROT_READ protection for gmap_shadow),
 	 * 64bit SCAO (SCA passthrough) and IDTE (for gmap_shadow unshadowing).
 	 */
-	if (!sclp.has_sief2 || !MACHINE_HAS_ESOP || !sclp.has_64bscao ||
+	if (!sclp.has_sief2 || !machine_has_esop() || !sclp.has_64bscao ||
 	    !test_facility(3) || !nested)
 		return;
 	allow_cpu_feat(KVM_S390_VM_CPU_FEAT_SIEF2);
@@ -638,7 +641,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 			r = min_t(unsigned int, num_online_cpus(), r);
 		break;
 	case KVM_CAP_S390_COW:
-		r = MACHINE_HAS_ESOP;
+		r = machine_has_esop();
 		break;
 	case KVM_CAP_S390_VECTOR_REGISTERS:
 		r = test_facility(129);
@@ -1020,7 +1023,7 @@ static int kvm_s390_set_mem_control(struct kvm *kvm, struct kvm_device_attr *att
 		}
 		mutex_unlock(&kvm->lock);
 		VM_EVENT(kvm, 3, "SET: max guest address: %lu", new_limit);
-		VM_EVENT(kvm, 3, "New guest asce: 0x%pK",
+		VM_EVENT(kvm, 3, "New guest asce: 0x%p",
 			 (void *) kvm->arch.gmap->asce);
 		break;
 	}
@@ -2672,7 +2675,9 @@ static int kvm_s390_handle_pv(struct kvm *kvm, struct kvm_pv_cmd *cmd)
 		if (r)
 			break;
 
-		r = s390_disable_cow_sharing();
+		mmap_write_lock(kvm->mm);
+		r = gmap_helper_disable_cow_sharing();
+		mmap_write_unlock(kvm->mm);
 		if (r)
 			break;
 
@@ -3396,7 +3401,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	/* we emulate STHYI in kvm */
 	set_kvm_facility(kvm->arch.model.fac_mask, 74);
 	set_kvm_facility(kvm->arch.model.fac_list, 74);
-	if (MACHINE_HAS_TLB_GUEST) {
+	if (machine_has_tlb_guest()) {
 		set_kvm_facility(kvm->arch.model.fac_mask, 147);
 		set_kvm_facility(kvm->arch.model.fac_list, 147);
 	}
@@ -3464,7 +3469,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 		kvm_s390_gisa_init(kvm);
 	INIT_LIST_HEAD(&kvm->arch.pv.need_cleanup);
 	kvm->arch.pv.set_aside = NULL;
-	KVM_EVENT(3, "vm 0x%pK created by pid %u", kvm, current->pid);
+	KVM_EVENT(3, "vm 0x%p created by pid %u", kvm, current->pid);
 
 	return 0;
 out_err:
@@ -3527,7 +3532,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_s390_destroy_adapters(kvm);
 	kvm_s390_clear_float_irqs(kvm);
 	kvm_s390_vsie_destroy(kvm);
-	KVM_EVENT(3, "vm 0x%pK destroyed", kvm);
+	KVM_EVENT(3, "vm 0x%p destroyed", kvm);
 }
 
 /* Section: vcpu related */
@@ -3648,7 +3653,7 @@ static int sca_switch_to_extended(struct kvm *kvm)
 
 	free_page((unsigned long)old_sca);
 
-	VM_EVENT(kvm, 2, "Switched to ESCA (0x%pK -> 0x%pK)",
+	VM_EVENT(kvm, 2, "Switched to ESCA (0x%p -> 0x%p)",
 		 old_sca, kvm->arch.sca);
 	return 0;
 }
@@ -3892,8 +3897,8 @@ static int kvm_s390_vcpu_setup(struct kvm_vcpu *vcpu)
 
 	kvm_s390_vcpu_setup_model(vcpu);
 
-	/* pgste_set_pte has special handling for !MACHINE_HAS_ESOP */
-	if (MACHINE_HAS_ESOP)
+	/* pgste_set_pte has special handling for !machine_has_esop() */
+	if (machine_has_esop())
 		vcpu->arch.sie_block->ecb |= ECB_HOSTPROTINT;
 	if (test_kvm_facility(vcpu->kvm, 9))
 		vcpu->arch.sie_block->ecb |= ECB_SRSI;
@@ -3943,8 +3948,8 @@ static int kvm_s390_vcpu_setup(struct kvm_vcpu *vcpu)
 		if (rc)
 			return rc;
 	}
-	hrtimer_init(&vcpu->arch.ckc_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	vcpu->arch.ckc_timer.function = kvm_s390_idle_wakeup;
+	hrtimer_setup(&vcpu->arch.ckc_timer, kvm_s390_idle_wakeup, CLOCK_MONOTONIC,
+		      HRTIMER_MODE_REL);
 
 	vcpu->arch.sie_block->hpid = HPID_KVM;
 
@@ -4025,7 +4030,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 			goto out_free_sie_block;
 	}
 
-	VM_EVENT(vcpu->kvm, 3, "create cpu %d at 0x%pK, sie block at 0x%pK",
+	VM_EVENT(vcpu->kvm, 3, "create cpu %d at 0x%p, sie block at 0x%p",
 		 vcpu->vcpu_id, vcpu, vcpu->arch.sie_block);
 	trace_kvm_s390_create_vcpu(vcpu->vcpu_id, vcpu, vcpu->arch.sie_block);
 
@@ -4952,6 +4957,7 @@ static int vcpu_post_run_handle_fault(struct kvm_vcpu *vcpu)
 {
 	unsigned int flags = 0;
 	unsigned long gaddr;
+	int rc;
 
 	gaddr = current->thread.gmap_teid.addr * PAGE_SIZE;
 	if (kvm_s390_cur_gmap_fault_is_write())
@@ -4960,16 +4966,6 @@ static int vcpu_post_run_handle_fault(struct kvm_vcpu *vcpu)
 	switch (current->thread.gmap_int_code & PGM_INT_CODE_MASK) {
 	case 0:
 		vcpu->stat.exit_null++;
-		break;
-	case PGM_NON_SECURE_STORAGE_ACCESS:
-		kvm_s390_assert_primary_as(vcpu);
-		/*
-		 * This is normal operation; a page belonging to a protected
-		 * guest has not been imported yet. Try to import the page into
-		 * the protected guest.
-		 */
-		if (gmap_convert_to_secure(vcpu->arch.gmap, gaddr) == -EINVAL)
-			send_sig(SIGSEGV, current, 0);
 		break;
 	case PGM_SECURE_STORAGE_ACCESS:
 	case PGM_SECURE_STORAGE_VIOLATION:
@@ -4980,7 +4976,7 @@ static int vcpu_post_run_handle_fault(struct kvm_vcpu *vcpu)
 		 * previous protected guest. The old pages need to be destroyed
 		 * so the new guest can use them.
 		 */
-		if (gmap_destroy_page(vcpu->arch.gmap, gaddr)) {
+		if (kvm_s390_pv_destroy_page(vcpu->kvm, gaddr)) {
 			/*
 			 * Either KVM messed up the secure guest mapping or the
 			 * same page is mapped into multiple secure guests.
@@ -4995,6 +4991,20 @@ static int vcpu_post_run_handle_fault(struct kvm_vcpu *vcpu)
 			send_sig(SIGSEGV, current, 0);
 		}
 		break;
+	case PGM_NON_SECURE_STORAGE_ACCESS:
+		kvm_s390_assert_primary_as(vcpu);
+		/*
+		 * This is normal operation; a page belonging to a protected
+		 * guest has not been imported yet. Try to import the page into
+		 * the protected guest.
+		 */
+		rc = kvm_s390_pv_convert_to_secure(vcpu->kvm, gaddr);
+		if (rc == -EINVAL)
+			send_sig(SIGSEGV, current, 0);
+		if (rc != -ENXIO)
+			break;
+		flags = FAULT_FLAG_WRITE;
+		fallthrough;
 	case PGM_PROTECTION:
 	case PGM_SEGMENT_TRANSLATION:
 	case PGM_PAGE_TRANSLATION:
@@ -5053,6 +5063,30 @@ static int vcpu_post_run(struct kvm_vcpu *vcpu, int exit_reason)
 	return vcpu_post_run_handle_fault(vcpu);
 }
 
+int noinstr kvm_s390_enter_exit_sie(struct kvm_s390_sie_block *scb,
+				    u64 *gprs, unsigned long gasce)
+{
+	int ret;
+
+	guest_state_enter_irqoff();
+
+	/*
+	 * The guest_state_{enter,exit}_irqoff() functions inform lockdep and
+	 * tracing that entry to the guest will enable host IRQs, and exit from
+	 * the guest will disable host IRQs.
+	 *
+	 * We must not use lockdep/tracing/RCU in this critical section, so we
+	 * use the low-level arch_local_irq_*() helpers to enable/disable IRQs.
+	 */
+	arch_local_irq_enable();
+	ret = sie64a(scb, gprs, gasce);
+	arch_local_irq_disable();
+
+	guest_state_exit_irqoff();
+
+	return ret;
+}
+
 #define PSW_INT_MASK (PSW_MASK_EXT | PSW_MASK_IO | PSW_MASK_MCHECK)
 static int __vcpu_run(struct kvm_vcpu *vcpu)
 {
@@ -5073,20 +5107,27 @@ static int __vcpu_run(struct kvm_vcpu *vcpu)
 		kvm_vcpu_srcu_read_unlock(vcpu);
 		/*
 		 * As PF_VCPU will be used in fault handler, between
-		 * guest_enter and guest_exit should be no uaccess.
+		 * guest_timing_enter_irqoff and guest_timing_exit_irqoff
+		 * should be no uaccess.
 		 */
-		local_irq_disable();
-		guest_enter_irqoff();
-		__disable_cpu_timer_accounting(vcpu);
-		local_irq_enable();
 		if (kvm_s390_pv_cpu_is_protected(vcpu)) {
 			memcpy(sie_page->pv_grregs,
 			       vcpu->run->s.regs.gprs,
 			       sizeof(sie_page->pv_grregs));
 		}
-		exit_reason = sie64a(vcpu->arch.sie_block,
-				     vcpu->run->s.regs.gprs,
-				     vcpu->arch.gmap->asce);
+
+		local_irq_disable();
+		guest_timing_enter_irqoff();
+		__disable_cpu_timer_accounting(vcpu);
+
+		exit_reason = kvm_s390_enter_exit_sie(vcpu->arch.sie_block,
+						      vcpu->run->s.regs.gprs,
+						      vcpu->arch.gmap->asce);
+
+		__enable_cpu_timer_accounting(vcpu);
+		guest_timing_exit_irqoff();
+		local_irq_enable();
+
 		if (kvm_s390_pv_cpu_is_protected(vcpu)) {
 			memcpy(vcpu->run->s.regs.gprs,
 			       sie_page->pv_grregs,
@@ -5102,10 +5143,6 @@ static int __vcpu_run(struct kvm_vcpu *vcpu)
 				vcpu->arch.sie_block->gpsw.mask &= ~PSW_INT_MASK;
 			}
 		}
-		local_irq_disable();
-		__enable_cpu_timer_accounting(vcpu);
-		guest_exit_irqoff();
-		local_irq_enable();
 		kvm_vcpu_srcu_read_lock(vcpu);
 
 		rc = vcpu_post_run(vcpu, exit_reason);
@@ -5171,7 +5208,7 @@ static void sync_regs_fmt2(struct kvm_vcpu *vcpu)
 		vcpu->arch.sie_block->fpf &= ~FPF_BPBC;
 		vcpu->arch.sie_block->fpf |= kvm_run->s.regs.bpbc ? FPF_BPBC : 0;
 	}
-	if (MACHINE_HAS_GS) {
+	if (cpu_has_gs()) {
 		preempt_disable();
 		local_ctl_set_bit(2, CR2_GUARDED_STORAGE_BIT);
 		if (current->thread.gs_cb) {
@@ -5237,7 +5274,7 @@ static void store_regs_fmt2(struct kvm_vcpu *vcpu)
 	kvm_run->s.regs.gbea = vcpu->arch.sie_block->gbea;
 	kvm_run->s.regs.bpbc = (vcpu->arch.sie_block->fpf & FPF_BPBC) == FPF_BPBC;
 	kvm_run->s.regs.diag318 = vcpu->arch.diag318_info.val;
-	if (MACHINE_HAS_GS) {
+	if (cpu_has_gs()) {
 		preempt_disable();
 		local_ctl_set_bit(2, CR2_GUARDED_STORAGE_BIT);
 		if (vcpu->arch.gs_enabled)

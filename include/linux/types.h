@@ -92,6 +92,7 @@ typedef unsigned char		unchar;
 typedef unsigned short		ushort;
 typedef unsigned int		uint;
 typedef unsigned long		ulong;
+typedef unsigned long long	ullong;
 
 #ifndef __BIT_TYPES_DEFINED__
 #define __BIT_TYPES_DEFINED__
@@ -134,6 +135,10 @@ typedef s64	ktime_t;
  */
 typedef u64 sector_t;
 typedef u64 blkcnt_t;
+
+/* generic data direction definitions */
+#define READ			0
+#define WRITE			1
 
 /*
  * The type of an index into the pagecache.

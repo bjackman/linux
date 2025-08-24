@@ -85,7 +85,7 @@ static int netfs_dispatch_unbuffered_reads(struct netfs_io_request *rreq)
 		if (rreq->netfs_ops->prepare_read) {
 			ret = rreq->netfs_ops->prepare_read(subreq);
 			if (ret < 0) {
-				netfs_put_subrequest(subreq, false, netfs_sreq_trace_put_cancel);
+				netfs_put_subrequest(subreq, netfs_sreq_trace_put_cancel);
 				break;
 			}
 		}
@@ -103,11 +103,8 @@ static int netfs_dispatch_unbuffered_reads(struct netfs_io_request *rreq)
 		rreq->netfs_ops->issue_read(subreq);
 
 		if (test_bit(NETFS_RREQ_PAUSE, &rreq->flags))
-			netfs_wait_for_pause(rreq);
+			netfs_wait_for_paused_read(rreq);
 		if (test_bit(NETFS_RREQ_FAILED, &rreq->flags))
-			break;
-		if (test_bit(NETFS_RREQ_BLOCKED, &rreq->flags) &&
-		    test_bit(NETFS_RREQ_NONBLOCK, &rreq->flags))
 			break;
 		cond_resched();
 	} while (size > 0);
@@ -115,7 +112,7 @@ static int netfs_dispatch_unbuffered_reads(struct netfs_io_request *rreq)
 	if (unlikely(size > 0)) {
 		smp_wmb(); /* Write lists before ALL_QUEUED. */
 		set_bit(NETFS_RREQ_ALL_QUEUED, &rreq->flags);
-		netfs_wake_read_collector(rreq);
+		netfs_wake_collector(rreq);
 	}
 
 	return ret;
@@ -125,9 +122,9 @@ static int netfs_dispatch_unbuffered_reads(struct netfs_io_request *rreq)
  * Perform a read to an application buffer, bypassing the pagecache and the
  * local disk cache.
  */
-static int netfs_unbuffered_read(struct netfs_io_request *rreq, bool sync)
+static ssize_t netfs_unbuffered_read(struct netfs_io_request *rreq, bool sync)
 {
-	int ret;
+	ssize_t ret;
 
 	_enter("R=%x %llx-%llx",
 	       rreq->debug_id, rreq->start, rreq->start + rreq->len - 1);
@@ -144,7 +141,7 @@ static int netfs_unbuffered_read(struct netfs_io_request *rreq, bool sync)
 	ret = netfs_dispatch_unbuffered_reads(rreq);
 
 	if (!rreq->submitted) {
-		netfs_put_request(rreq, false, netfs_rreq_trace_put_no_submit);
+		netfs_put_request(rreq, netfs_rreq_trace_put_no_submit);
 		inode_dio_end(rreq->inode);
 		ret = 0;
 		goto out;
@@ -155,7 +152,7 @@ static int netfs_unbuffered_read(struct netfs_io_request *rreq, bool sync)
 	else
 		ret = -EIOCBQUEUED;
 out:
-	_leave(" = %d", ret);
+	_leave(" = %zd", ret);
 	return ret;
 }
 
@@ -188,7 +185,8 @@ ssize_t netfs_unbuffered_read_iter_locked(struct kiocb *iocb, struct iov_iter *i
 
 	rreq = netfs_alloc_request(iocb->ki_filp->f_mapping, iocb->ki_filp,
 				   iocb->ki_pos, orig_count,
-				   NETFS_DIO_READ);
+				   iocb->ki_flags & IOCB_DIRECT ?
+				   NETFS_DIO_READ : NETFS_UNBUFFERED_READ);
 	if (IS_ERR(rreq))
 		return PTR_ERR(rreq);
 
@@ -236,7 +234,7 @@ ssize_t netfs_unbuffered_read_iter_locked(struct kiocb *iocb, struct iov_iter *i
 	}
 
 out:
-	netfs_put_request(rreq, false, netfs_rreq_trace_put_return);
+	netfs_put_request(rreq, netfs_rreq_trace_put_return);
 	if (ret > 0)
 		orig_count -= ret;
 	return ret;

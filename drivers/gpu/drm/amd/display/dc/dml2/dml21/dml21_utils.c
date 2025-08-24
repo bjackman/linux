@@ -232,7 +232,6 @@ void dml21_program_dc_pipe(struct dml2_context *dml_ctx, struct dc_state *contex
 		context->bw_ctx.bw.dcn.clk.dppclk_khz = pipe_ctx->plane_res.bw.dppclk_khz;
 
 	dml21_populate_mall_allocation_size(context, dml_ctx, pln_prog, pipe_ctx);
-	memcpy(&context->bw_ctx.bw.dcn.mcache_allocations[pipe_ctx->pipe_idx], &pln_prog->mcache_allocation, sizeof(struct dml2_mcache_surface_allocation));
 
 	bool sub_vp_enabled = is_sub_vp_enabled(pipe_ctx->stream->ctx->dc, context);
 
@@ -385,6 +384,7 @@ void dml21_build_fams2_programming(const struct dc *dc,
 	/* reset fams2 data */
 	memset(&context->bw_ctx.bw.dcn.fams2_stream_base_params, 0, sizeof(union dmub_cmd_fams2_config) * DML2_MAX_PLANES);
 	memset(&context->bw_ctx.bw.dcn.fams2_stream_sub_params, 0, sizeof(union dmub_cmd_fams2_config) * DML2_MAX_PLANES);
+	memset(&context->bw_ctx.bw.dcn.fams2_stream_sub_params_v2, 0, sizeof(union dmub_fams2_stream_static_sub_state_v2) * DML2_MAX_PLANES);
 	memset(&context->bw_ctx.bw.dcn.fams2_global_config, 0, sizeof(struct dmub_cmd_fams2_global_config));
 
 	if (dml_ctx->v21.mode_programming.programming->fams2_required) {
@@ -415,9 +415,16 @@ void dml21_build_fams2_programming(const struct dc *dc,
 			memcpy(static_base_state,
 					&dml_ctx->v21.mode_programming.programming->stream_programming[dml_stream_idx].fams2_base_params,
 					sizeof(union dmub_cmd_fams2_config));
-			memcpy(static_sub_state,
-					&dml_ctx->v21.mode_programming.programming->stream_programming[dml_stream_idx].fams2_sub_params,
-					sizeof(union dmub_cmd_fams2_config));
+
+			if (dc->debug.fams_version.major == 3) {
+				memcpy(&context->bw_ctx.bw.dcn.fams2_stream_sub_params_v2[num_fams2_streams],
+						&dml_ctx->v21.mode_programming.programming->stream_programming[dml_stream_idx].fams2_sub_params_v2,
+						sizeof(union dmub_fams2_stream_static_sub_state_v2));
+			} else {
+				memcpy(static_sub_state,
+						&dml_ctx->v21.mode_programming.programming->stream_programming[dml_stream_idx].fams2_sub_params,
+						sizeof(union dmub_cmd_fams2_config));
+			}
 
 			switch (dc->debug.fams_version.minor) {
 			case 1:

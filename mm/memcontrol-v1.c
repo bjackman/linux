@@ -512,9 +512,9 @@ static void memcg1_charge_statistics(struct mem_cgroup *memcg, int nr_pages)
 {
 	/* pagein of a big page is an event. So, ignore page size */
 	if (nr_pages > 0)
-		__count_memcg_events(memcg, PGPGIN, 1);
+		count_memcg_events(memcg, PGPGIN, 1);
 	else {
-		__count_memcg_events(memcg, PGPGOUT, 1);
+		count_memcg_events(memcg, PGPGOUT, 1);
 		nr_pages = -nr_pages; /* for event */
 	}
 
@@ -620,7 +620,7 @@ void memcg1_swapout(struct folio *folio, swp_entry_t entry)
 		mem_cgroup_id_get_many(swap_memcg, nr_entries - 1);
 	mod_memcg_state(swap_memcg, MEMCG_SWAP, nr_entries);
 
-	swap_cgroup_record(folio, mem_cgroup_id(memcg), entry);
+	swap_cgroup_record(folio, mem_cgroup_id(swap_memcg), entry);
 
 	folio_unqueue_deferred_split(folio);
 	folio->memcg_data = 0;
@@ -689,7 +689,7 @@ void memcg1_uncharge_batch(struct mem_cgroup *memcg, unsigned long pgpgout,
 	unsigned long flags;
 
 	local_irq_save(flags);
-	__count_memcg_events(memcg, PGPGOUT, pgpgout);
+	count_memcg_events(memcg, PGPGOUT, pgpgout);
 	__this_cpu_add(memcg->events_percpu->nr_page_events, nr_memory);
 	memcg1_check_events(memcg, nid);
 	local_irq_restore(flags);
@@ -1955,9 +1955,11 @@ static int mem_cgroup_swappiness_write(struct cgroup_subsys_state *css,
 	if (val > MAX_SWAPPINESS)
 		return -EINVAL;
 
-	if (!mem_cgroup_is_root(memcg))
+	if (!mem_cgroup_is_root(memcg)) {
+		pr_info_once("Per memcg swappiness does not exist in cgroup v2. "
+			     "See memory.reclaim or memory.swap.max there\n ");
 		WRITE_ONCE(memcg->swappiness, val);
-	else
+	} else
 		WRITE_ONCE(vm_swappiness, val);
 
 	return 0;
@@ -2196,8 +2198,7 @@ bool memcg1_alloc_events(struct mem_cgroup *memcg)
 
 void memcg1_free_events(struct mem_cgroup *memcg)
 {
-	if (memcg->events_percpu)
-		free_percpu(memcg->events_percpu);
+	free_percpu(memcg->events_percpu);
 }
 
 static int __init memcg1_init(void)

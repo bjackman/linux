@@ -54,7 +54,6 @@ struct nsim_ipsec {
 	struct dentry *pfile;
 	u32 count;
 	u32 tx;
-	u32 ok;
 };
 
 #define NSIM_MACSEC_MAX_SECY_COUNT 3
@@ -97,6 +96,7 @@ struct nsim_rq {
 	struct napi_struct napi;
 	struct sk_buff_head skb_queue;
 	struct page_pool *page_pool;
+	struct hrtimer napi_timer;
 };
 
 struct netdevsim {
@@ -107,11 +107,6 @@ struct netdevsim {
 	struct nsim_rq **rq;
 
 	int rq_reset_mode;
-
-	u64 tx_packets;
-	u64 tx_bytes;
-	u64 tx_dropped;
-	struct u64_stats_sync syncp;
 
 	struct nsim_bus_dev *nsim_bus_dev;
 
@@ -131,7 +126,6 @@ struct netdevsim {
 	struct nsim_macsec macsec;
 	struct {
 		u32 inject_error;
-		u32 sleep;
 		u32 __ports[2][NSIM_UDP_TUNNEL_N_PORTS];
 		u32 (*ports)[NSIM_UDP_TUNNEL_N_PORTS];
 		struct dentry *ddir;
@@ -144,10 +138,14 @@ struct netdevsim {
 
 	struct nsim_ethtool ethtool;
 	struct netdevsim __rcu *peer;
+
+	struct notifier_block nb;
+	struct netdev_net_notifier nn;
 };
 
-struct netdevsim *
-nsim_create(struct nsim_dev *nsim_dev, struct nsim_dev_port *nsim_dev_port);
+struct netdevsim *nsim_create(struct nsim_dev *nsim_dev,
+			      struct nsim_dev_port *nsim_dev_port,
+			      u8 perm_addr[ETH_ALEN]);
 void nsim_destroy(struct netdevsim *ns);
 bool netdev_is_nsim(struct net_device *dev);
 
@@ -279,6 +277,7 @@ struct nsim_dev_port {
 	struct dentry *ddir;
 	struct dentry *rate_parent;
 	char *parent_name;
+	u32 tc_bw[DEVLINK_RATE_TCS_MAX];
 	struct netdevsim *ns;
 };
 
@@ -318,6 +317,7 @@ struct nsim_dev {
 	struct list_head port_list;
 	bool fw_update_status;
 	u32 fw_update_overwrite_mask;
+	u32 fw_update_flash_chunk_time_ms;
 	u32 max_macs;
 	bool test1;
 	bool dont_allow_reload;
@@ -339,7 +339,6 @@ struct nsim_dev {
 		bool ipv4_only;
 		bool shared;
 		bool static_iana_vxlan;
-		u32 sleep;
 	} udp_ports;
 	struct nsim_dev_psample *psample;
 	u16 esw_mode;
@@ -365,8 +364,8 @@ void nsim_dev_exit(void);
 int nsim_drv_probe(struct nsim_bus_dev *nsim_bus_dev);
 void nsim_drv_remove(struct nsim_bus_dev *nsim_bus_dev);
 int nsim_drv_port_add(struct nsim_bus_dev *nsim_bus_dev,
-		      enum nsim_dev_port_type type,
-		      unsigned int port_index);
+		      enum nsim_dev_port_type type, unsigned int port_index,
+		      u8 perm_addr[ETH_ALEN]);
 int nsim_drv_port_del(struct nsim_bus_dev *nsim_bus_dev,
 		      enum nsim_dev_port_type type,
 		      unsigned int port_index);

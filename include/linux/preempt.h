@@ -319,6 +319,7 @@ do { \
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 
 struct preempt_notifier;
+struct task_struct;
 
 /**
  * preempt_ops - notifiers called when a task is preempted and rescheduled
@@ -367,8 +368,6 @@ static inline void preempt_notifier_init(struct preempt_notifier *notifier,
 }
 
 #endif
-
-#ifdef CONFIG_SMP
 
 /*
  * Migrate-Disable and why it is undesired.
@@ -427,13 +426,6 @@ static inline void preempt_notifier_init(struct preempt_notifier *notifier,
  */
 extern void migrate_disable(void);
 extern void migrate_enable(void);
-
-#else
-
-static inline void migrate_disable(void) { }
-static inline void migrate_enable(void) { }
-
-#endif /* CONFIG_SMP */
 
 /**
  * preempt_disable_nested - Disable preemption inside a normally preempt disabled section
@@ -514,6 +506,8 @@ static inline bool preempt_model_rt(void)
 {
 	return IS_ENABLED(CONFIG_PREEMPT_RT);
 }
+
+extern const char *preempt_model_str(void);
 
 /*
  * Does the preemption model allow non-cooperative preemption?

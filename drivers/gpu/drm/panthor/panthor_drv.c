@@ -772,8 +772,8 @@ static int panthor_query_timestamp_info(struct panthor_device *ptdev,
 #else
 	arg->timestamp_frequency = 0;
 #endif
-	arg->current_timestamp = panthor_gpu_read_timestamp(ptdev);
-	arg->timestamp_offset = panthor_gpu_read_timestamp_offset(ptdev);
+	arg->current_timestamp = gpu_read64_counter(ptdev, GPU_TIMESTAMP);
+	arg->timestamp_offset = gpu_read64(ptdev, GPU_TIMESTAMP_OFFSET);
 
 	pm_runtime_put(ptdev->base.dev);
 	return 0;
@@ -940,6 +940,7 @@ static int panthor_ioctl_bo_mmap_offset(struct drm_device *ddev, void *data,
 					struct drm_file *file)
 {
 	struct drm_panthor_bo_mmap_offset *args = data;
+	struct panthor_gem_object *bo;
 	struct drm_gem_object *obj;
 	int ret;
 
@@ -949,6 +950,12 @@ static int panthor_ioctl_bo_mmap_offset(struct drm_device *ddev, void *data,
 	obj = drm_gem_object_lookup(file, args->handle);
 	if (!obj)
 		return -ENOENT;
+
+	bo = to_panthor_bo(obj);
+	if (bo->flags & DRM_PANTHOR_BO_NO_MMAP) {
+		ret = -EPERM;
+		goto out;
+	}
 
 	ret = drm_gem_create_mmap_offset(obj);
 	if (ret)
@@ -989,7 +996,8 @@ static int panthor_ioctl_group_submit(struct drm_device *ddev, void *data,
 		const struct drm_panthor_queue_submit *qsubmit = &jobs_args[i];
 		struct drm_sched_job *job;
 
-		job = panthor_job_create(pfile, args->group_handle, qsubmit);
+		job = panthor_job_create(pfile, args->group_handle, qsubmit,
+					 file->client_id);
 		if (IS_ERR(job)) {
 			ret = PTR_ERR(job);
 			goto out_cleanup_submit_ctx;
@@ -1331,6 +1339,60 @@ static int panthor_ioctl_vm_get_state(struct drm_device *ddev, void *data,
 	return 0;
 }
 
+static int panthor_ioctl_bo_set_label(struct drm_device *ddev, void *data,
+				      struct drm_file *file)
+{
+	struct drm_panthor_bo_set_label *args = data;
+	struct drm_gem_object *obj;
+	const char *label = NULL;
+	int ret = 0;
+
+	if (args->pad)
+		return -EINVAL;
+
+	obj = drm_gem_object_lookup(file, args->handle);
+	if (!obj)
+		return -ENOENT;
+
+	if (args->label) {
+		label = strndup_user((const char __user *)(uintptr_t)args->label,
+				     PANTHOR_BO_LABEL_MAXLEN);
+		if (IS_ERR(label)) {
+			ret = PTR_ERR(label);
+			if (ret == -EINVAL)
+				ret = -E2BIG;
+			goto err_put_obj;
+		}
+	}
+
+	/*
+	 * We treat passing a label of length 0 and passing a NULL label
+	 * differently, because even though they might seem conceptually
+	 * similar, future uses of the BO label might expect a different
+	 * behaviour in each case.
+	 */
+	panthor_gem_bo_set_label(obj, label);
+
+err_put_obj:
+	drm_gem_object_put(obj);
+
+	return ret;
+}
+
+static int panthor_ioctl_set_user_mmio_offset(struct drm_device *ddev,
+					      void *data, struct drm_file *file)
+{
+	struct drm_panthor_set_user_mmio_offset *args = data;
+	struct panthor_file *pfile = file->driver_priv;
+
+	if (args->offset != DRM_PANTHOR_USER_MMIO_OFFSET_32BIT &&
+	    args->offset != DRM_PANTHOR_USER_MMIO_OFFSET_64BIT)
+		return -EINVAL;
+
+	WRITE_ONCE(pfile->user_mmio.offset, args->offset);
+	return 0;
+}
+
 static int
 panthor_open(struct drm_device *ddev, struct drm_file *file)
 {
@@ -1348,6 +1410,18 @@ panthor_open(struct drm_device *ddev, struct drm_file *file)
 	}
 
 	pfile->ptdev = ptdev;
+	pfile->user_mmio.offset = DRM_PANTHOR_USER_MMIO_OFFSET;
+
+#ifdef CONFIG_ARM64
+	/*
+	 * With 32-bit systems being limited by the 32-bit representation of
+	 * mmap2's pgoffset field, we need to make the MMIO offset arch
+	 * specific.
+	 */
+	if (test_tsk_thread_flag(current, TIF_32BIT))
+		pfile->user_mmio.offset = DRM_PANTHOR_USER_MMIO_OFFSET_32BIT;
+#endif
+
 
 	ret = panthor_vm_pool_create(pfile);
 	if (ret)
@@ -1400,6 +1474,8 @@ static const struct drm_ioctl_desc panthor_drm_driver_ioctls[] = {
 	PANTHOR_IOCTL(TILER_HEAP_CREATE, tiler_heap_create, DRM_RENDER_ALLOW),
 	PANTHOR_IOCTL(TILER_HEAP_DESTROY, tiler_heap_destroy, DRM_RENDER_ALLOW),
 	PANTHOR_IOCTL(GROUP_SUBMIT, group_submit, DRM_RENDER_ALLOW),
+	PANTHOR_IOCTL(BO_SET_LABEL, bo_set_label, DRM_RENDER_ALLOW),
+	PANTHOR_IOCTL(SET_USER_MMIO_OFFSET, set_user_mmio_offset, DRM_RENDER_ALLOW),
 };
 
 static int panthor_mmap(struct file *filp, struct vm_area_struct *vma)
@@ -1408,30 +1484,26 @@ static int panthor_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct panthor_file *pfile = file->driver_priv;
 	struct panthor_device *ptdev = pfile->ptdev;
 	u64 offset = (u64)vma->vm_pgoff << PAGE_SHIFT;
+	u64 user_mmio_offset;
 	int ret, cookie;
 
 	if (!drm_dev_enter(file->minor->dev, &cookie))
 		return -ENODEV;
 
-#ifdef CONFIG_ARM64
-	/*
-	 * With 32-bit systems being limited by the 32-bit representation of
-	 * mmap2's pgoffset field, we need to make the MMIO offset arch
-	 * specific. This converts a user MMIO offset into something the kernel
-	 * driver understands.
+	/* Adjust the user MMIO offset to match the offset used kernel side.
+	 * We use a local variable with a READ_ONCE() here to make sure
+	 * the user_mmio_offset we use for the is_user_mmio_mapping() check
+	 * hasn't changed when we do the offset adjustment.
 	 */
-	if (test_tsk_thread_flag(current, TIF_32BIT) &&
-	    offset >= DRM_PANTHOR_USER_MMIO_OFFSET_32BIT) {
-		offset += DRM_PANTHOR_USER_MMIO_OFFSET_64BIT -
-			  DRM_PANTHOR_USER_MMIO_OFFSET_32BIT;
+	user_mmio_offset = READ_ONCE(pfile->user_mmio.offset);
+	if (offset >= user_mmio_offset) {
+		offset -= user_mmio_offset;
+		offset += DRM_PANTHOR_USER_MMIO_OFFSET;
 		vma->vm_pgoff = offset >> PAGE_SHIFT;
-	}
-#endif
-
-	if (offset >= DRM_PANTHOR_USER_MMIO_OFFSET)
 		ret = panthor_device_mmap_io(ptdev, vma);
-	else
+	} else {
 		ret = drm_gem_mmap(filp, vma);
+	}
 
 	drm_dev_exit(cookie);
 	return ret;
@@ -1458,12 +1530,26 @@ static void panthor_gpu_show_fdinfo(struct panthor_device *ptdev,
 	drm_printf(p, "drm-curfreq-panthor:\t%lu Hz\n", ptdev->current_frequency);
 }
 
+static void panthor_show_internal_memory_stats(struct drm_printer *p, struct drm_file *file)
+{
+	char *drv_name = file->minor->dev->driver->name;
+	struct panthor_file *pfile = file->driver_priv;
+	struct drm_memory_stats stats = {0};
+
+	panthor_fdinfo_gather_group_mem_info(pfile, &stats);
+	panthor_vm_heaps_sizes(pfile, &stats);
+
+	drm_fdinfo_print_size(p, drv_name, "resident", "memory", stats.resident);
+	drm_fdinfo_print_size(p, drv_name, "active", "memory", stats.active);
+}
+
 static void panthor_show_fdinfo(struct drm_printer *p, struct drm_file *file)
 {
 	struct drm_device *dev = file->minor->dev;
 	struct panthor_device *ptdev = container_of(dev, struct panthor_device, base);
 
 	panthor_gpu_show_fdinfo(ptdev, file->driver_priv, p);
+	panthor_show_internal_memory_stats(p, file);
 
 	drm_show_memory_stats(p, file);
 }
@@ -1482,9 +1568,34 @@ static const struct file_operations panthor_drm_driver_fops = {
 };
 
 #ifdef CONFIG_DEBUG_FS
+static int panthor_gems_show(struct seq_file *m, void *data)
+{
+	struct drm_info_node *node = m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct panthor_device *ptdev = container_of(dev, struct panthor_device, base);
+
+	panthor_gem_debugfs_print_bos(ptdev, m);
+
+	return 0;
+}
+
+static struct drm_info_list panthor_debugfs_list[] = {
+	{"gems", panthor_gems_show, 0, NULL},
+};
+
+static int panthor_gems_debugfs_init(struct drm_minor *minor)
+{
+	drm_debugfs_create_files(panthor_debugfs_list,
+				 ARRAY_SIZE(panthor_debugfs_list),
+				 minor->debugfs_root, minor);
+
+	return 0;
+}
+
 static void panthor_debugfs_init(struct drm_minor *minor)
 {
 	panthor_mmu_debugfs_init(minor);
+	panthor_gems_debugfs_init(minor);
 }
 #endif
 
@@ -1495,6 +1606,8 @@ static void panthor_debugfs_init(struct drm_minor *minor)
  * - 1.2 - adds DEV_QUERY_GROUP_PRIORITIES_INFO query
  *       - adds PANTHOR_GROUP_PRIORITY_REALTIME priority
  * - 1.3 - adds DRM_PANTHOR_GROUP_STATE_INNOCENT flag
+ * - 1.4 - adds DRM_IOCTL_PANTHOR_BO_SET_LABEL ioctl
+ * - 1.5 - adds DRM_PANTHOR_SET_USER_MMIO_OFFSET ioctl
  */
 static const struct drm_driver panthor_drm_driver = {
 	.driver_features = DRIVER_RENDER | DRIVER_GEM | DRIVER_SYNCOBJ |
@@ -1508,7 +1621,7 @@ static const struct drm_driver panthor_drm_driver = {
 	.name = "panthor",
 	.desc = "Panthor DRM driver",
 	.major = 1,
-	.minor = 3,
+	.minor = 5,
 
 	.gem_create_object = panthor_gem_create_object,
 	.gem_prime_import_sg_table = drm_gem_shmem_prime_import_sg_table,

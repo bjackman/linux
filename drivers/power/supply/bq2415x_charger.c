@@ -1497,7 +1497,7 @@ static int bq2415x_power_supply_init(struct bq2415x_device *bq)
 	char revstr[8];
 	struct power_supply_config psy_cfg = {
 		.drv_data = bq,
-		.of_node = bq->dev->of_node,
+		.fwnode = dev_fwnode(bq->dev),
 		.attr_grp = bq2415x_sysfs_groups,
 	};
 
@@ -1674,7 +1674,7 @@ static int bq2415x_probe(struct i2c_client *client)
 	/* Query for initial reported_mode and set it */
 	if (bq->nb.notifier_call) {
 		if (np) {
-			notify_psy = power_supply_get_by_phandle(np,
+			notify_psy = power_supply_get_by_reference(of_fwnode_handle(np),
 						"ti,usb-charger-detection");
 			if (IS_ERR(notify_psy))
 				notify_psy = NULL;

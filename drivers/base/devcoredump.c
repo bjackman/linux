@@ -41,7 +41,7 @@ struct devcd_entry {
 	 *                                             devcd_data_write()
 	 *                                               mod_delayed_work()
 	 *                                                 try_to_grab_pending()
-	 *                                                   del_timer()
+	 *                                                   timer_delete()
 	 *                                                     debug_assert_init()
 	 *       INIT_DELAYED_WORK()
 	 *       schedule_delayed_work()
@@ -140,7 +140,7 @@ static const struct bin_attribute *const devcd_dev_bin_attrs[] = {
 };
 
 static const struct attribute_group devcd_dev_group = {
-	.bin_attrs_new = devcd_dev_bin_attrs,
+	.bin_attrs = devcd_dev_bin_attrs,
 };
 
 static const struct attribute_group *devcd_dev_groups[] = {

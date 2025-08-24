@@ -9,6 +9,7 @@
 
 #include <linux/acpi.h>
 #include <linux/cleanup.h>
+#include <linux/export.h>
 #include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
 #include <linux/log2.h>
@@ -1033,8 +1034,8 @@ static int intel_gpio_get(struct gpio_chip *chip, unsigned int offset)
 	return !!(padcfg0 & PADCFG0_GPIORXSTATE);
 }
 
-static void intel_gpio_set(struct gpio_chip *chip, unsigned int offset,
-			   int value)
+static int intel_gpio_set(struct gpio_chip *chip, unsigned int offset,
+			  int value)
 {
 	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
 	void __iomem *reg;
@@ -1043,11 +1044,11 @@ static void intel_gpio_set(struct gpio_chip *chip, unsigned int offset,
 
 	pin = intel_gpio_to_pin(pctrl, offset, NULL, NULL);
 	if (pin < 0)
-		return;
+		return -EINVAL;
 
 	reg = intel_get_padcfg(pctrl, pin, PADCFG0);
 	if (!reg)
-		return;
+		return -EINVAL;
 
 	guard(raw_spinlock_irqsave)(&pctrl->lock);
 
@@ -1057,6 +1058,8 @@ static void intel_gpio_set(struct gpio_chip *chip, unsigned int offset,
 	else
 		padcfg0 &= ~PADCFG0_GPIOTXSTATE;
 	writel(padcfg0, reg);
+
+	return 0;
 }
 
 static int intel_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
@@ -1094,7 +1097,12 @@ static int intel_gpio_direction_input(struct gpio_chip *chip, unsigned int offse
 static int intel_gpio_direction_output(struct gpio_chip *chip, unsigned int offset,
 				       int value)
 {
-	intel_gpio_set(chip, offset, value);
+	int ret;
+
+	ret = intel_gpio_set(chip, offset, value);
+	if (ret)
+		return ret;
+
 	return pinctrl_gpio_direction_output(chip, offset);
 }
 
@@ -1543,7 +1551,6 @@ static int intel_pinctrl_probe_pwm(struct intel_pinctrl *pctrl,
 		.clk_rate = 19200000,
 		.npwm = 1,
 		.base_unit_bits = 22,
-		.bypass = true,
 	};
 	struct pwm_chip *chip;
 
@@ -1577,8 +1584,8 @@ int intel_pinctrl_probe(struct platform_device *pdev,
 	 * to the registers.
 	 */
 	pctrl->ncommunities = pctrl->soc->ncommunities;
-	pctrl->communities = devm_kcalloc(dev, pctrl->ncommunities,
-					  sizeof(*pctrl->communities), GFP_KERNEL);
+	pctrl->communities = devm_kmemdup_array(dev, pctrl->soc->communities, pctrl->ncommunities,
+						sizeof(*pctrl->soc->communities), GFP_KERNEL);
 	if (!pctrl->communities)
 		return -ENOMEM;
 
@@ -1587,8 +1594,6 @@ int intel_pinctrl_probe(struct platform_device *pdev,
 		void __iomem *regs;
 		u32 offset;
 		u32 value;
-
-		*community = pctrl->soc->communities[i];
 
 		regs = devm_platform_ioremap_resource(pdev, community->barno);
 		if (IS_ERR(regs))
@@ -1941,3 +1946,4 @@ MODULE_AUTHOR("Mathias Nyman <mathias.nyman@linux.intel.com>");
 MODULE_AUTHOR("Mika Westerberg <mika.westerberg@linux.intel.com>");
 MODULE_DESCRIPTION("Intel pinctrl/GPIO core driver");
 MODULE_LICENSE("GPL v2");
+MODULE_IMPORT_NS("PWM_LPSS");

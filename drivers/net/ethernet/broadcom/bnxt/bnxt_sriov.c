@@ -16,7 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/etherdevice.h>
 #include <net/dcbnl.h>
-#include "bnxt_hsi.h"
+#include <linux/bnxt/hsi.h>
 #include "bnxt.h"
 #include "bnxt_hwrm.h"
 #include "bnxt_ulp.h"
@@ -823,7 +823,7 @@ static int bnxt_sriov_enable(struct bnxt *bp, int *num_vfs)
 	int tx_ok = 0, rx_ok = 0, rss_ok = 0;
 	int avail_cp, avail_stat;
 
-	/* Check if we can enable requested num of vf's. At a mininum
+	/* Check if we can enable requested num of vf's. At a minimum
 	 * we require 1 RX 1 TX rings for each VF. In this minimum conf
 	 * features like TPA will not be available.
 	 */
@@ -946,7 +946,9 @@ void bnxt_sriov_disable(struct bnxt *bp)
 
 	/* Reclaim all resources for the PF. */
 	rtnl_lock();
+	netdev_lock(bp->dev);
 	bnxt_restore_pf_fw_resources(bp);
+	netdev_unlock(bp->dev);
 	rtnl_unlock();
 }
 
@@ -956,17 +958,21 @@ int bnxt_sriov_configure(struct pci_dev *pdev, int num_vfs)
 	struct bnxt *bp = netdev_priv(dev);
 
 	rtnl_lock();
+	netdev_lock(dev);
 	if (!netif_running(dev)) {
 		netdev_warn(dev, "Reject SRIOV config request since if is down!\n");
+		netdev_unlock(dev);
 		rtnl_unlock();
 		return 0;
 	}
 	if (test_bit(BNXT_STATE_IN_FW_RESET, &bp->state)) {
 		netdev_warn(dev, "Reject SRIOV config request when FW reset is in progress\n");
+		netdev_unlock(dev);
 		rtnl_unlock();
 		return 0;
 	}
 	bp->sriov_cfg = true;
+	netdev_unlock(dev);
 	rtnl_unlock();
 
 	if (pci_vfs_assigned(bp->pdev)) {
@@ -1119,7 +1125,7 @@ static int bnxt_vf_validate_set_mac(struct bnxt *bp, struct bnxt_vf_info *vf)
 		/* There are two cases:
 		 * 1.If firmware spec < 0x10202,VF MAC address is not forwarded
 		 *   to the PF and so it doesn't have to match
-		 * 2.Allow VF to modify it's own MAC when PF has not assigned a
+		 * 2.Allow VF to modify its own MAC when PF has not assigned a
 		 *   valid MAC address and firmware spec >= 0x10202
 		 */
 		mac_ok = true;

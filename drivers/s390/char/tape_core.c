@@ -14,6 +14,7 @@
 #define KMSG_COMPONENT "tape"
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
+#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/init.h>	     // for kernel parameters
 #include <linux/kmod.h>	     // for requesting modules
@@ -821,7 +822,7 @@ tape_delayed_next_request(struct work_struct *work)
 
 static void tape_long_busy_timeout(struct timer_list *t)
 {
-	struct tape_device *device = from_timer(device, t, lb_timeout);
+	struct tape_device *device = timer_container_of(device, t, lb_timeout);
 	struct tape_request *request;
 
 	spin_lock_irq(get_ccwdev_lock(device->cdev));
@@ -1108,7 +1109,7 @@ __tape_do_irq (struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
 				 struct tape_request, list);
 		if (req->status == TAPE_REQUEST_LONG_BUSY) {
 			DBF_EVENT(3, "(%08x): del timer\n", device->cdev_id);
-			if (del_timer(&device->lb_timeout)) {
+			if (timer_delete(&device->lb_timeout)) {
 				tape_put_device(device);
 				__tape_start_next_request(device);
 			}

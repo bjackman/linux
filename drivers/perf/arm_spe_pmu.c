@@ -50,7 +50,7 @@ static_assert((PERF_EVENT_FLAG_ARCH & SPE_PMU_HW_FLAGS_CX) == SPE_PMU_HW_FLAGS_C
 
 static void set_spe_event_has_cx(struct perf_event *event)
 {
-	if (IS_ENABLED(CONFIG_PID_IN_CONTEXTIDR) && !perf_allow_kernel(&event->attr))
+	if (IS_ENABLED(CONFIG_PID_IN_CONTEXTIDR) && !perf_allow_kernel())
 		event->hw.flags |= SPE_PMU_HW_FLAGS_CX;
 }
 
@@ -308,17 +308,21 @@ static u64 arm_spe_event_to_pmscr(struct perf_event *event)
 
 static void arm_spe_event_sanitise_period(struct perf_event *event)
 {
-	struct arm_spe_pmu *spe_pmu = to_spe_pmu(event->pmu);
 	u64 period = event->hw.sample_period;
 	u64 max_period = PMSIRR_EL1_INTERVAL_MASK;
 
-	if (period < spe_pmu->min_period)
-		period = spe_pmu->min_period;
-	else if (period > max_period)
-		period = max_period;
-	else
-		period &= max_period;
+	/*
+	 * The PMSIDR_EL1.Interval field (stored in spe_pmu->min_period) is a
+	 * recommendation for the minimum interval, not a hardware limitation.
+	 *
+	 * According to the Arm ARM (DDI 0487 L.a), section D24.7.12 PMSIRR_EL1,
+	 * Sampling Interval Reload Register, the INTERVAL field (bits [31:8])
+	 * states: "Software must set this to a nonzero value". Use 1 as the
+	 * minimum value.
+	 */
+	u64 min_period = FIELD_PREP(PMSIRR_EL1_INTERVAL_MASK, 1);
 
+	period = clamp_t(u64, period, min_period, max_period) & max_period;
 	event->hw.sample_period = period;
 }
 
@@ -765,7 +769,7 @@ static int arm_spe_pmu_event_init(struct perf_event *event)
 	set_spe_event_has_cx(event);
 	reg = arm_spe_event_to_pmscr(event);
 	if (reg & (PMSCR_EL1_PA | PMSCR_EL1_PCT))
-		return perf_allow_kernel(&event->attr);
+		return perf_allow_kernel();
 
 	return 0;
 }

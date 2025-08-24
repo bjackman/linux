@@ -569,9 +569,8 @@ static int it6263_read_edid(void *data, u8 *buf, unsigned int block, size_t len)
 	return 0;
 }
 
-static void
-it6263_bridge_atomic_disable(struct drm_bridge *bridge,
-			     struct drm_bridge_state *old_bridge_state)
+static void it6263_bridge_atomic_disable(struct drm_bridge *bridge,
+					 struct drm_atomic_state *state)
 {
 	struct it6263 *it = bridge_to_it6263(bridge);
 
@@ -581,11 +580,9 @@ it6263_bridge_atomic_disable(struct drm_bridge *bridge,
 		     AFE_DRV_RST | AFE_DRV_PWD);
 }
 
-static void
-it6263_bridge_atomic_enable(struct drm_bridge *bridge,
-			    struct drm_bridge_state *old_bridge_state)
+static void it6263_bridge_atomic_enable(struct drm_bridge *bridge,
+					struct drm_atomic_state *state)
 {
-	struct drm_atomic_state *state = old_bridge_state->base.state;
 	struct it6263 *it = bridge_to_it6263(bridge);
 	const struct drm_crtc_state *crtc_state;
 	struct regmap *regmap = it->hdmi_regmap;
@@ -668,13 +665,14 @@ it6263_bridge_mode_valid(struct drm_bridge *bridge,
 }
 
 static int it6263_bridge_attach(struct drm_bridge *bridge,
+				struct drm_encoder *encoder,
 				enum drm_bridge_attach_flags flags)
 {
 	struct it6263 *it = bridge_to_it6263(bridge);
 	struct drm_connector *connector;
 	int ret;
 
-	ret = drm_bridge_attach(bridge->encoder, it->next_bridge, bridge,
+	ret = drm_bridge_attach(encoder, it->next_bridge, bridge,
 				flags | DRM_BRIDGE_ATTACH_NO_CONNECTOR);
 	if (ret < 0)
 		return ret;
@@ -682,7 +680,7 @@ static int it6263_bridge_attach(struct drm_bridge *bridge,
 	if (flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)
 		return 0;
 
-	connector = drm_bridge_connector_init(bridge->dev, bridge->encoder);
+	connector = drm_bridge_connector_init(bridge->dev, encoder);
 	if (IS_ERR(connector)) {
 		ret = PTR_ERR(connector);
 		dev_err(it->dev, "failed to initialize bridge connector: %d\n",
@@ -690,12 +688,13 @@ static int it6263_bridge_attach(struct drm_bridge *bridge,
 		return ret;
 	}
 
-	drm_connector_attach_encoder(connector, bridge->encoder);
+	drm_connector_attach_encoder(connector, encoder);
 
 	return 0;
 }
 
-static enum drm_connector_status it6263_bridge_detect(struct drm_bridge *bridge)
+static enum drm_connector_status
+it6263_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
 {
 	struct it6263 *it = bridge_to_it6263(bridge);
 
@@ -818,9 +817,10 @@ static int it6263_probe(struct i2c_client *client)
 	struct it6263 *it;
 	int ret;
 
-	it = devm_kzalloc(dev, sizeof(*it), GFP_KERNEL);
-	if (!it)
-		return -ENOMEM;
+	it = devm_drm_bridge_alloc(dev, struct it6263, bridge,
+				   &it6263_bridge_funcs);
+	if (IS_ERR(it))
+		return PTR_ERR(it);
 
 	it->dev = dev;
 	it->hdmi_i2c = client;
@@ -868,7 +868,6 @@ static int it6263_probe(struct i2c_client *client)
 
 	i2c_set_clientdata(client, it);
 
-	it->bridge.funcs = &it6263_bridge_funcs;
 	it->bridge.of_node = dev->of_node;
 	/* IT6263 chip doesn't support HPD interrupt. */
 	it->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID |

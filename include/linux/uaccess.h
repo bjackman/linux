@@ -7,7 +7,7 @@
 #include <linux/minmax.h>
 #include <linux/nospec.h>
 #include <linux/sched.h>
-#include <linux/thread_info.h>
+#include <linux/ucopysize.h>
 
 #include <asm/uaccess.h>
 
@@ -295,6 +295,8 @@ static inline bool pagefault_disabled(void)
  * in_atomic() will report different values based on !CONFIG_PREEMPT_COUNT.
  */
 #define faulthandler_disabled() (pagefault_disabled() || in_atomic())
+
+DEFINE_LOCK_GUARD_0(pagefault, pagefault_disable(), pagefault_enable())
 
 #ifndef CONFIG_ARCH_HAS_SUBPAGE_FAULTS
 

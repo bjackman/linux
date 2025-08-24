@@ -8,6 +8,7 @@
  *    Copyright (C) 1995  Linus Torvalds
  */
 
+#include <linux/cpufeature.h>
 #include <linux/signal.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
@@ -39,7 +40,6 @@
 #include <asm/kfence.h>
 #include <asm/dma.h>
 #include <asm/abs_lowcore.h>
-#include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/sections.h>
 #include <asm/sclp.h>
@@ -106,7 +106,7 @@ void mark_rodata_ro(void)
 {
 	unsigned long size = __end_ro_after_init - __start_ro_after_init;
 
-	if (MACHINE_HAS_NX)
+	if (cpu_has_nx())
 		system_ctl_set_bit(0, CR0_INSTRUCTION_EXEC_PROTECTION_BIT);
 	__set_memory_ro(__start_ro_after_init, __end_ro_after_init);
 	pr_info("Write protected read-only-after-init data: %luk\n", size >> 10);
@@ -142,7 +142,7 @@ bool force_dma_unencrypted(struct device *dev)
 }
 
 /* protected virtualization */
-static void pv_init(void)
+static void __init pv_init(void)
 {
 	if (!is_prot_virt_guest())
 		return;
@@ -160,7 +160,6 @@ void __init arch_mm_preinit(void)
 	cpumask_set_cpu(0, mm_cpumask(&init_mm));
 
 	pv_init();
-	kfence_split_mapping();
 
 	setup_zero_pages();	/* Setup zeroed pages. */
 }
@@ -266,7 +265,7 @@ int arch_add_memory(int nid, u64 start, u64 size,
 	unsigned long size_pages = PFN_DOWN(size);
 	int rc;
 
-	if (WARN_ON_ONCE(params->pgprot.pgprot != PAGE_KERNEL.pgprot))
+	if (WARN_ON_ONCE(pgprot_val(params->pgprot) != pgprot_val(PAGE_KERNEL)))
 		return -EINVAL;
 
 	VM_BUG_ON(!mhp_range_allowed(start, size, true));
