@@ -53,8 +53,6 @@ struct vcpu_vt {
 #ifdef CONFIG_X86_64
 	u64		msr_host_kernel_gs_base;
 #endif
-
-	unsigned long	host_debugctlmsr;
 };
 
 #ifdef CONFIG_KVM_INTEL_TDX
@@ -71,8 +69,8 @@ static __always_inline bool is_td_vcpu(struct kvm_vcpu *vcpu)
 
 #else
 
-static inline bool is_td(struct kvm *kvm) { return false; }
-static inline bool is_td_vcpu(struct kvm_vcpu *vcpu) { return false; }
+static __always_inline bool is_td(struct kvm *kvm) { return false; }
+static __always_inline bool is_td_vcpu(struct kvm_vcpu *vcpu) { return false; }
 
 #endif
 

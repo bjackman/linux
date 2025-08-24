@@ -415,7 +415,8 @@ static const struct ctl_table nommu_table[] = {
 };
 
 /*
- * initialise the percpu counter for VM and region record slabs
+ * initialise the percpu counter for VM and region record slabs, initialise VMA
+ * state.
  */
 void __init mmap_init(void)
 {
@@ -425,6 +426,7 @@ void __init mmap_init(void)
 	VM_BUG_ON(ret);
 	vm_region_jar = KMEM_CACHE(vm_region, SLAB_PANIC|SLAB_ACCOUNT);
 	register_sysctl_init("vm", nommu_table);
+	vma_state_init();
 }
 
 /*
@@ -643,22 +645,6 @@ struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
 EXPORT_SYMBOL(find_vma);
 
 /*
- * At least xtensa ends up having protection faults even with no
- * MMU.. No stack expansion, at least.
- */
-struct vm_area_struct *lock_mm_and_find_vma(struct mm_struct *mm,
-			unsigned long addr, struct pt_regs *regs)
-{
-	struct vm_area_struct *vma;
-
-	mmap_read_lock(mm);
-	vma = vma_lookup(mm, addr);
-	if (!vma)
-		mmap_read_unlock(mm);
-	return vma;
-}
-
-/*
  * expand a stack to a given address
  * - not supported under NOMMU conditions
  */
@@ -733,7 +719,7 @@ static int validate_mmap_request(struct file *file,
 
 	if (file) {
 		/* files must support mmap */
-		if (!file->f_op->mmap)
+		if (!can_mmap_file(file))
 			return -ENODEV;
 
 		/* work out if what we've got could possibly be shared
@@ -858,12 +844,12 @@ static int validate_mmap_request(struct file *file,
  * we've determined that we can make the mapping, now translate what we
  * now know into VMA flags
  */
-static unsigned long determine_vm_flags(struct file *file,
-					unsigned long prot,
-					unsigned long flags,
-					unsigned long capabilities)
+static vm_flags_t determine_vm_flags(struct file *file,
+		unsigned long prot,
+		unsigned long flags,
+		unsigned long capabilities)
 {
-	unsigned long vm_flags;
+	vm_flags_t vm_flags;
 
 	vm_flags = calc_vm_prot_bits(prot, 0) | calc_vm_flag_bits(file, flags);
 
@@ -1906,3 +1892,11 @@ static int __meminit init_admin_reserve(void)
 	return 0;
 }
 subsys_initcall(init_admin_reserve);
+
+int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
+{
+	mmap_write_lock(oldmm);
+	dup_mm_exe_file(mm, oldmm);
+	mmap_write_unlock(oldmm);
+	return 0;
+}

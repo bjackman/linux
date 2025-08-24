@@ -132,6 +132,12 @@ to latency spikes in unsuspecting applications. The kernel employs
 various heuristics to avoid wasting CPU cycles if it detects that
 proactive compaction is not being effective.
 
+Setting the value above 80 will, in addition to lowering the acceptable level
+of fragmentation, make the compaction code more sensitive to increases in
+fragmentation, i.e. compaction will trigger more often, but reduce
+fragmentation by a smaller amount.
+This makes the fragmentation level more stable over time.
+
 Be careful when setting it to extreme values like 100, as that may
 cause excessive background compaction activity.
 
@@ -459,8 +465,8 @@ The minimum value is 1 (1/1 -> 100%). The value less than 1 completely
 disables protection of the pages.
 
 
-max_map_count:
-==============
+max_map_count
+=============
 
 This file contains the maximum number of memory map areas a process
 may have. Memory map areas are used as a side-effect of calling
@@ -489,8 +495,8 @@ memory allocations.
 The default value depends on CONFIG_MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT.
 
 
-memory_failure_early_kill:
-==========================
+memory_failure_early_kill
+=========================
 
 Control how to kill processes when uncorrected memory error (typically
 a 2bit error in a memory module) is detected in the background by hardware

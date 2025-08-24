@@ -62,14 +62,7 @@ inline u16 errno_to_nvme_status(struct nvmet_req *req, int errno)
 		return  NVME_SC_LBA_RANGE | NVME_STATUS_DNR;
 	case -EOPNOTSUPP:
 		req->error_loc = offsetof(struct nvme_common_command, opcode);
-		switch (req->cmd->common.opcode) {
-		case nvme_cmd_dsm:
-		case nvme_cmd_write_zeroes:
-			return NVME_SC_ONCS_NOT_SUPPORTED | NVME_STATUS_DNR;
-		default:
-			return NVME_SC_INVALID_OPCODE | NVME_STATUS_DNR;
-		}
-		break;
+		return NVME_SC_INVALID_OPCODE | NVME_STATUS_DNR;
 	case -ENODATA:
 		req->error_loc = offsetof(struct nvme_rw_command, nsid);
 		return NVME_SC_ACCESS_DENIED;
@@ -588,8 +581,6 @@ int nvmet_ns_enable(struct nvmet_ns *ns)
 	if (ns->enabled)
 		goto out_unlock;
 
-	ret = -EMFILE;
-
 	ret = nvmet_bdev_ns_enable(ns);
 	if (ret == -ENOTBLK)
 		ret = nvmet_file_ns_enable(ns);
@@ -651,7 +642,7 @@ void nvmet_ns_disable(struct nvmet_ns *ns)
 	 * Now that we removed the namespaces from the lookup list, we
 	 * can kill the per_cpu ref and wait for any remaining references
 	 * to be dropped, as well as a RCU grace period for anyone only
-	 * using the namepace under rcu_read_lock().  Note that we can't
+	 * using the namespace under rcu_read_lock().  Note that we can't
 	 * use call_rcu here as we need to ensure the namespaces have
 	 * been fully destroyed before unloading the module.
 	 */
@@ -1969,24 +1960,24 @@ static int __init nvmet_init(void)
 	if (!nvmet_wq)
 		goto out_free_buffered_work_queue;
 
-	error = nvmet_init_discovery();
+	error = nvmet_init_debugfs();
 	if (error)
 		goto out_free_nvmet_work_queue;
 
-	error = nvmet_init_debugfs();
-	if (error)
-		goto out_exit_discovery;
-
-	error = nvmet_init_configfs();
+	error = nvmet_init_discovery();
 	if (error)
 		goto out_exit_debugfs;
 
+	error = nvmet_init_configfs();
+	if (error)
+		goto out_exit_discovery;
+
 	return 0;
 
-out_exit_debugfs:
-	nvmet_exit_debugfs();
 out_exit_discovery:
 	nvmet_exit_discovery();
+out_exit_debugfs:
+	nvmet_exit_debugfs();
 out_free_nvmet_work_queue:
 	destroy_workqueue(nvmet_wq);
 out_free_buffered_work_queue:
@@ -2001,8 +1992,8 @@ out_destroy_bvec_cache:
 static void __exit nvmet_exit(void)
 {
 	nvmet_exit_configfs();
-	nvmet_exit_debugfs();
 	nvmet_exit_discovery();
+	nvmet_exit_debugfs();
 	ida_destroy(&cntlid_ida);
 	destroy_workqueue(nvmet_wq);
 	destroy_workqueue(buffered_io_wq);

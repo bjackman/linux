@@ -10,6 +10,7 @@
 #include <linux/seq_buf.h>
 #include <linux/seq_file.h>
 #include <linux/vmalloc.h>
+#include <linux/kmemleak.h>
 
 #define ALLOCINFO_FILE_NAME		"allocinfo"
 #define MODULE_ALLOC_TAG_VMAP_SIZE	(100000UL * sizeof(struct alloc_tag))
@@ -24,8 +25,10 @@ static bool mem_profiling_support;
 
 static struct codetag_type *alloc_tag_cttype;
 
+#ifdef CONFIG_ARCH_MODULE_NEEDS_WEAK_PER_CPU
 DEFINE_PER_CPU(struct alloc_tag_counters, _shared_alloc_tag);
 EXPORT_SYMBOL(_shared_alloc_tag);
+#endif
 
 DEFINE_STATIC_KEY_MAYBE(CONFIG_MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT,
 			mem_alloc_profiling_key);
@@ -45,21 +48,16 @@ struct allocinfo_private {
 static void *allocinfo_start(struct seq_file *m, loff_t *pos)
 {
 	struct allocinfo_private *priv;
-	struct codetag *ct;
 	loff_t node = *pos;
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
-	m->private = priv;
-	if (!priv)
-		return NULL;
-
-	priv->print_header = (node == 0);
+	priv = (struct allocinfo_private *)m->private;
 	codetag_lock_module_list(alloc_tag_cttype, true);
-	priv->iter = codetag_get_ct_iter(alloc_tag_cttype);
-	while ((ct = codetag_next_ct(&priv->iter)) != NULL && node)
-		node--;
-
-	return ct ? priv : NULL;
+	if (node == 0) {
+		priv->print_header = true;
+		priv->iter = codetag_get_ct_iter(alloc_tag_cttype);
+		codetag_next_ct(&priv->iter);
+	}
+	return priv->iter.ct ? priv : NULL;
 }
 
 static void *allocinfo_next(struct seq_file *m, void *arg, loff_t *pos)
@@ -76,12 +74,7 @@ static void *allocinfo_next(struct seq_file *m, void *arg, loff_t *pos)
 
 static void allocinfo_stop(struct seq_file *m, void *arg)
 {
-	struct allocinfo_private *priv = (struct allocinfo_private *)m->private;
-
-	if (priv) {
-		codetag_lock_module_list(alloc_tag_cttype, false);
-		kfree(priv);
-	}
+	codetag_lock_module_list(alloc_tag_cttype, false);
 }
 
 static void print_allocinfo_header(struct seq_buf *buf)
@@ -133,6 +126,9 @@ size_t alloc_tag_top_users(struct codetag_bytes *tags, size_t count, bool can_sl
 	struct codetag *ct;
 	struct codetag_bytes n;
 	unsigned int i, nr = 0;
+
+	if (IS_ERR_OR_NULL(alloc_tag_cttype))
+		return 0;
 
 	if (can_sleep)
 		codetag_lock_module_list(alloc_tag_cttype, true);
@@ -242,17 +238,6 @@ static void shutdown_mem_profiling(bool remove_file)
 	if (remove_file)
 		remove_proc_entry(ALLOCINFO_FILE_NAME, NULL);
 	mem_profiling_support = false;
-}
-
-static void __init procfs_init(void)
-{
-	if (!mem_profiling_support)
-		return;
-
-	if (!proc_create_seq(ALLOCINFO_FILE_NAME, 0400, NULL, &allocinfo_seq_op)) {
-		pr_err("Failed to create %s file\n", ALLOCINFO_FILE_NAME);
-		shutdown_mem_profiling(false);
-	}
 }
 
 void __init alloc_tag_sec_init(void)
@@ -618,15 +603,16 @@ out:
 	mas_unlock(&mas);
 }
 
-static void load_module(struct module *mod, struct codetag *start, struct codetag *stop)
+static int load_module(struct module *mod, struct codetag *start, struct codetag *stop)
 {
 	/* Allocate module alloc_tag percpu counters */
 	struct alloc_tag *start_tag;
 	struct alloc_tag *stop_tag;
 	struct alloc_tag *tag;
 
+	/* percpu counters for core allocations are already statically allocated */
 	if (!mod)
-		return;
+		return 0;
 
 	start_tag = ct_to_alloc_tag(start);
 	stop_tag = ct_to_alloc_tag(stop);
@@ -638,12 +624,18 @@ static void load_module(struct module *mod, struct codetag *start, struct codeta
 				free_percpu(tag->counters);
 				tag->counters = NULL;
 			}
-			shutdown_mem_profiling(true);
-			pr_err("Failed to allocate memory for allocation tag percpu counters in the module %s. Memory allocation profiling is disabled!\n",
+			pr_err("Failed to allocate memory for allocation tag percpu counters in the module %s\n",
 			       mod->name);
-			break;
+			return -ENOMEM;
 		}
+
+		/*
+		 * Avoid a kmemleak false positive. The pointer to the counters is stored
+		 * in the alloc_tag section of the module and cannot be directly accessed.
+		 */
+		kmemleak_ignore_percpu(tag->counters);
 	}
+	return 0;
 }
 
 static void replace_module(struct module *mod, struct module *new_mod)
@@ -813,18 +805,34 @@ static int __init alloc_tag_init(void)
 	};
 	int res;
 
+	sysctl_init();
+
+	if (!mem_profiling_support) {
+		pr_info("Memory allocation profiling is not supported!\n");
+		return 0;
+	}
+
+	if (!proc_create_seq_private(ALLOCINFO_FILE_NAME, 0400, NULL, &allocinfo_seq_op,
+				     sizeof(struct allocinfo_private), NULL)) {
+		pr_err("Failed to create %s file\n", ALLOCINFO_FILE_NAME);
+		shutdown_mem_profiling(false);
+		return -ENOMEM;
+	}
+
 	res = alloc_mod_tags_mem();
-	if (res)
+	if (res) {
+		pr_err("Failed to reserve address space for module tags, errno = %d\n", res);
+		shutdown_mem_profiling(true);
 		return res;
+	}
 
 	alloc_tag_cttype = codetag_register_type(&desc);
 	if (IS_ERR(alloc_tag_cttype)) {
+		pr_err("Allocation tags registration failed, errno = %ld\n", PTR_ERR(alloc_tag_cttype));
 		free_mod_tags_mem();
+		shutdown_mem_profiling(true);
 		return PTR_ERR(alloc_tag_cttype);
 	}
-
-	sysctl_init();
-	procfs_init();
 
 	return 0;
 }

@@ -55,6 +55,8 @@
 #define EXYNOS4_MIPI_PHY_SRESETN		(1 << 1)
 #define EXYNOS4_MIPI_PHY_MRESETN		(1 << 2)
 #define EXYNOS4_MIPI_PHY_RESET_MASK		(3 << 1)
+/* USB PHY enable bit, valid for Exynos7870 */
+#define EXYNOS7870_USB2PHY_ENABLE		(1 << 1)
 
 #define S5P_INFORM0				0x0800
 #define S5P_INFORM1				0x0804
@@ -184,6 +186,9 @@
 
 /* Only for S5Pv210 */
 #define S5PV210_EINT_WAKEUP_MASK	0xC004
+
+/* Only for Exynos2200 */
+#define EXYNOS2200_PHY_CTRL_USB20	0x72C
 
 /* Only for Exynos4210 */
 #define S5P_CMU_CLKSTOP_LCD1_LOWPWR	0x1154
@@ -657,6 +662,14 @@
 #define EXYNOS5433_PAD_RETENTION_UFS_OPTION			(0x3268)
 #define EXYNOS5433_PAD_RETENTION_FSYSGENIO_OPTION		(0x32A8)
 
+/* For Exynos990 */
+#define EXYNOS990_PHY_CTRL_USB20				(0x72C)
+
+/* For Exynos7870 */
+#define EXYNOS7870_MIPI_PHY_CONTROL0				(0x070c)
+#define EXYNOS7870_MIPI_PHY_CONTROL1				(0x0714)
+#define EXYNOS7870_MIPI_PHY_CONTROL2				(0x0734)
+
 /* For Tensor GS101 */
 /* PMU ALIVE */
 #define GS101_SYSIP_DAT0					(0x810)
@@ -664,6 +677,7 @@
 #define GS101_CPU_INFORM(cpu)	\
 			(GS101_CPU0_INFORM + (cpu*4))
 #define GS101_SYSTEM_CONFIGURATION				(0x3A00)
+#define GS101_EINT_WAKEUP_MASK					(0x3A80)
 #define GS101_PHY_CTRL_USB20					(0x3EB0)
 #define GS101_PHY_CTRL_USBDP					(0x3EB4)
 

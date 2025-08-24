@@ -188,8 +188,13 @@ retry:
 		} else if (format->format == DRM_FORMAT_RGB332) {
 			drm_fb_xrgb8888_to_rgb332(&dst, NULL, src, fb, rect, fmtcnv_state);
 		} else if (format->format == DRM_FORMAT_RGB565) {
-			drm_fb_xrgb8888_to_rgb565(&dst, NULL, src, fb, rect, fmtcnv_state,
-						  gud_is_big_endian());
+			if (gud_is_big_endian()) {
+				drm_fb_xrgb8888_to_rgb565be(&dst, NULL, src, fb, rect,
+							    fmtcnv_state);
+			} else {
+				drm_fb_xrgb8888_to_rgb565(&dst, NULL, src, fb, rect,
+							  fmtcnv_state);
+			}
 		} else if (format->format == DRM_FORMAT_RGB888) {
 			drm_fb_xrgb8888_to_rgb888(&dst, NULL, src, fb, rect, fmtcnv_state);
 		} else {
@@ -234,7 +239,7 @@ struct gud_usb_bulk_context {
 
 static void gud_usb_bulk_timeout(struct timer_list *t)
 {
-	struct gud_usb_bulk_context *ctx = from_timer(ctx, t, timer);
+	struct gud_usb_bulk_context *ctx = timer_container_of(ctx, t, timer);
 
 	usb_sg_cancel(&ctx->sgr);
 }

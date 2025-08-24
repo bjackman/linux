@@ -233,7 +233,6 @@ static int lpspi_unprepare_xfer_hardware(struct spi_controller *controller)
 	struct fsl_lpspi_data *fsl_lpspi =
 				spi_controller_get_devdata(controller);
 
-	pm_runtime_mark_last_busy(fsl_lpspi->dev);
 	pm_runtime_put_autosuspend(fsl_lpspi->dev);
 
 	return 0;
@@ -331,12 +330,10 @@ static int fsl_lpspi_set_bitrate(struct fsl_lpspi_data *fsl_lpspi)
 	}
 
 	if (config.speed_hz > perclk_rate / 2) {
-		dev_err(fsl_lpspi->dev,
-		      "per-clk should be at least two times of transfer speed");
-		return -EINVAL;
+		div = 2;
+	} else {
+		div = DIV_ROUND_UP(perclk_rate, config.speed_hz);
 	}
-
-	div = DIV_ROUND_UP(perclk_rate, config.speed_hz);
 
 	for (prescale = 0; prescale <= prescale_max; prescale++) {
 		scldiv = div / (1 << prescale) - 2;
@@ -966,7 +963,6 @@ static int fsl_lpspi_probe(struct platform_device *pdev)
 		goto free_dma;
 	}
 
-	pm_runtime_mark_last_busy(fsl_lpspi->dev);
 	pm_runtime_put_autosuspend(fsl_lpspi->dev);
 
 	return 0;

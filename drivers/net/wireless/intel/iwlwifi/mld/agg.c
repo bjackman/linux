@@ -305,10 +305,15 @@ iwl_mld_reorder(struct iwl_mld *mld, struct napi_struct *napi,
 	 * already ahead and it will be dropped.
 	 * If the last sub-frame is not on this queue - we will get frame
 	 * release notification with up to date NSSN.
+	 * If this is the first frame that is stored in the buffer, the head_sn
+	 * may be outdated. Update it based on the last NSSN to make sure it
+	 * will be released when the frame release notification arrives.
 	 */
 	if (!amsdu || last_subframe)
 		iwl_mld_reorder_release_frames(mld, sta, napi, baid_data,
 					       buffer, nssn);
+	else if (buffer->num_stored == 1)
+		buffer->head_sn = nssn;
 
 	return IWL_MLD_BUFFERED_SKB;
 }
@@ -317,7 +322,7 @@ EXPORT_SYMBOL_IF_IWLWIFI_KUNIT(iwl_mld_reorder);
 static void iwl_mld_rx_agg_session_expired(struct timer_list *t)
 {
 	struct iwl_mld_baid_data *data =
-		from_timer(data, t, session_timer);
+		timer_container_of(data, t, session_timer);
 	struct iwl_mld_baid_data __rcu **rcu_ptr = data->rcu_ptr;
 	struct iwl_mld_baid_data *ba_data;
 	struct ieee80211_link_sta *link_sta;

@@ -3925,7 +3925,7 @@ void lpfc_poll_eratt(struct timer_list *t)
 	uint32_t eratt = 0;
 	uint64_t sli_intr, cnt;
 
-	phba = from_timer(phba, t, eratt_poll);
+	phba = timer_container_of(phba, t, eratt_poll);
 
 	if (test_bit(FC_UNLOADING, &phba->pport->load_flag))
 		return;
@@ -5167,7 +5167,6 @@ lpfc_sli4_brdreset(struct lpfc_hba *phba)
 	phba->link_events = 0;
 	phba->pport->fc_myDID = 0;
 	phba->pport->fc_prevDID = 0;
-	clear_bit(HBA_SETUP, &phba->hba_flag);
 
 	spin_lock_irq(&phba->hbalock);
 	psli->sli_flag &= ~(LPFC_PROCESS_LA);
@@ -5284,6 +5283,7 @@ lpfc_sli_brdrestart_s4(struct lpfc_hba *phba)
 			"0296 Restart HBA Data: x%x x%x\n",
 			phba->pport->port_state, psli->sli_flag);
 
+	clear_bit(HBA_SETUP, &phba->hba_flag);
 	lpfc_sli4_queue_unset(phba);
 
 	rc = lpfc_sli4_brdreset(phba);
@@ -9125,7 +9125,7 @@ out_free_mbox:
 void
 lpfc_mbox_timeout(struct timer_list *t)
 {
-	struct lpfc_hba  *phba = from_timer(phba, t, sli.mbox_tmo);
+	struct lpfc_hba  *phba = timer_container_of(phba, t, sli.mbox_tmo);
 	unsigned long iflag;
 	uint32_t tmo_posted;
 
@@ -15661,7 +15661,7 @@ lpfc_sli4_intr_handler(int irq, void *dev_id)
 
 void lpfc_sli4_poll_hbtimer(struct timer_list *t)
 {
-	struct lpfc_hba *phba = from_timer(phba, t, cpuhp_poll_timer);
+	struct lpfc_hba *phba = timer_container_of(phba, t, cpuhp_poll_timer);
 	struct lpfc_queue *eq;
 
 	rcu_read_lock();
@@ -16477,10 +16477,10 @@ lpfc_cq_create_set(struct lpfc_hba *phba, struct lpfc_queue **cqp,
 			case 4096:
 				if (phba->sli4_hba.pc_sli4_params.cqv ==
 				    LPFC_Q_CREATE_VERSION_2) {
-					bf_set(lpfc_mbx_cq_create_set_cqe_cnt,
+					bf_set(lpfc_mbx_cq_create_set_cqe_cnt_lo,
 					       &cq_set->u.request,
-						cq->entry_count);
-					bf_set(lpfc_mbx_cq_create_set_cqe_cnt,
+					       cq->entry_count);
+					bf_set(lpfc_mbx_cq_create_set_cqecnt,
 					       &cq_set->u.request,
 					       LPFC_CQ_CNT_WORD7);
 					break;
@@ -16496,15 +16496,15 @@ lpfc_cq_create_set(struct lpfc_hba *phba, struct lpfc_queue **cqp,
 				}
 				fallthrough;	/* otherwise default to smallest */
 			case 256:
-				bf_set(lpfc_mbx_cq_create_set_cqe_cnt,
+				bf_set(lpfc_mbx_cq_create_set_cqecnt,
 				       &cq_set->u.request, LPFC_CQ_CNT_256);
 				break;
 			case 512:
-				bf_set(lpfc_mbx_cq_create_set_cqe_cnt,
+				bf_set(lpfc_mbx_cq_create_set_cqecnt,
 				       &cq_set->u.request, LPFC_CQ_CNT_512);
 				break;
 			case 1024:
-				bf_set(lpfc_mbx_cq_create_set_cqe_cnt,
+				bf_set(lpfc_mbx_cq_create_set_cqecnt,
 				       &cq_set->u.request, LPFC_CQ_CNT_1024);
 				break;
 			}

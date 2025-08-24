@@ -47,7 +47,7 @@ static int amdgpu_mes_doorbell_init(struct amdgpu_device *adev)
 	/* Bitmap for dynamic allocation of kernel doorbells */
 	mes->doorbell_bitmap = bitmap_zalloc(PAGE_SIZE / sizeof(u32), GFP_KERNEL);
 	if (!mes->doorbell_bitmap) {
-		DRM_ERROR("Failed to allocate MES doorbell bitmap\n");
+		dev_err(adev->dev, "Failed to allocate MES doorbell bitmap\n");
 		return -ENOMEM;
 	}
 
@@ -256,7 +256,7 @@ int amdgpu_mes_suspend(struct amdgpu_device *adev)
 	r = adev->mes.funcs->suspend_gang(&adev->mes, &input);
 	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to suspend all gangs");
+		dev_err(adev->dev, "failed to suspend all gangs");
 
 	return r;
 }
@@ -280,7 +280,7 @@ int amdgpu_mes_resume(struct amdgpu_device *adev)
 	r = adev->mes.funcs->resume_gang(&adev->mes, &input);
 	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to resume all gangs");
+		dev_err(adev->dev, "failed to resume all gangs");
 
 	return r;
 }
@@ -300,9 +300,11 @@ int amdgpu_mes_map_legacy_queue(struct amdgpu_device *adev,
 	queue_input.mqd_addr = amdgpu_bo_gpu_offset(ring->mqd_obj);
 	queue_input.wptr_addr = ring->wptr_gpu_addr;
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->map_legacy_queue(&adev->mes, &queue_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to map legacy queue\n");
+		dev_err(adev->dev, "failed to map legacy queue\n");
 
 	return r;
 }
@@ -323,9 +325,11 @@ int amdgpu_mes_unmap_legacy_queue(struct amdgpu_device *adev,
 	queue_input.trail_fence_addr = gpu_addr;
 	queue_input.trail_fence_data = seq;
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->unmap_legacy_queue(&adev->mes, &queue_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to unmap legacy queue\n");
+		dev_err(adev->dev, "failed to unmap legacy queue\n");
 
 	return r;
 }
@@ -353,9 +357,11 @@ int amdgpu_mes_reset_legacy_queue(struct amdgpu_device *adev,
 	if (ring->funcs->type == AMDGPU_RING_TYPE_GFX)
 		queue_input.legacy_gfx = true;
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->reset_hw_queue(&adev->mes, &queue_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to reset legacy queue\n");
+		dev_err(adev->dev, "failed to reset legacy queue\n");
 
 	return r;
 }
@@ -383,7 +389,9 @@ uint32_t amdgpu_mes_rreg(struct amdgpu_device *adev, uint32_t reg)
 		goto error;
 	}
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		dev_err(adev->dev, "failed to read reg (0x%x)\n", reg);
 	else
@@ -411,7 +419,9 @@ int amdgpu_mes_wreg(struct amdgpu_device *adev,
 		goto error;
 	}
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		dev_err(adev->dev, "failed to write reg (0x%x)\n", reg);
 
@@ -438,32 +448,9 @@ int amdgpu_mes_reg_write_reg_wait(struct amdgpu_device *adev,
 		goto error;
 	}
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
-	if (r)
-		dev_err(adev->dev, "failed to reg_write_reg_wait\n");
-
-error:
-	return r;
-}
-
-int amdgpu_mes_reg_wait(struct amdgpu_device *adev, uint32_t reg,
-			uint32_t val, uint32_t mask)
-{
-	struct mes_misc_op_input op_input;
-	int r;
-
-	op_input.op = MES_MISC_OP_WRM_REG_WAIT;
-	op_input.wrm_reg.reg0 = reg;
-	op_input.wrm_reg.ref = val;
-	op_input.wrm_reg.mask = mask;
-
-	if (!adev->mes.funcs->misc_op) {
-		dev_err(adev->dev, "mes reg wait is not supported!\n");
-		r = -EINVAL;
-		goto error;
-	}
-
-	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		dev_err(adev->dev, "failed to reg_write_reg_wait\n");
 
@@ -482,7 +469,8 @@ int amdgpu_mes_set_shader_debugger(struct amdgpu_device *adev,
 	int r;
 
 	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes set shader debugger is not supported!\n");
+		dev_err(adev->dev,
+			"mes set shader debugger is not supported!\n");
 		return -EINVAL;
 	}
 
@@ -506,7 +494,7 @@ int amdgpu_mes_set_shader_debugger(struct amdgpu_device *adev,
 
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
 	if (r)
-		DRM_ERROR("failed to set_shader_debugger\n");
+		dev_err(adev->dev, "failed to set_shader_debugger\n");
 
 	amdgpu_mes_unlock(&adev->mes);
 
@@ -520,7 +508,8 @@ int amdgpu_mes_flush_shader_debugger(struct amdgpu_device *adev,
 	int r;
 
 	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes flush shader debugger is not supported!\n");
+		dev_err(adev->dev,
+			"mes flush shader debugger is not supported!\n");
 		return -EINVAL;
 	}
 
@@ -532,47 +521,11 @@ int amdgpu_mes_flush_shader_debugger(struct amdgpu_device *adev,
 
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
 	if (r)
-		DRM_ERROR("failed to set_shader_debugger\n");
+		dev_err(adev->dev, "failed to set_shader_debugger\n");
 
 	amdgpu_mes_unlock(&adev->mes);
 
 	return r;
-}
-
-#define DEFINE_AMDGPU_MES_CTX_GET_OFFS_ENG(_eng)			\
-do {									\
-       if (id_offs < AMDGPU_MES_CTX_MAX_OFFS)				\
-		return offsetof(struct amdgpu_mes_ctx_meta_data,	\
-				_eng[ring->idx].slots[id_offs]);        \
-       else if (id_offs == AMDGPU_MES_CTX_RING_OFFS)			\
-		return offsetof(struct amdgpu_mes_ctx_meta_data,        \
-				_eng[ring->idx].ring);                  \
-       else if (id_offs == AMDGPU_MES_CTX_IB_OFFS)			\
-		return offsetof(struct amdgpu_mes_ctx_meta_data,        \
-				_eng[ring->idx].ib);                    \
-       else if (id_offs == AMDGPU_MES_CTX_PADDING_OFFS)			\
-		return offsetof(struct amdgpu_mes_ctx_meta_data,        \
-				_eng[ring->idx].padding);               \
-} while(0)
-
-int amdgpu_mes_ctx_get_offs(struct amdgpu_ring *ring, unsigned int id_offs)
-{
-	switch (ring->funcs->type) {
-	case AMDGPU_RING_TYPE_GFX:
-		DEFINE_AMDGPU_MES_CTX_GET_OFFS_ENG(gfx);
-		break;
-	case AMDGPU_RING_TYPE_COMPUTE:
-		DEFINE_AMDGPU_MES_CTX_GET_OFFS_ENG(compute);
-		break;
-	case AMDGPU_RING_TYPE_SDMA:
-		DEFINE_AMDGPU_MES_CTX_GET_OFFS_ENG(sdma);
-		break;
-	default:
-		break;
-	}
-
-	WARN_ON(1);
-	return -EINVAL;
 }
 
 uint32_t amdgpu_mes_get_aggregated_doorbell_index(struct amdgpu_device *adev,
@@ -694,7 +647,9 @@ static int amdgpu_mes_set_enforce_isolation(struct amdgpu_device *adev,
 		goto error;
 	}
 
+	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
+	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		dev_err(adev->dev, "failed to change_config.\n");
 

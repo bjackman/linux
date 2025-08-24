@@ -239,8 +239,8 @@ static int amdgpu_userq_fence_create(struct amdgpu_usermode_queue *userq,
 	fence = &userq_fence->base;
 	userq_fence->fence_drv = fence_drv;
 
-	dma_fence_init(fence, &amdgpu_userq_fence_ops, &userq_fence->lock,
-		       fence_drv->context, seq);
+	dma_fence_init64(fence, &amdgpu_userq_fence_ops, &userq_fence->lock,
+			 fence_drv->context, seq);
 
 	amdgpu_userq_fence_driver_get(fence_drv);
 	dma_fence_get(fence);
@@ -334,7 +334,6 @@ static void amdgpu_userq_fence_release(struct dma_fence *f)
 }
 
 static const struct dma_fence_ops amdgpu_userq_fence_ops = {
-	.use_64bit_seqno = true,
 	.get_driver_name = amdgpu_userq_fence_get_driver_name,
 	.get_timeline_name = amdgpu_userq_fence_get_timeline_name,
 	.signaled = amdgpu_userq_fence_signaled,
@@ -430,7 +429,7 @@ int amdgpu_userq_signal_ioctl(struct drm_device *dev, void *data,
 
 	num_syncobj_handles = args->num_syncobj_handles;
 	syncobj_handles = memdup_user(u64_to_user_ptr(args->syncobj_handles),
-				      sizeof(u32) * num_syncobj_handles);
+				      size_mul(sizeof(u32), num_syncobj_handles));
 	if (IS_ERR(syncobj_handles))
 		return PTR_ERR(syncobj_handles);
 
@@ -612,13 +611,13 @@ int amdgpu_userq_wait_ioctl(struct drm_device *dev, void *data,
 
 	num_read_bo_handles = wait_info->num_bo_read_handles;
 	bo_handles_read = memdup_user(u64_to_user_ptr(wait_info->bo_read_handles),
-				      sizeof(u32) * num_read_bo_handles);
+				      size_mul(sizeof(u32), num_read_bo_handles));
 	if (IS_ERR(bo_handles_read))
 		return PTR_ERR(bo_handles_read);
 
 	num_write_bo_handles = wait_info->num_bo_write_handles;
 	bo_handles_write = memdup_user(u64_to_user_ptr(wait_info->bo_write_handles),
-				       sizeof(u32) * num_write_bo_handles);
+				       size_mul(sizeof(u32), num_write_bo_handles));
 	if (IS_ERR(bo_handles_write)) {
 		r = PTR_ERR(bo_handles_write);
 		goto free_bo_handles_read;
@@ -626,7 +625,7 @@ int amdgpu_userq_wait_ioctl(struct drm_device *dev, void *data,
 
 	num_syncobj = wait_info->num_syncobj_handles;
 	syncobj_handles = memdup_user(u64_to_user_ptr(wait_info->syncobj_handles),
-				      sizeof(u32) * num_syncobj);
+				      size_mul(sizeof(u32), num_syncobj));
 	if (IS_ERR(syncobj_handles)) {
 		r = PTR_ERR(syncobj_handles);
 		goto free_bo_handles_write;

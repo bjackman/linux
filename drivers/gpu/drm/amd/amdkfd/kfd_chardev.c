@@ -22,7 +22,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/export.h>
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/file.h>
@@ -2039,9 +2038,7 @@ static int criu_get_process_object_info(struct kfd_process *p,
 
 	num_events = kfd_get_num_events(p);
 
-	ret = svm_range_get_info(p, &num_svm_ranges, &svm_priv_data_size);
-	if (ret)
-		return ret;
+	svm_range_get_info(p, &num_svm_ranges, &svm_priv_data_size);
 
 	*num_objects = num_queues + num_events + num_svm_ranges;
 

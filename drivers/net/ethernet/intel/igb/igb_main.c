@@ -3062,6 +3062,8 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_bpf		= igb_xdp,
 	.ndo_xdp_xmit		= igb_xdp_xmit,
 	.ndo_xsk_wakeup         = igb_xsk_wakeup,
+	.ndo_hwtstamp_get	= igb_ptp_hwtstamp_get,
+	.ndo_hwtstamp_set	= igb_ptp_hwtstamp_set,
 };
 
 /**
@@ -5465,7 +5467,8 @@ static void igb_spoof_check(struct igb_adapter *adapter)
  */
 static void igb_update_phy_info(struct timer_list *t)
 {
-	struct igb_adapter *adapter = from_timer(adapter, t, phy_info_timer);
+	struct igb_adapter *adapter = timer_container_of(adapter, t,
+							 phy_info_timer);
 	igb_get_phy_info(&adapter->hw);
 }
 
@@ -5555,7 +5558,8 @@ static void igb_check_lvmmc(struct igb_adapter *adapter)
  **/
 static void igb_watchdog(struct timer_list *t)
 {
-	struct igb_adapter *adapter = from_timer(adapter, t, watchdog_timer);
+	struct igb_adapter *adapter = timer_container_of(adapter, t,
+							 watchdog_timer);
 	/* Do the rest outside of interrupt context */
 	schedule_work(&adapter->watchdog_task);
 }
@@ -9315,10 +9319,6 @@ static int igb_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 	case SIOCGMIIREG:
 	case SIOCSMIIREG:
 		return igb_mii_ioctl(netdev, ifr, cmd);
-	case SIOCGHWTSTAMP:
-		return igb_ptp_get_ts_config(netdev, ifr);
-	case SIOCSHWTSTAMP:
-		return igb_ptp_set_ts_config(netdev, ifr);
 	default:
 		return -EOPNOTSUPP;
 	}

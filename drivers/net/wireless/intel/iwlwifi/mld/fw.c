@@ -294,7 +294,7 @@ static int iwl_mld_run_fw_init_sequence(struct iwl_mld *mld)
 		return ret;
 
 	ret = iwl_pnvm_load(mld->trans, &mld->notif_wait,
-			    &mld->fw->ucode_capa, alive_data.sku_id);
+			    mld->fw, alive_data.sku_id);
 	if (ret) {
 		IWL_ERR(mld, "Timeout waiting for PNVM load %d\n", ret);
 		return ret;
@@ -346,10 +346,6 @@ int iwl_mld_load_fw(struct iwl_mld *mld)
 		return ret;
 
 	ret = iwl_mld_run_fw_init_sequence(mld);
-	if (ret)
-		goto err;
-
-	ret = iwl_mld_init_mcc(mld);
 	if (ret)
 		goto err;
 
@@ -543,6 +539,10 @@ int iwl_mld_start_fw(struct iwl_mld *mld)
 	IWL_DEBUG_INFO(mld, "uCode started.\n");
 
 	ret = iwl_mld_config_fw(mld);
+	if (ret)
+		goto error;
+
+	ret = iwl_mld_init_mcc(mld);
 	if (ret)
 		goto error;
 
