@@ -44,6 +44,13 @@ static inline bool kernel_page_present(struct page *page)
 {
 	return true;
 }
+
+static inline int set_direct_map_sensitive(struct page *page,
+					   unsigned long  num_pageblocks,
+					   bool sensitive) {
+	return 0;
+}
+
 #else /* CONFIG_ARCH_HAS_SET_DIRECT_MAP */
 /*
  * Some architectures, e.g. ARM64 can disable direct map modifications at
@@ -57,6 +64,16 @@ static inline bool can_set_direct_map(void)
 #define can_set_direct_map can_set_direct_map
 #endif
 #endif /* CONFIG_ARCH_HAS_SET_DIRECT_MAP */
+
+/* Without ASI, sensitivity ops are a nop regardless of ARCH_HAS_SET_DIRECT_MAP. */
+#ifndef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+static inline
+int set_direct_map_sensitive(struct page *page, unsigned long nr, bool sensitive)
+{
+	return 0;
+}
+static inline bool direct_map_sensitive(struct page *page) { return false; }
+#endif /* !CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
 #ifdef CONFIG_X86_64
 int set_mce_nospec(unsigned long pfn);
