@@ -1671,4 +1671,10 @@ static inline bool reclaim_pt_is_enabled(unsigned long start, unsigned long end,
 void dup_mm_exe_file(struct mm_struct *mm, struct mm_struct *oldmm);
 int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm);
 
+#if IS_ENABLED(CONFIG_KUNIT)
+unsigned int order_to_pindex(freetype_t freetype, int order);
+int pindex_to_order(unsigned int pindex);
+bool pcp_allowed_order(unsigned int order);
+#endif /* IS_ENABLED(CONFIG_KUNIT) */
+
 #endif	/* __MM_INTERNAL_H */
