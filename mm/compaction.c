@@ -1376,7 +1376,8 @@ isolate_migratepages_range(struct compact_control *cc, unsigned long start_pfn,
 static bool suitable_migration_source(struct compact_control *cc,
 							struct page *page)
 {
-	int block_mt;
+	freetype_t block_ft;
+	unsigned int block_mt;
 
 	if (pageblock_skip_persistent(page))
 		return false;
@@ -1389,7 +1390,8 @@ static bool suitable_migration_source(struct compact_control *cc,
 	if (!cc->direct_compaction)
 		return true;
 
-	block_mt = get_pageblock_migratetype(page);
+	block_ft = get_pageblock_freetype(page);
+	block_mt = free_to_migratetype(block_ft);
 
 	/*
 	 * CMA pages can only be taken by ALLOC_CMA requests. For anybody
@@ -1418,10 +1420,11 @@ static bool suitable_migration_source(struct compact_control *cc,
 	 * (directly requested, or defrag_mode) is exempt as the allocator
 	 * claims and converts these.
 	 */
-	if (cc->migratetype == MIGRATE_MOVABLE || cc->order >= pageblock_order)
+	if (free_to_migratetype(cc->freetype) == MIGRATE_MOVABLE ||
+	    cc->order >= pageblock_order)
 		return is_migrate_movable(block_mt);
 	else
-		return block_mt == cc->migratetype;
+		return freetypes_equal(block_ft, cc->freetype);
 }
 
 /* Returns true if the page is within a block suitable for migration to */
@@ -2008,7 +2011,8 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 	 * polluting movable blocks through fallbacks. Whole-block production
 	 * is exempt as the allocator claims and converts these.
 	 */
-	if (cc->direct_compaction && cc->migratetype != MIGRATE_MOVABLE &&
+	if (cc->direct_compaction &&
+	    free_to_migratetype(cc->freetype) != MIGRATE_MOVABLE &&
 	    cc->order < pageblock_order)
 		return pfn;
 
@@ -2280,7 +2284,7 @@ static bool should_proactive_compact_node(pg_data_t *pgdat)
 static enum compact_result __compact_finished(struct compact_control *cc)
 {
 	unsigned int order;
-	const int migratetype = cc->migratetype;
+	const freetype_t freetype = cc->freetype;
 	int ret;
 
 	/* Compaction run completes if the migrate and free scanner meet */
@@ -2355,25 +2359,27 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 	for (order = cc->order; order < NR_PAGE_ORDERS; order++) {
 		struct free_area *area = &cc->zone->free_area[order];
 
-		/* Job done if page is free of the right migratetype */
-		if (!free_area_empty(area, migratetype))
+		/* Job done if page is free of the right freetype */
+		if (!free_area_empty(area, freetype))
 			return COMPACT_SUCCESS;
 
 #ifdef CONFIG_CMA
 		/* MIGRATE_MOVABLE can fallback on MIGRATE_CMA */
-		if (migratetype == MIGRATE_MOVABLE &&
-			!free_area_empty(area, MIGRATE_CMA))
+		if (free_to_migratetype(freetype) == MIGRATE_MOVABLE &&
+		    !free_area_empty(area, freetype_with_migrate(cc->freetype,
+								 MIGRATE_CMA)))
 			return COMPACT_SUCCESS;
 #endif
 		/*
 		 * Job done if allocation would steal freepages from
-		 * other migratetype buddy lists.
+		 * other freetype buddy lists.
 		 */
-		if (find_suitable_fallback(area, order, migratetype, true, NULL)
+		if (find_suitable_fallback(area, order, freetype, true, NULL)
 		    == FALLBACK_FOUND)
 			/*
-			 * Movable pages are OK in any pageblock. If we are
-			 * stealing for a non-movable allocation, make sure
+			 * Movable pages are OK in any pageblock of the right
+			 * sensitivity. If we are stealing for a
+			 * non-movable allocation, make sure
 			 * we finish compacting the current pageblock first
 			 * (which is assured by the above migrate_pfn align
 			 * check) so it is as free as possible and we won't
@@ -2582,7 +2588,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 		INIT_LIST_HEAD(&cc->freepages[order]);
 	INIT_LIST_HEAD(&cc->migratepages);
 
-	cc->migratetype = gfp_migratetype(cc->gfp_mask);
+	cc->freetype = gfp_freetype(cc->gfp_mask);
 
 	if (!is_via_compact_memory(cc->order)) {
 		ret = compaction_suit_allocation_order(cc->zone, cc->order,

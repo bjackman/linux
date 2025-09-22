@@ -77,7 +77,7 @@ struct alloc_context {
 	struct zonelist *zonelist;
 	const nodemask_t *nodemask;
 	struct zoneref *preferred_zoneref;
-	int migratetype;
+	freetype_t freetype;
 
 	/*
 	 * highest_zoneidx represents highest usable zone index of
@@ -268,7 +268,7 @@ extern void zone_pcp_enable(struct zone *zone);
 extern void zone_pcp_init(struct zone *zone);
 
 enum fallback_result {
-	/* Found suitable migratetype, *mt_out is valid. */
+	/* Found suitable fallback, *ft_out is valid. */
 	FALLBACK_FOUND,
 	/* No fallback found in requested order. */
 	FALLBACK_EMPTY,
@@ -277,19 +277,21 @@ enum fallback_result {
 };
 enum fallback_result
 find_suitable_fallback(struct free_area *area, unsigned int order,
-		       int migratetype, bool claimable, int *mt_out);
+		       freetype_t freetype, bool claimable, freetype_t *ft_out);
 
-static inline bool free_area_empty(struct free_area *area, int migratetype)
+static inline bool free_area_empty(struct free_area *area, freetype_t freetype)
 {
-	return list_empty(&area->free_list[migratetype]);
+	return list_empty(free_area_list(area, freetype));
 }
 
 /* Convert GFP flags to their corresponding migrate type */
 #define GFP_MOVABLE_MASK (__GFP_RECLAIMABLE|__GFP_MOVABLE)
 #define GFP_MOVABLE_SHIFT 3
 
-static inline int gfp_migratetype(const gfp_t gfp_flags)
+static inline freetype_t gfp_freetype(const gfp_t gfp_flags)
 {
+	unsigned int migratetype;
+
 	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) == GFP_MOVABLE_MASK);
 	BUILD_BUG_ON((1UL << GFP_MOVABLE_SHIFT) != ___GFP_MOVABLE);
 	BUILD_BUG_ON((___GFP_MOVABLE >> GFP_MOVABLE_SHIFT) != MIGRATE_MOVABLE);
@@ -297,11 +299,15 @@ static inline int gfp_migratetype(const gfp_t gfp_flags)
 	BUILD_BUG_ON(((___GFP_MOVABLE | ___GFP_RECLAIMABLE) >>
 		      GFP_MOVABLE_SHIFT) != MIGRATE_HIGHATOMIC);
 
-	if (unlikely(page_group_by_mobility_disabled))
-		return MIGRATE_UNMOVABLE;
+	if (unlikely(page_group_by_mobility_disabled)) {
+		migratetype = MIGRATE_UNMOVABLE;
+	} else {
+		/* Group based on mobility */
+		migratetype = (__force unsigned long)(gfp_flags & GFP_MOVABLE_MASK)
+			>> GFP_MOVABLE_SHIFT;
+	}
 
-	/* Group based on mobility */
-	return (__force unsigned long)(gfp_flags & GFP_MOVABLE_MASK) >> GFP_MOVABLE_SHIFT;
+	return migrate_to_freetype(migratetype, 0);
 }
 #undef GFP_MOVABLE_MASK
 #undef GFP_MOVABLE_SHIFT

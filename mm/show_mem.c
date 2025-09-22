@@ -380,7 +380,9 @@ static void show_free_areas(unsigned int filter, const nodemask_t *nodemask,
 
 			types[order] = 0;
 			for (type = 0; type < MIGRATE_TYPES; type++) {
-				if (!free_area_empty(area, type))
+				freetype_t ft = migrate_to_freetype(type, 0);
+
+				if (!free_area_empty(area, ft))
 					types[order] |= 1 << type;
 			}
 		}
