@@ -10,6 +10,7 @@
 #include <linux/fs.h>
 #include <linux/khugepaged.h>
 #include <linux/mm.h>
+#include <linux/mmzone.h>
 #include <linux/mm_inline.h>
 #include <linux/mmu_notifier.h>
 #include <linux/pagemap.h>
@@ -663,7 +664,7 @@ static inline void clear_zone_contiguous(struct zone *zone)
 
 extern int __isolate_free_page(struct page *page, unsigned int order);
 extern void __putback_isolated_page(struct page *page, unsigned int order,
-				    int mt);
+				    freetype_t freetype);
 extern void memblock_free_pages(unsigned long pfn, unsigned int order);
 
 /*
@@ -840,7 +841,7 @@ struct compact_control {
 	short search_order;		/* order to start a fast search at */
 	const gfp_t gfp_mask;		/* gfp mask of a direct compactor */
 	int order;			/* order a direct compactor needs */
-	int migratetype;		/* migratetype of direct compactor */
+	freetype_t freetype;		/* freetype of direct compactor */
 	const unsigned int alloc_flags;	/* alloc flags of a direct compactor */
 	const int highest_zoneidx;	/* zone index of a direct compactor */
 	enum migrate_mode mode;		/* Async or sync migration mode */
@@ -865,7 +866,7 @@ struct compact_control {
  */
 struct capture_control {
 	struct zone *zone;
-	int migratetype;
+	freetype_t freetype;
 	/*
 	 * Allocation request order. May differ from the compaction
 	 * order: defrag_mode promotes sub-block allocations to
