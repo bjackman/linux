@@ -130,18 +130,77 @@ static inline bool migratetype_is_mergeable(int mt)
 		     type < MIGRATE_TYPES; \
 		     type++) \
 
+/*
+ * A freetype is the index used to identify free lists. This consists of a
+ * migratetype, and other bits which encode orthogonal properties of memory.
+ * No such bits actually exist yet, so this is just a wrapper for migratetype.
+ */
+typedef struct {
+	int type;
+} freetype_t;
+
+#define NR_FREETYPES MIGRATE_TYPES
+
+static inline freetype_t migrate_to_freetype(enum migratetype mt,
+					     unsigned int flags)
+{
+	freetype_t freetype;
+
+	/* No flags supported yet. */
+	VM_WARN_ON_ONCE(flags);
+
+	freetype.type = mt;
+	return freetype;
+}
+
+static inline enum migratetype free_to_migratetype(freetype_t freetype)
+{
+	return freetype.type;
+}
+
+static inline unsigned int freetype_flags(freetype_t freetype)
+{
+	/* No flags supported yet. */
+	return 0;
+}
+
+/* Convenience helper, return the freetype modified to have the migratetype. */
+static inline freetype_t freetype_with_migrate(freetype_t freetype,
+					       enum migratetype migratetype)
+{
+	return migrate_to_freetype(migratetype, freetype_flags(freetype));
+}
+
+static inline bool freetypes_equal(freetype_t a, freetype_t b)
+{
+	return a.type == b.type;
+}
+
 extern int page_group_by_mobility_disabled;
+
+freetype_t get_pfnblock_freetype(const struct page *page, unsigned long pfn);
 
 #define get_pageblock_migratetype(page) \
 	get_pfnblock_migratetype(page, page_to_pfn(page))
+
+#define get_pageblock_freetype(page) \
+	get_pfnblock_freetype(page, page_to_pfn(page))
 
 #define folio_migratetype(folio) \
 	get_pageblock_migratetype(&folio->page)
 
 struct free_area {
-	struct list_head	free_list[MIGRATE_TYPES];
+	struct list_head	free_list[NR_FREETYPES];
 	unsigned long		nr_free;
 };
+
+static inline
+struct list_head *free_area_list(struct free_area *area, freetype_t type)
+{
+	VM_BUG_ON(type.type < 0 || type.type >= ARRAY_SIZE(area->free_list));
+	VM_BUG_ON(!area);
+	return &area->free_list[type.type];
+}
 
 struct pglist_data;
 
