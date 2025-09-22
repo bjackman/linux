@@ -168,6 +168,7 @@ static int set_migratetype_isolate(struct page *page, enum pb_isolate_mode mode,
 	struct zone *zone = page_zone(page);
 	struct page *unmovable;
 	unsigned long check_unmovable_start, check_unmovable_end;
+	freetype_t ft_isolate;
 
 	if (PageUnaccepted(page))
 		accept_page(page);
@@ -180,6 +181,12 @@ static int set_migratetype_isolate(struct page *page, enum pb_isolate_mode mode,
 		 */
 		if (is_migrate_isolate_page(page))
 			return -EBUSY;
+
+		/* Do not isolate unsupported freetypes. */
+		ft_isolate = freetype_with_migrate(get_pageblock_freetype(page), MIGRATE_ISOLATE);
+		if (freetype_idx(ft_isolate) < 0)
+			return -EINVAL;
+
 
 		/*
 		 * FIXME: Now, memory hotplug doesn't call shrink_slab() by
@@ -267,7 +274,7 @@ static void unset_migratetype_isolate(struct page *page)
 		WARN_ON_ONCE(!pageblock_unisolate_and_move_free_pages(zone, page));
 	} else {
 		clear_pageblock_isolate(page);
-		__putback_isolated_page(page, order, get_pageblock_migratetype(page));
+		__putback_isolated_page(page, order, get_pageblock_freetype(page));
 	}
 	zone->nr_isolate_pageblock--;
 }
