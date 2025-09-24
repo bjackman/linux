@@ -5210,6 +5210,19 @@ got_pg:
 	return page;
 }
 
+/* Set alloc flags before applying gfp_allowed_mask. */
+static inline unsigned int init_alloc_flags(gfp_t gfp_mask, unsigned int alloc_flags)
+{
+	/*
+	 * If the caller allowed __GFP_DIRECT_RECLAIM, they can't be atomic.
+	 * Note this is a separate determination from whether direct reclaim is
+	 * actually allowed, it must happen before applying gfp_allowed_mask.
+	 */
+	if (!(gfp_mask & __GFP_DIRECT_RECLAIM))
+		alloc_flags |= ALLOC_NOBLOCK;
+	return alloc_flags;
+}
+
 static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 		int preferred_nid, nodemask_t *nodemask,
 		struct alloc_context *ac, gfp_t *alloc_gfp,
@@ -5288,8 +5301,10 @@ unsigned long alloc_pages_bulk_noprof(gfp_t gfp, int preferred_nid,
 	struct zoneref *z;
 	struct per_cpu_pages *pcp;
 	struct list_head *pcp_list;
-	struct alloc_context ac;
-	unsigned int alloc_flags = ALLOC_WMARK_LOW;
+	struct alloc_context ac = {
+		.alloc_flags = init_alloc_flags(gfp, ALLOC_DEFAULT),
+	};
+	unsigned int alloc_flags = ac.alloc_flags | ALLOC_WMARK_LOW;
 	int nr_populated = 0, nr_account = 0;
 
 	/*
@@ -5508,9 +5523,9 @@ struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
 	struct page *page;
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = {
-		.alloc_flags = alloc_flags,
+		.alloc_flags = init_alloc_flags(gfp, alloc_flags),
 	};
-	unsigned int fastpath_alloc_flags = alloc_flags;
+	unsigned int fastpath_alloc_flags = ac.alloc_flags;
 
 	/* Other flags could be supported later if needed. */
 	if (WARN_ON(alloc_flags & ~(ALLOC_NOLOCK | ALLOC_NO_CODETAG)))
