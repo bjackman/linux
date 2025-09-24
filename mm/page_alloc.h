@@ -68,6 +68,7 @@
  */
 #define ALLOC_UNMAPPED	       0x2000
 #endif
+#define ALLOC_NOBLOCK	       0x4000 /* Caller may be atomic */
 
 /* Flags that allow allocations below the min watermark. */
 #define ALLOC_RESERVES (ALLOC_HARDER|ALLOC_MIN_RESERVE|ALLOC_HIGHATOMIC|ALLOC_OOM)
