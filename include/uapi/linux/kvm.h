@@ -1600,15 +1600,9 @@ struct kvm_memory_attributes {
 #define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
 
 #define KVM_CREATE_GUEST_MEMFD	_IOWR(KVMIO,  0xd4, struct kvm_create_guest_memfd)
-<<<<<<< HEAD
 #define GUEST_MEMFD_FLAG_MMAP		(1ULL << 0)
 #define GUEST_MEMFD_FLAG_INIT_SHARED	(1ULL << 1)
-||||||| parent of 14ecdcd40d279 (KVM: guest_memfd: Add flag to remove from direct map)
-#define GUEST_MEMFD_FLAG_MMAP	(1ULL << 0)
-=======
-#define GUEST_MEMFD_FLAG_MMAP	(1ULL << 0)
-#define GUEST_MEMFD_FLAG_NO_DIRECT_MAP (1ULL << 1)
->>>>>>> 14ecdcd40d279 (KVM: guest_memfd: Add flag to remove from direct map)
+#define GUEST_MEMFD_FLAG_NO_DIRECT_MAP	(1ULL << 2)
 
 struct kvm_create_guest_memfd {
 	__u64 size;

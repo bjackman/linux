@@ -264,6 +264,40 @@ do {									\
 
 static void __test_guest_memfd(struct kvm_vm *vm, uint64_t flags)
 {
+<<<<<<< HEAD
+||||||| parent of daeb9b209e799 (KVM: selftests: cover GUEST_MEMFD_FLAG_NO_DIRECT_MAP in existing selftests)
+	uint64_t flags = 0;
+	struct kvm_vm *vm;
+	size_t total_size;
+	size_t page_size;
+	int fd;
+
+	page_size = getpagesize();
+	total_size = page_size * 4;
+
+	vm = vm_create_barebones_type(vm_type);
+
+	if (vm_check_cap(vm, KVM_CAP_GUEST_MEMFD_MMAP))
+		flags |= GUEST_MEMFD_FLAG_MMAP;
+
+=======
+	uint64_t flags = 0;
+	struct kvm_vm *vm;
+	size_t total_size;
+	size_t page_size;
+	int fd;
+
+	page_size = getpagesize();
+	total_size = page_size * 4;
+
+	vm = vm_create_barebones_type(vm_type);
+
+	if (vm_check_cap(vm, KVM_CAP_GUEST_MEMFD_MMAP))
+		flags |= GUEST_MEMFD_FLAG_MMAP;
+	if (vm_check_cap(vm, KVM_CAP_GUEST_MEMFD_NO_DIRECT_MAP))
+		flags |= GUEST_MEMFD_FLAG_NO_DIRECT_MAP;
+
+>>>>>>> daeb9b209e799 (KVM: selftests: cover GUEST_MEMFD_FLAG_NO_DIRECT_MAP in existing selftests)
 	test_create_guest_memfd_multiple(vm);
 	test_create_guest_memfd_invalid_sizes(vm, flags);
 
