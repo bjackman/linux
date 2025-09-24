@@ -63,7 +63,8 @@ static int kvm_gmem_folio_zap_direct_map(struct folio *folio)
 	if (!r) {
 		unsigned long addr = (unsigned long) folio_address(folio);
 		folio->private = (void *) ((u64) folio->private & KVM_GMEM_FOLIO_NO_DIRECT_MAP);
-		flush_tlb_kernel_range(addr, addr + folio_size(folio));
+		if (guest_memfd_tlb_flush)
+			flush_tlb_kernel_range(addr, addr + folio_size(folio));
 	}
 
 	return r;
