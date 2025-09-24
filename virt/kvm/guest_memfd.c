@@ -4,6 +4,9 @@
 #include <linux/kvm_host.h>
 #include <linux/pagemap.h>
 #include <linux/anon_inodes.h>
+#include <linux/set_memory.h>
+
+#include <asm/tlbflush.h>
 
 #include "kvm_mm.h"
 
@@ -40,6 +43,44 @@ static int __kvm_gmem_prepare_folio(struct kvm *kvm, struct kvm_memory_slot *slo
 #endif
 
 	return 0;
+}
+
+#define KVM_GMEM_FOLIO_NO_DIRECT_MAP BIT(0)
+
+static bool kvm_gmem_folio_no_direct_map(struct folio *folio)
+{
+	return ((u64) folio->private) & KVM_GMEM_FOLIO_NO_DIRECT_MAP;
+}
+
+static int kvm_gmem_folio_zap_direct_map(struct folio *folio)
+{
+	if (kvm_gmem_folio_no_direct_map(folio))
+		return 0;
+
+	int r = set_direct_map_valid_noflush(folio_page(folio, 0), folio_nr_pages(folio),
+					 false);
+
+	if (!r) {
+		unsigned long addr = (unsigned long) folio_address(folio);
+		folio->private = (void *) ((u64) folio->private & KVM_GMEM_FOLIO_NO_DIRECT_MAP);
+		flush_tlb_kernel_range(addr, addr + folio_size(folio));
+	}
+
+	return r;
+}
+
+static void kvm_gmem_folio_restore_direct_map(struct folio *folio)
+{
+	/*
+	 * Direct map restoration cannot fail, as the only error condition
+	 * for direct map manipulation is failure to allocate page tables
+	 * when splitting huge pages, but this split would have already
+	 * happened in set_direct_map_invalid_noflush() in kvm_gmem_folio_zap_direct_map().
+	 * Thus set_direct_map_valid_noflush() here only updates prot bits.
+	 */
+	if (kvm_gmem_folio_no_direct_map(folio))
+		set_direct_map_valid_noflush(folio_page(folio, 0), folio_nr_pages(folio),
+					 true);
 }
 
 static inline void kvm_gmem_mark_prepared(struct folio *folio)
@@ -352,6 +393,7 @@ static vm_fault_t kvm_gmem_fault_user_mapping(struct vm_fault *vmf)
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	struct folio *folio;
 	vm_fault_t ret = VM_FAULT_LOCKED;
+	int err;
 
 	if (((loff_t)vmf->pgoff << PAGE_SHIFT) >= i_size_read(inode))
 		return VM_FAULT_SIGBUS;
@@ -361,7 +403,7 @@ static vm_fault_t kvm_gmem_fault_user_mapping(struct vm_fault *vmf)
 
 	folio = kvm_gmem_get_folio(inode, vmf->pgoff);
 	if (IS_ERR(folio)) {
-		int err = PTR_ERR(folio);
+		err = PTR_ERR(folio);
 
 		if (err == -EAGAIN)
 			return VM_FAULT_RETRY;
@@ -377,6 +419,13 @@ static vm_fault_t kvm_gmem_fault_user_mapping(struct vm_fault *vmf)
 	if (!folio_test_uptodate(folio)) {
 		clear_highpage(folio_page(folio, 0));
 		kvm_gmem_mark_prepared(folio);
+	}
+
+	err = kvm_gmem_folio_zap_direct_map(folio);
+
+	if (err) {
+		ret = vmf_error(err);
+		goto out_folio;
 	}
 
 	vmf->page = folio_file_page(folio, vmf->pgoff);
@@ -462,6 +511,8 @@ static void kvm_gmem_free_folio(struct folio *folio)
 	kvm_pfn_t pfn = page_to_pfn(page);
 	int order = folio_order(folio);
 
+	kvm_gmem_folio_restore_direct_map(folio);
+
 	kvm_arch_gmem_invalidate(pfn, pfn + (1ul << order));
 }
 
@@ -525,6 +576,9 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 	mapping_set_inaccessible(inode->i_mapping);
 	/* Unmovable mappings are supposed to be marked unevictable as well. */
 	WARN_ON_ONCE(!mapping_unevictable(inode->i_mapping));
+
+	if (flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP)
+		mapping_set_no_direct_map(inode->i_mapping);
 
 	kvm_get_kvm(kvm);
 	gmem->kvm = kvm;
@@ -709,6 +763,8 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 
 	if (!is_prepared)
 		r = kvm_gmem_prepare_folio(kvm, slot, gfn, folio);
+
+	kvm_gmem_folio_zap_direct_map(folio);
 
 	folio_unlock(folio);
 
