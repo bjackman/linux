@@ -31,6 +31,7 @@ x86-specific Documentation
    amd-hfi
    tdx
    pti
+   asi
    mds
    microcode
    tsx_async_abort
