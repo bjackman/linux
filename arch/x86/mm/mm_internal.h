@@ -26,4 +26,10 @@ extern unsigned long tlb_single_page_flush_ceiling;
 void __init x86_numa_init(void);
 #endif
 
+#if IS_ENABLED(CONFIG_KUNIT)
+void
+phys_p4d_init(p4d_t *p4d_page, unsigned long paddr, unsigned long paddr_end,
+	      unsigned long page_size_mask, pgprot_t prot, bool init);
+#endif
+
 #endif	/* __X86_MM_INTERNAL_H */

@@ -56,6 +56,8 @@
 #include <asm/setup.h>
 #include <asm/ftrace.h>
 
+#include <kunit/visibility.h>
+
 #include "mm_internal.h"
 
 #include "ident_map.c"
@@ -663,7 +665,7 @@ phys_pud_init(pud_t *pud_page, unsigned long paddr, unsigned long paddr_end,
 	update_page_count(PG_LEVEL_1G, pages);
 }
 
-static void __meminit
+VISIBLE_IF_KUNIT void __meminit
 phys_p4d_init(p4d_t *p4d_page, unsigned long paddr, unsigned long paddr_end,
 	      unsigned long page_size_mask, pgprot_t prot, bool init)
 {
@@ -712,6 +714,7 @@ phys_p4d_init(p4d_t *p4d_page, unsigned long paddr, unsigned long paddr_end,
 		spin_unlock(&init_mm.page_table_lock);
 	}
 }
+EXPORT_SYMBOL_IF_KUNIT(phys_p4d_init);
 
 static void __meminit
 phys_pgd_init(pgd_t *pgd_page, unsigned long paddr_start, unsigned long paddr_end,
