@@ -810,14 +810,13 @@ kernel_physical_mapping_init(unsigned long paddr_start,
  * when updating the mapping. The caller is responsible to flush the TLBs after
  * the function returns.
  */
-unsigned long __meminit
+void __meminit
 kernel_physical_mapping_change(unsigned long paddr_start,
 			       unsigned long paddr_end,
 			       unsigned long page_size_mask)
 {
-	return __kernel_physical_mapping_init(paddr_start, paddr_end,
-					      page_size_mask, PAGE_KERNEL,
-					      false);
+	__kernel_physical_mapping_init(paddr_start, paddr_end,
+				       page_size_mask, PAGE_KERNEL, false);
 }
 
 #ifndef CONFIG_NUMA
