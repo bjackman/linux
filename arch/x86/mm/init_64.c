@@ -492,6 +492,8 @@ phys_pte_init(pte_t *pte_page, unsigned long paddr, unsigned long paddr_end,
 			continue;
 		}
 
+		paddr_last = paddr_next;
+
 		/*
 		 * We will re-use the existing mapping.
 		 * Xen for example has some special requirements, like mapping
@@ -506,7 +508,6 @@ phys_pte_init(pte_t *pte_page, unsigned long paddr, unsigned long paddr_end,
 
 		pages++;
 		set_pte_init(pte, pfn_pte(paddr >> PAGE_SHIFT, prot), init);
-		paddr_last = (paddr & PAGE_MASK) + PAGE_SIZE;
 	}
 
 	update_page_count(PG_LEVEL_4K, pages);
