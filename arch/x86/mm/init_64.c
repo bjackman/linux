@@ -1382,10 +1382,33 @@ void __init arch_mm_preinit(void)
 
 void __init mem_init(void)
 {
+	struct memblock_region *region __maybe_unused;
+
 	/* clear_bss() already clear the empty_zero_page */
 
 	after_bootmem = 1;
 	x86_init.hyper.init_after_bootmem();
+
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	/*
+	 * Stuff that is not going to the page allocator needs to be mapped into
+	 * the nonsensitive address space since it might be needed in the critical
+	 * section (e.g. early per-CPU data).
+	 *
+	 * Here we only care about the direct map. The core ASI code will take
+	 * care of other mappings, and will get confused if it finds mappings
+	 * already in place at the other addresses, hence the noalias.
+	 *
+	 * TODO: But, not all memblock data is safe to leak. Regions should
+	 * actually have a sensitivity flag.
+	 */
+	for_each_reserved_mem_region(region) {
+		unsigned long vaddr = PAGE_ALIGN_DOWN((unsigned long)phys_to_virt(region->base));
+
+		set_direct_map_sensitive(virt_to_page(vaddr),
+					 PFN_UP(region->size), false);
+	}
+#endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
 	/*
 	 * Must be done after boot memory is put on freelist, because here we
