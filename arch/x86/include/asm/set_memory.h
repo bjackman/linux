@@ -93,11 +93,11 @@ int set_direct_map_valid_noflush(struct page *page, unsigned nr, bool valid);
 bool kernel_page_present(struct page *page);
 
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
-int set_direct_map_sensitive(struct page *page, int num_pageblocks, bool sensitive);
+int set_direct_map_sensitive(struct page *page, unsigned nr, bool sensitive);
 bool direct_map_sensitive(struct page *page);
 #else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 static inline
-int set_direct_map_sensitive(struct page *page, int num_pageblocks, bool sensitive)
+int set_direct_map_sensitive(struct page *page, unsigned nr, bool sensitive)
 {
 	return 0;
 }

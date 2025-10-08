@@ -3359,7 +3359,8 @@ static inline struct page *__rmqueue_asi(struct zone *zone, unsigned int request
 	 * TODO: What if part of the pageblock is memblock-reserved?? Changing
 	 * sensitivity like this might not be safe.
 	 */
-	set_direct_map_sensitive(page, nr_pageblocks, freetype_sensitive(freetype));
+	set_direct_map_sensitive(page, nr_pageblocks << pageblock_order,
+				 freetype_sensitive(freetype));
 	for (int i = 0; i < nr_pageblocks; i++) {
 		struct page *block_page = page + (pageblock_nr_pages * i);
 
