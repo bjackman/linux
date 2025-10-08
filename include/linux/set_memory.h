@@ -46,8 +46,7 @@ static inline bool kernel_page_present(struct page *page)
 }
 
 static inline int set_direct_map_sensitive(struct page *page,
-					   unsigned long  num_pageblocks,
-					   bool sensitive) {
+					   unsigned long nr, bool sensitive) {
 	return 0;
 }
 
