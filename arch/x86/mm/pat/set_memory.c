@@ -2704,19 +2704,19 @@ int set_direct_map_valid_noflush(struct page *page, unsigned nr, bool valid)
 
 #ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
 /*
- * Map/unmap a set of contiguous pageblocks into all ASI nonsensitive address
+ * Map/unmap a set of contiguous pages into all ASI nonsensitive address
  * spaces. All pagetables are pre-allocated so this can be called anywhere.
  * This should not be called on pages that may be mapped elsewhere.
+ * This is guaranteed not to allocate as long as nr is aligned to
+ * (1 << pageblock_order). TODO: That sucks!! We need to make the expectations
+ * explicit to the caller.
  */
-int set_direct_map_sensitive(struct page *page, int num_pageblocks, bool sensitive)
+int set_direct_map_sensitive(struct page *page, unsigned nr, bool sensitive)
 {
-	if (WARN_ON_ONCE(!IS_ALIGNED(page_to_pfn(page), 1 << pageblock_order)))
-		return -EINVAL;
-
 	unsigned long tempaddr = (unsigned long)page_address(page);
 	struct cpa_data cpa = { .vaddr = &tempaddr,
 				.pgd = asi_nonsensitive_pgd,
-				.numpages = num_pageblocks << pageblock_order,
+				.numpages = nr,
 				.flags = CPA_NO_CHECK_ALIAS,
 				.on_fault = CPA_FAULT_ERROR, };
 
