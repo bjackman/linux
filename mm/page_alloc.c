@@ -6436,6 +6436,15 @@ unsigned long free_reserved_area(void *start, void *end, int poison, const char 
 	void *pos;
 	unsigned long pages = 0;
 
+	/*
+	 * Reserved areas were made nonsensitive earlier on, but the page
+	 * allocator expects all its incoming memory to be sensitive.
+	 * Simple solution is just to make the region sensntive again
+	 * before freeing it.
+	 */
+	set_direct_map_sensitive(virt_to_page(start),
+				 (end - start) >> PAGE_SHIFT, true);
+
 	start = (void *)PAGE_ALIGN((unsigned long)start);
 	end = (void *)((unsigned long)end & PAGE_MASK);
 	for (pos = start; pos < end; pos += PAGE_SIZE, pages++) {
