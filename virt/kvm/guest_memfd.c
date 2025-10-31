@@ -518,6 +518,7 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 	struct inode *inode;
 	struct file *file;
 	int fd, err;
+	gfp_t gfp;
 
 	fd = get_unused_fd_flags(0);
 	if (fd < 0)
@@ -546,13 +547,13 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 	inode->i_mapping->a_ops = &kvm_gmem_aops;
 	inode->i_mode |= S_IFREG;
 	inode->i_size = size;
-	mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
+	gfp = GFP_HIGHUSER;
+	if (flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP)
+		gfp |= __GFP_NO_DIRECT_MAP;
+	mapping_set_gfp_mask(inode->i_mapping, gfp);
 	mapping_set_inaccessible(inode->i_mapping);
 	/* Unmovable mappings are supposed to be marked unevictable as well. */
 	WARN_ON_ONCE(!mapping_unevictable(inode->i_mapping));
-
-	if (flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP)
-		mapping_set_no_direct_map(inode->i_mapping);
 
 	kvm_get_kvm(kvm);
 	gmem->kvm = kvm;
