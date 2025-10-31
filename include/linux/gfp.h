@@ -19,6 +19,7 @@ struct mempolicy;
 static inline freetype_t gfp_freetype(const gfp_t gfp_flags)
 {
 	int migratetype;
+	unsigned int ft_flags = 0;
 
 	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) == GFP_MOVABLE_MASK);
 	BUILD_BUG_ON((1UL << GFP_MOVABLE_SHIFT) != ___GFP_MOVABLE);
@@ -33,6 +34,12 @@ static inline freetype_t gfp_freetype(const gfp_t gfp_flags)
 		/* Group based on mobility */
 		migratetype = (__force unsigned long)(gfp_flags & GFP_MOVABLE_MASK)
 			>> GFP_MOVABLE_SHIFT;
+	}
+
+	if (gfp_flags & __GFP_NO_DIRECT_MAP) {
+		if (WARN_ON_ONCE(migratetype != MIGRATE_UNMOVABLE))
+			migratetype = MIGRATE_UNMOVABLE;
+		ft_flags |= FREETYPE_NO_DIRECT_MAP;
 	}
 
 	return migrate_to_freetype(migratetype, 0);

@@ -58,6 +58,9 @@ enum {
 #ifdef CONFIG_SLAB_OBJ_EXT
 	___GFP_NO_OBJ_EXT_BIT,
 #endif
+#ifdef CONFIG_KVM_GUEST_MEMFD
+	___GFP_NO_DIRECT_MAP_BIT,
+#endif
 	___GFP_LAST_BIT
 };
 
@@ -102,6 +105,9 @@ enum {
 #define ___GFP_NO_OBJ_EXT       BIT(___GFP_NO_OBJ_EXT_BIT)
 #else
 #define ___GFP_NO_OBJ_EXT       0
+#endif
+#ifdef CONFIG_KVM_GUEST_MEMFD
+#define ___GFP_NO_DIRECT_MAP	BIT(___GFP_NO_DIRECT_MAP_BIT)
 #endif
 
 /*
@@ -298,6 +304,17 @@ enum {
 
 /* Disable lockdep for GFP context tracking */
 #define __GFP_NOLOCKDEP ((__force gfp_t)___GFP_NOLOCKDEP)
+
+/*
+ * Allocate pages that aren't present in the direct map. If the caller changes
+ * direct map presence, it must be restored to the previous state before freeing
+ * the page. (This is true regardless of __GFP_NO_DIRECT_MAP).
+ *
+ * This is currently incompatible with __GFP_MOVABLE and __GFP_RECLAIMABLE, but
+ * only because of allocator implementation details, if a usecase arises this
+ * restriction could be dropped.
+ */
+#define __GFP_NO_DIRECT_MAP ((__force gfp_t)___GFP_NO_DIRECT_MAP)
 
 /* Room for N __GFP_FOO bits */
 #define __GFP_BITS_SHIFT ___GFP_LAST_BIT

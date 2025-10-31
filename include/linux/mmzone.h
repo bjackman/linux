@@ -139,28 +139,59 @@ typedef struct {
 	int type;
 } freetype_t;
 
-#define NR_FREETYPES MIGRATE_TYPES
+enum {
+#ifdef CONFIG_KVM_GUEST_MEMFD
+	FREETYPE_NO_DIRECT_MAP_BIT,
+#endif
+	NUM_FREETYPE_FLAGS,
+};
+
+#ifdef CONFIG_KVM_GUEST_MEMFD
+#define FREETYPE_NO_DIRECT_MAP			BIT(FREETYPE_NO_DIRECT_MAP_BIT)
+#else
+#define FREETYPE_NO_DIRECT_MAP			0
+#endif
+
+#define NR_FREETYPES (MIGRATE_TYPES + NUM_FREETYPE_FLAGS)
 
 static inline freetype_t migrate_to_freetype(enum migratetype mt,
 					     unsigned int flags)
 {
 	freetype_t freetype;
 
-	/* No flags supported yet. */
-	VM_WARN_ON_ONCE(flags);
+	VM_WARN_ON_ONCE(flags & ~((1 << NUM_FREETYPE_FLAGS) - 1));
 
-	freetype.type = mt;
+	/*
+	 * FREETYPE_NO_DIRECT_MAP currently only supported for MIGRATE_UNMOVABLE
+	 * so it just gets its own distinct freetype value.
+	 */
+	if (flags & FREETYPE_NO_DIRECT_MAP) {
+		VM_WARN_ON_ONCE(mt != MIGRATE_UNMOVABLE);
+		freetype.type = MIGRATE_TYPES;
+	} else {
+		freetype.type = mt;
+	}
+
 	return freetype;
 }
 
 static inline enum migratetype free_to_migratetype(freetype_t freetype)
 {
+	if (freetype.type == MIGRATE_TYPES) {
+		VM_WARN_ON_ONCE(!FREETYPE_NO_DIRECT_MAP);
+		return MIGRATE_MOVABLE;
+	}
+
 	return freetype.type;
 }
 
 static inline unsigned int freetype_flags(freetype_t freetype)
 {
-	/* No flags supported yet. */
+	if (freetype.type == MIGRATE_TYPES) {
+		VM_WARN_ON_ONCE(!FREETYPE_NO_DIRECT_MAP);
+		return FREETYPE_NO_DIRECT_MAP;
+	}
+
 	return 0;
 }
 
