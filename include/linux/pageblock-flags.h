@@ -14,11 +14,21 @@
 #include <linux/types.h>
 
 #define PB_migratetype_bits 3
+
+#ifdef CONFIG_MEMORY_ISOLATION
+#define PB_freetype_flags_bits 1
+#else
+#define PB_freetype_flags_bits 0
+#endif
+
 /* Bit indices that affect a whole block of pages */
 enum pageblock_bits {
 	PB_migrate,
 	PB_migrate_end = PB_migrate + PB_migratetype_bits - 1,
 			/* 3 bits required for migrate types */
+	PB_freetype_flags,
+	PB_freetype_flags_end = PB_freetype_flags + PB_freetype_flags_bits - 1,
+
 	PB_compact_skip,/* If set the block is skipped by compaction */
 
 #ifdef CONFIG_MEMORY_ISOLATION
@@ -37,13 +47,20 @@ enum pageblock_bits {
 
 #define NR_PAGEBLOCK_BITS (roundup_pow_of_two(__NR_PAGEBLOCK_BITS))
 
-#define PAGEBLOCK_MIGRATETYPE_MASK ((1UL << (PB_migrate_end + 1)) - 1)
+#define PAGEBLOCK_MIGRATETYPE_MASK	GENMASK(PB_migrate_end, 0)
+#define PAGEBLOCK_FREETYPE_FLAGS_MASK	GENMASK(PB_freetype_flags_end, PB_migrate_end)
 
 #ifdef CONFIG_MEMORY_ISOLATION
 #define PAGEBLOCK_ISO_MASK		BIT(PB_migrate_isolate)
 #else
 #define PAGEBLOCK_ISO_MASK		0
 #endif
+
+#define PAGEBLOCK_NO_DIRECT_MAP_MASK	BIT(PB_no_direct_map)
+
+#define PAGEBLOCK_FREETYPE_MASK (PAGEBLOCK_MIGRATETYPE_MASK | \
+				 PAGEBLOCK_ISO_MASK | \
+				 PAGEBLOCK_FREETYPE_FLAGS_MASK)
 
 #if defined(CONFIG_HUGETLB_PAGE)
 

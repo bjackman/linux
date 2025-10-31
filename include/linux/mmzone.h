@@ -802,7 +802,7 @@ enum zone_watermarks {
 #define NR_PCP_THP 0
 #endif
 #define NR_LOWORDER_PCP_LISTS (MIGRATE_PCPTYPES * (PAGE_ALLOC_COSTLY_ORDER + 1))
-#define NR_PCP_LISTS (NR_LOWORDER_PCP_LISTS + NR_PCP_THP)
+#define NR_PCP_LISTS ((NR_LOWORDER_PCP_LISTS + NR_PCP_THP) * (1 << NUM_FREETYPE_FLAGS))
 
 /*
  * Flags used in pcp->flags field.
