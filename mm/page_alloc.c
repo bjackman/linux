@@ -35,6 +35,7 @@
 #include <linux/pagevec.h>
 #include <linux/memory_hotplug.h>
 #include <linux/nodemask.h>
+#include <linux/set_memory.h>
 #include <linux/vmstat.h>
 #include <linux/fault-inject.h>
 #include <linux/compaction.h>
@@ -585,6 +586,15 @@ static void set_pageblock_migratetype(struct page *page,
 	__set_pfnblock_flags_mask(page, page_to_pfn(page),
 				  (unsigned long)migratetype,
 				  PAGEBLOCK_MIGRATETYPE_MASK | PAGEBLOCK_ISO_MASK);
+}
+
+static inline void set_pageblock_freetype_flags(struct page *page,
+						unsigned int ft_flags)
+{
+	unsigned int flags = ft_flags << PB_freetype_flags;
+
+	__set_pfnblock_flags_mask(page, page_to_pfn(page), flags,
+				  PAGEBLOCK_FREETYPE_FLAGS_MASK);
 }
 
 void __meminit init_pageblock_migratetype(struct page *page,
@@ -3255,6 +3265,112 @@ static inline void zone_statistics(struct zone *preferred_zone, struct zone *z,
 #endif
 }
 
+// TODO: Need a separate config for this I think.
+#ifdef CONFIG_KVM_GUEST_MEMFD
+/* Try to allocate a page by mapping/unmapping a block from the direct map. */
+static inline struct page *__rmqueue_direct_map(struct zone *zone, unsigned int request_order,
+				unsigned int alloc_flags, freetype_t freetype)
+{
+	unsigned int ft_flags_other = freetype_flags(freetype) ^ FREETYPE_NO_DIRECT_MAP;
+	freetype_t ft_other = migrate_to_freetype(free_to_migratetype(freetype),
+						  ft_flags_other);
+	bool want_mapped = !(freetype_flags(freetype) & FREETYPE_NO_DIRECT_MAP);
+	enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
+	unsigned long irq_flags;
+	int nr_pageblocks;
+	struct page *page;
+	int alloc_order;
+	int err;
+
+	/*
+	 * Might need a TLB shootdown. Even if IRQs are on this isn't
+	 * safe if the caller holds a lock (in case the other CPUs need that
+	 * lock to handle the shootdown IPI).
+	 */
+	if (alloc_flags & ALLOC_NOBLOCK)
+		return NULL;
+
+	if (!can_set_direct_map())
+		return NULL;
+
+	lockdep_assert(!irqs_disabled() || unlikely(early_boot_irqs_disabled));
+
+	/*
+	 * Need to [un]map a whole pageblock (otherwise it might require
+	 * allocating pagetables). First allocate it.
+	 */
+	alloc_order = max(request_order, pageblock_order);
+	nr_pageblocks = 1 << (alloc_order - pageblock_order);
+	spin_lock_irqsave(&zone->lock, irq_flags);
+	page = __rmqueue(zone, alloc_order, ft_other, alloc_flags, &rmqm);
+	spin_unlock_irqrestore(&zone->lock, irq_flags);
+	if (!page)
+		return NULL;
+
+	if (want_mapped) {
+		/*
+		 * These pages were formerly unmapped so we need to clear them
+		 * out before exposing them to CPU attacks. Doing this with the
+		 * zone lock held would have been undesirable.
+		 */
+		kernel_init_pages(page, 1 << alloc_order);
+	}
+
+	/*
+	 * Now that IRQs are on it's safe to do a TLB shootdown, and now that we
+	 * released the zone lock it's possibl to allocate a pagetable if needed
+	 * to split up a huge page.
+	 *
+	 * TODO: This can result in arbitrary recursion. If there is a chain of
+	 * pageblocks with the wrong direct map state, each of them can create a
+	 * level of recursion. We need a way to make the allocation fail if that
+	 * happens.
+	 */
+
+	// TODO! Need to deal with the case that part of the block is still
+	// memblock-reserved.
+	err = set_direct_map_valid_noflush(page, nr_pageblocks << pageblock_order, want_mapped);
+	if (err == -ENOMEM)
+		return NULL;
+	if (WARN_ONCE(err, "err=%d\n", err))
+		return NULL;
+
+	if (!want_mapped) {
+		unsigned long start = (unsigned long)page_address(page);
+		unsigned long end = start + (nr_pageblocks << (pageblock_order + PAGE_SHIFT));
+
+		flush_tlb_kernel_range(start, end);
+	}
+
+	for (int i = 0; i < nr_pageblocks; i++) {
+		struct page *block_page = page + (pageblock_nr_pages * i);
+
+		set_pageblock_freetype_flags(block_page, ft_flags_other);
+	}
+
+	if (request_order >= alloc_order)
+		return page;
+
+	/* Free any remaining pages in the block. */
+	spin_lock_irqsave(&zone->lock, irq_flags);
+	for (unsigned int i = request_order; i < alloc_order; i++) {
+		struct page *page_to_free = page + (1 << i);
+
+		__free_one_page(page_to_free, page_to_pfn(page_to_free), zone,
+			i, freetype, FPI_SKIP_REPORT_NOTIFY);
+	}
+	spin_unlock_irqrestore(&zone->lock, irq_flags);
+
+	return page;
+}
+#else /* CONFIG_KVM_GUEST_MEMFD */
+static inline struct page *__rmqueue_direct_map(struct zone *zone, unsigned int request_order,
+				unsigned int alloc_flags, freetype_t freetype)
+{
+	return NULL;
+}
+#endif /* CONFIG_KVM_GUEST_MEMFD */
+
 static __always_inline
 struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			   unsigned int order, unsigned int alloc_flags,
@@ -3288,13 +3404,15 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			 */
 			if (!page && (alloc_flags & (ALLOC_OOM|ALLOC_HARDER)))
 				page = __rmqueue_smallest(zone, order, ft_high);
-
-			if (!page) {
-				spin_unlock_irqrestore(&zone->lock, flags);
-				return NULL;
-			}
 		}
 		spin_unlock_irqrestore(&zone->lock, flags);
+
+		/* Try changing direct map, now we've released the zone lock */
+		if (!page)
+			page = __rmqueue_direct_map(zone, order, alloc_flags, freetype);
+		if (!page)
+			return NULL;
+
 	} while (check_new_pages(page, order));
 
 	__count_zid_vm_events(PGALLOC, page_zonenum(page), 1 << order);
