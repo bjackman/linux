@@ -125,10 +125,10 @@ static inline bool migratetype_is_mergeable(int mt)
 
 #define for_each_free_list(list, zone) \
 	for (unsigned int order = 0; order < NR_PAGE_ORDERS; order++) \
-		for (unsigned int type = 0; \
-		     list = &zone->free_area[order].free_list[type], \
-		     type < MIGRATE_TYPES; \
-		     type++) \
+		for (unsigned int t = 0; \
+		     list = &zone->free_area[order].free_list[t], \
+		     t < NR_FREETYPES; \
+		     t++)
 
 /*
  * A freetype is the index used to identify free lists. This consists of a
