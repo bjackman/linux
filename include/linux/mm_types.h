@@ -929,7 +929,10 @@ struct mm_cid {
 
 /* TODO: this doesn't belong here. */
 struct mml_cpu {
-	bool in_use;
+	/* All fields are offsets within the CPU's ephmap region. */
+	unsigned long alloc_start;
+	unsigned long alloc_size; /* 0 means nothing allocated. */
+	unsigned long next_free;
 };
 
 struct kioctx_table;

@@ -238,30 +238,8 @@ void ephmap_put(const void *vaddr, unsigned long size)
 	 * because we need to ensure other CPUs in the mm flush their TLBs
 	 * before they lose logical access to the page.
 	 */
-	/* TODO: create a proper API for this type of flush. */
-	/*
-	 * Need to flush restricted and unrestricted address space. Do not need
-	 * to flush user address space if that exists, and do not need to
-	 * invalidate any others.
-	 *
-	 * In this simplistic code, ASI address transitions never set
-	 * CR3.noflush so we don't need to account for the "other" address
-	 * space, just ensure we flush whatever we're currently in.
-	 */
-	if (size >> PAGE_SHIFT < 33) {
-		for (unsigned long offset = 0; offset < size; offset += PAGE_SIZE)
-			asm volatile("invlpg (%0)" ::"r" (addr + offset) : "memory");
-	} else {
-		/*
-		 * TODO: Um, I think there has to be a way to avoid flushing
-		 * other PCIDs here. Just need to flush "both" PCIDs for the
-		 * current ASI domain (bearing in mind the current lack of
-		 * CR3.noflush). But anyway this is throwaway code.
-		 */
-		invpcid_flush_all();
-	}
 
-	this_cpu_write(current->mm->mml_cpu->in_use, false);
+	this_cpu_write(current->mm->mml_cpu->alloc_size, 0);
 }
 EXPORT_SYMBOL(ephmap_put);
 
@@ -333,6 +311,7 @@ static int map_page_range(struct mm_struct *mm, unsigned long addr,
  */
 void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 {
+	struct mml_cpu *mml_cpu;
 	unsigned long addr;
 	void *ptr;
 
@@ -341,25 +320,42 @@ void *ephmap_get(struct page *page, unsigned long size, pgprot_t prot)
 	if (size > EPHMAP_CPU_REGION_SIZE)
 		return NULL;
 
-	if (!current->mm || this_cpu_xchg(current->mm->mml_cpu->in_use, true)) {
-		/* Another thread in this mm is using it */
+	size = PAGE_ALIGN(size);
+
+	if (!current->mm || this_cpu_xchg(current->mm->mml_cpu->alloc_size, size)) {
+		/*
+		 * Another thread in this mm is using it. This could be supported but
+		 * requires something more like an actual allocator.
+		 */
 		return NULL;
 	}
+
+	mml_cpu = this_cpu_ptr(current->mm->mml_cpu);
+	if (mml_cpu->next_free + size > EPHMAP_CPU_REGION_SIZE) {
+		/*
+		 * TODO: Um, I think there has to be a way to avoid flushing
+		 * other PCIDs here.
+		 * TODO: Create a proper API for a flush of this type (CPU-local, whole
+		 * of current address space (or, large range)).
+		 */
+		BUG_ON(!cpu_feature_enabled(X86_FEATURE_PCID));
+		invpcid_flush_all();
+		mml_cpu->next_free = 0;
+	}
+
+	mml_cpu->alloc_start = mml_cpu->next_free;
+	mml_cpu->next_free = mml_cpu->alloc_start + size;
 
 	/* TODO: Make it a BUILD_BUG_ON (annoying because PGD size is variable). */
 	BUG_ON(EPHMAP_END_ADDR > MM_LOCAL_END);
 
-	addr = ephmap_cpu_base(smp_processor_id());
-	size = PAGE_ALIGN(size);
+	addr = ephmap_cpu_base(smp_processor_id()) + mml_cpu->alloc_start;
 	ptr = (void *)addr;
 
 	/*
 	 * This contends for mm->page_table_lock during allocation but
 	 * after that it just relies on the caller not to race with overlapping
 	 * ranges.
-	 *
-	 * We don't need to asi_map() this region as it's already cloned into
-	 * the restricted address space.
 	 */
 	if (map_page_range(current->mm, addr, addr + size,
 			   page_to_phys(page), prot)) {
@@ -622,7 +618,7 @@ void ephmap_cleanup(struct mmu_gather *tlb)
 	 * whole thing).
 	 */
 	for_each_possible_cpu(cpu) {
-		per_cpu(tlb->mm->mml_cpu->in_use, cpu) = false;
+		per_cpu(tlb->mm->mml_cpu->alloc_size, cpu) = 1;
 	}
 
 	/* Cribbed from free_ldt_pagetables() */
