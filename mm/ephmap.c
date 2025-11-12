@@ -17,7 +17,11 @@
  * Each CPU gets a chunk of the ephemeral mapping the size of the maximum folio
  * size.
  */
-#define EPHMAP_CPU_REGION_SIZE (PAGE_SIZE << MAX_PAGECACHE_ORDER)
+/*
+ * Hack: Just making the CPU region size really big. This will just crash at
+ * runtime if NR_CPUs is more than some limit which I think (?) is 512 on !la57.
+ */
+#define EPHMAP_CPU_REGION_SIZE (PAGE_SIZE << PUD_ORDER)
 #define EPHMAP_SIZE (EPHMAP_CPU_REGION_SIZE * NR_CPUS)
 #define EPHMAP_END_ADDR (EPHEMERAL_FILEMAP_BASE_ADDR + (NR_CPUS * EPHMAP_CPU_REGION_SIZE))
 
