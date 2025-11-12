@@ -5,7 +5,7 @@
 #include <linux/mm.h>
 
 /* No users yet. */
-static inline bool ephmap_needed(void) { return false; }
+static inline bool ephmap_needed(void) { return true; }
 void ephmap_setup(struct mm_struct *mm);
 void ephmap_cleanup(struct mmu_gather *tlb);
 

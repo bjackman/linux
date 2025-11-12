@@ -6,6 +6,10 @@
 #include <linux/anon_inodes.h>
 #include <linux/set_memory.h>
 #include <linux/userfaultfd_k.h>
+#include <linux/uio.h>
+#include <linux/lockdep.h>
+#include <linux/percpu-defs.h>
+#include <linux/ephmap.h>
 
 #include "kvm_mm.h"
 
@@ -426,17 +430,20 @@ static size_t ephmap_copy_folio_from_iter_atomic(struct folio *folio, size_t off
 		return 0;
 
 	do {
-		char *to = kmap_local_folio(folio, offset);
-
 		n = bytes - copied;
-		if (folio_test_partial_kmap(folio) &&
-		    n > PAGE_SIZE - offset_in_page(offset))
-			n = PAGE_SIZE - offset_in_page(offset);
+		struct page *page = folio_file_page(folio, 0);
+
+		migrate_disable();
+		char *to = ephmap_get(page, PAGE_SIZE,
+                        __pgprot(__PAGE_KERNEL & ~_PAGE_GLOBAL));
 
 		pagefault_disable();
-		n = copy_from_iter(to, n, i);
+		n = _copy_from_iter(to, n, i);
 		pagefault_enable();
-		kunmap_local(to);
+
+		ephmap_put(to, PAGE_SIZE);
+		migrate_enable();
+
 		copied += n;
 		offset += n;
 	} while (copied != bytes && n > 0);
