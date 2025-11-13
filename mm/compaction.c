@@ -1393,6 +1393,9 @@ static bool suitable_migration_source(struct compact_control *cc,
 	block_ft = get_pageblock_freetype(page);
 	block_mt = free_to_migratetype(block_ft);
 
+	if (freetype_unmapped(get_pageblock_freetype(page)))
+		return false;
+
 	/*
 	 * CMA pages can only be taken by ALLOC_CMA requests. For anybody
 	 * else, vacating a CMA block consumes free pages the caller
@@ -1443,6 +1446,9 @@ static bool suitable_migration_target(struct compact_control *cc,
 		if (buddy_order_unsafe(page) >= order)
 			return false;
 	}
+
+	if (freetype_unmapped(get_pageblock_freetype(page)))
+		return false;
 
 	if (cc->ignore_block_suitable)
 		return true;
@@ -2588,7 +2594,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 		INIT_LIST_HEAD(&cc->freepages[order]);
 	INIT_LIST_HEAD(&cc->migratepages);
 
-	cc->freetype = gfp_freetype(cc->gfp_mask);
+	cc->freetype = gfp_freetype(cc->gfp_mask, cc->alloc_flags);
 
 	if (!is_via_compact_memory(cc->order)) {
 		ret = compaction_suit_allocation_order(cc->zone, cc->order,
