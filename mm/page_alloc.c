@@ -34,6 +34,7 @@
 #include <linux/folio_batch.h>
 #include <linux/memory_hotplug.h>
 #include <linux/nodemask.h>
+#include <linux/set_memory.h>
 #include <linux/vmstat.h>
 #include <linux/fault-inject.h>
 #include <linux/compaction.h>
@@ -999,6 +1000,26 @@ static void change_pageblock_range(struct page *pageblock_page,
 }
 
 /*
+ * Can pages of these two freetypes be combined into a single higher-order free
+ * page?
+ */
+static inline bool can_merge_freetypes(freetype_t a, freetype_t b)
+{
+	if (freetypes_equal(a, b))
+		return true;
+
+	if (!migratetype_is_mergeable(free_to_migratetype(a)) ||
+	    !migratetype_is_mergeable(free_to_migratetype(b)))
+		return false;
+
+	/*
+	 * Mustn't "just" merge pages with different freetype flags, changing
+	 * those requires updating pagetables.
+	 */
+	return freetype_flags(a) == freetype_flags(b);
+}
+
+/*
  * Freeing function for a buddy system allocator.
  *
  * The concept of a buddy system is to maintain direct-mapped table
@@ -1066,9 +1087,7 @@ static inline void __free_one_page(struct page *page,
 			buddy_ft = get_pfnblock_freetype(buddy, buddy_pfn);
 			buddy_mt = free_to_migratetype(buddy_ft);
 
-			if (migratetype != buddy_mt &&
-			    (!migratetype_is_mergeable(migratetype) ||
-			     !migratetype_is_mergeable(buddy_mt)))
+			if (!can_merge_freetypes(freetype, buddy_ft))
 				goto done_merging;
 		}
 
@@ -1085,7 +1104,9 @@ static inline void __free_one_page(struct page *page,
 			/*
 			 * Match buddy type. This ensures that an
 			 * expand() down the line puts the sub-blocks
-			 * on the right freelists.
+			 * on the right freelists. Freetype flags are
+			 * already set correctly because of
+			 * can_merge_freetypes().
 			 */
 			change_pageblock_range(buddy, order, migratetype);
 		}
@@ -1406,7 +1427,7 @@ static __always_inline bool __free_pages_prepare(struct page *page,
 {
 	int bad = 0;
 	bool skip_kasan_poison = should_skip_kasan_poison(page);
-	bool init = want_init_on_free();
+	bool init = want_init_on_free() && !freetype_unmapped(get_pageblock_freetype(page));
 	bool compound = PageCompound(page);
 	struct folio *folio = page_folio(page);
 
@@ -1889,14 +1910,19 @@ static inline bool should_skip_kasan_unpoison(gfp_t flags)
 	return flags & __GFP_SKIP_KASAN;
 }
 
-static inline bool should_skip_init(gfp_t flags)
+static inline bool should_skip_init(gfp_t gfp, unsigned int alloc_flags)
 {
 	/* Don't skip, if hardware tag-based KASAN is not enabled. */
 	if (!kasan_hw_tags_enabled())
 		return false;
 
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	if (alloc_flags & ALLOC_UNMAPPED)
+		return true;
+#endif
+
 	/* For hardware tag-based KASAN, skip if requested. */
-	return (flags & __GFP_SKIP_ZERO);
+	return (gfp & __GFP_SKIP_ZERO);
 }
 
 inline void post_alloc_hook(struct page *page, unsigned int order,
@@ -1904,7 +1930,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 {
 	const bool zero_tags = gfp_flags & __GFP_ZEROTAGS;
 	bool init = !want_init_on_free() && want_init_on_alloc(gfp_flags) &&
-			!should_skip_init(gfp_flags);
+			!should_skip_init(gfp_flags, alloc_flags);
 	int i;
 
 	set_page_private(page, 0);
@@ -3276,7 +3302,7 @@ int __isolate_free_page(struct page *page, unsigned int order)
 			 * Only change normal pageblocks (i.e., they can merge
 			 * with others)
 			 */
-			if (migratetype_is_mergeable(free_to_migratetype(ft)))
+			if (can_merge_freetypes(old_ft, new_ft))
 				move_freepages_block(zone, page, old_ft, new_ft);
 		}
 	}
@@ -3332,6 +3358,127 @@ static inline void zone_statistics(struct zone *preferred_zone, struct zone *z,
 #endif
 }
 
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+/* Try to allocate a page by mapping/unmapping a block from the direct map. */
+static inline struct page *
+__rmqueue_direct_map(struct zone *zone, unsigned int request_order,
+		     unsigned int alloc_flags, freetype_t freetype)
+{
+	unsigned int ft_flags_other = freetype_flags(freetype) ^ FREETYPE_UNMAPPED;
+	freetype_t ft_other = migrate_to_freetype(free_to_migratetype(freetype),
+						  ft_flags_other);
+	bool want_mapped = !(freetype_flags(freetype) & FREETYPE_UNMAPPED);
+	enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
+	unsigned long irq_flags;
+	int nr_pageblocks, nr_freed;
+	struct page *page;
+	int alloc_order;
+	int err;
+
+	if (freetype_idx(ft_other) < 0)
+		return NULL;
+
+	/*
+	 * Might need a TLB shootdown. Even if IRQs are on this isn't
+	 * safe if the caller holds a lock (in case the other CPUs need that
+	 * lock to handle the shootdown IPI).
+	 */
+	if (alloc_flags & ALLOC_NOBLOCK)
+		return NULL;
+
+	if (!can_set_direct_map() || alloc_flags & ALLOC_NOLOCK)
+		return NULL;
+
+	lockdep_assert(!irqs_disabled() || unlikely(early_boot_irqs_disabled));
+
+	/*
+	 * Need to [un]map a whole pageblock (otherwise it might require
+	 * allocating pagetables). First allocate it.
+	 */
+	alloc_order = max(request_order, pageblock_order);
+	nr_pageblocks = 1 << (alloc_order - pageblock_order);
+	spin_lock_irqsave(&zone->lock, irq_flags);
+	/* First try a block that already has the right migratetype. */
+	page = __rmqueue(zone, alloc_order, ft_other, alloc_flags, &rmqm);
+	if (!page) {
+		/* Fallback to changing a block's migratetype. */
+		rmqm = RMQUEUE_CLAIM;
+		page = __rmqueue(zone, alloc_order, ft_other, alloc_flags, &rmqm);
+	}
+	spin_unlock_irqrestore(&zone->lock, irq_flags);
+	if (!page)
+		return NULL;
+
+	/*
+	 * Now that IRQs are on it's safe to do a TLB shootdown, and now that we
+	 * released the zone lock it's possible to allocate a pagetable if
+	 * needed to split up a huge page.
+	 *
+	 * Note that modifying the direct map may need to allocate pagetables.
+	 * What about unbounded recursion? Here are the assumptions that make it
+	 * safe:
+	 *
+	 * - The direct map starts out fully mapped at boot. (This is not really
+	 *   an "assumption" as it's in direct control of page_alloc.c).
+	 *
+	 * - Once pages in the direct map are broken down, they are not
+	 *   re-aggregated into larger pages again.
+	 *
+	 * - Pagetables are never allocated with ALLOC_UNMAPPED.
+	 *
+	 * Under these assumptions, a pagetable might need to be allocated while
+	 * _unmapping_ stuff from the direct map during an ALLOC_UNMAPPED
+	 * allocation. But, the allocation of that pagetable never requires
+	 * allocating a further pagetable.
+	 */
+	err = set_direct_map_valid_noflush(page,
+				nr_pageblocks << pageblock_order, want_mapped);
+	if (err == -ENOMEM || WARN_ONCE(err, "err=%d\n", err)) {
+		set_direct_map_valid_noflush(page,
+				nr_pageblocks << pageblock_order, !want_mapped);
+		spin_lock_irqsave(&zone->lock, irq_flags);
+		/* Important: free using _old_ freetype. */
+		__free_one_page(page, page_to_pfn(page), zone,
+				alloc_order, ft_other, FPI_SKIP_REPORT_NOTIFY);
+		spin_unlock_irqrestore(&zone->lock, irq_flags);
+		return NULL;
+	}
+
+	if (want_mapped) {
+		/* Exposing formerly-protected data; scrub it. */
+		clear_highpages_kasan_tagged(page, nr_pageblocks << pageblock_order);
+	} else {
+		unsigned long start = (unsigned long)page_address(page);
+		unsigned long end = start + (nr_pageblocks << (pageblock_order + PAGE_SHIFT));
+
+		flush_tlb_kernel_range(start, end);
+	}
+
+	for (int i = 0; i < nr_pageblocks; i++) {
+		struct page *block_page = page + (pageblock_nr_pages * i);
+
+		set_pageblock_freetype_flags(block_page, freetype_flags(freetype));
+	}
+
+	if (request_order >= alloc_order)
+		return page;
+
+	/* Free any remaining pages in the block. */
+	spin_lock_irqsave(&zone->lock, irq_flags);
+	nr_freed = expand(zone, page, request_order, alloc_order, freetype);
+	account_freepages(zone, nr_freed, free_to_migratetype(freetype));
+	spin_unlock_irqrestore(&zone->lock, irq_flags);
+
+	return page;
+}
+#else /* CONFIG_PAGE_ALLOC_UNMAPPED */
+static inline struct page *__rmqueue_direct_map(struct zone *zone, unsigned int request_order,
+				unsigned int alloc_flags, freetype_t freetype)
+{
+	return NULL;
+}
+#endif /* CONFIG_PAGE_ALLOC_UNMAPPED */
+
 static __always_inline
 struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			   unsigned int order, unsigned int alloc_flags,
@@ -3365,13 +3512,15 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			 */
 			if (!page && (alloc_flags & (ALLOC_OOM|ALLOC_HARDER)))
 				page = __rmqueue_smallest(zone, order, ft_high);
-
-			if (!page) {
-				spin_unlock_irqrestore(&zone->lock, flags);
-				return NULL;
-			}
 		}
 		spin_unlock_irqrestore(&zone->lock, flags);
+
+		/* Try changing direct map, now we've released the zone lock */
+		if (!page)
+			page = __rmqueue_direct_map(zone, order, alloc_flags, freetype);
+		if (!page)
+			return NULL;
+
 	} while (check_new_pages(page, order));
 
 	/*
@@ -3591,6 +3740,8 @@ static void reserve_highatomic_pageblock(struct page *page, int order,
 		return;
 
 	ft_high = freetype_with_migrate(ft, MIGRATE_HIGHATOMIC);
+	if (freetype_idx(ft_high) < 0)
+		return;
 	if (order < pageblock_order) {
 		if (move_freepages_block(zone, page, ft, ft_high) == -1)
 			return;
@@ -3906,13 +4057,15 @@ alloc_flags_nofragment(struct zone *zone, gfp_t gfp_mask)
 }
 
 /* Must be called after current_gfp_context() which can change gfp_mask */
-static inline unsigned int alloc_flags_cma(gfp_t gfp_mask)
+static inline unsigned int alloc_flags_cma(gfp_t gfp_mask, unsigned int alloc_flags)
 {
 #ifdef CONFIG_CMA
-	if (free_to_migratetype(gfp_freetype(gfp_mask)) == MIGRATE_MOVABLE)
-		return ALLOC_CMA;
+	if (free_to_migratetype(gfp_freetype(gfp_mask, alloc_flags)) == MIGRATE_MOVABLE)
+		alloc_flags |= ALLOC_CMA;
 #endif
-	return ALLOC_DEFAULT;
+	alloc_flags |= ALLOC_DEFAULT;
+
+	return alloc_flags;
 }
 
 /*
@@ -4696,7 +4849,7 @@ alloc_flags_slowpath(gfp_t gfp_mask, unsigned int order)
 	} else if (unlikely(rt_or_dl_task(current)) && in_task())
 		alloc_flags |= ALLOC_MIN_RESERVE;
 
-	alloc_flags |= alloc_flags_cma(gfp_mask);
+	alloc_flags = alloc_flags_cma(gfp_mask, alloc_flags);
 
 	if (defrag_mode)
 		alloc_flags |= ALLOC_NOFRAGMENT;
@@ -5007,7 +5160,7 @@ retry:
 
 	reserve_flags = __gfp_pfmemalloc_flags(gfp_mask);
 	if (reserve_flags)
-		alloc_flags = alloc_flags_cma(gfp_mask) | reserve_flags |
+		alloc_flags = alloc_flags_cma(gfp_mask, alloc_flags) | reserve_flags |
 				ac->alloc_flags | (alloc_flags & ALLOC_KSWAPD);
 
 	/*
@@ -5229,7 +5382,11 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 	ac->highest_zoneidx = gfp_zone(gfp_mask);
 	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
 	ac->nodemask = nodemask;
-	ac->freetype = gfp_freetype(gfp_mask);
+	ac->freetype = gfp_freetype(gfp_mask, *alloc_flags);
+
+	/* Not implemented yet. */
+	if (freetype_flags(ac->freetype) & FREETYPE_UNMAPPED && gfp_mask & __GFP_ZERO)
+		return false;
 
 	if (cpusets_enabled()) {
 		*alloc_gfp |= __GFP_HARDWALL;
@@ -5253,7 +5410,7 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 	    should_fail_alloc_page(gfp_mask, order))
 		return false;
 
-	*alloc_flags |= alloc_flags_cma(gfp_mask);
+	*alloc_flags = alloc_flags_cma(gfp_mask, *alloc_flags);
 
 	/* Dirty zone balancing only done in the fast path */
 	ac->spread_dirty_pages = (gfp_mask & __GFP_WRITE);
@@ -5528,6 +5685,16 @@ static const gfp_t gfp_nolock = __GFP_NOWARN | __GFP_ZERO | __GFP_NOMEMALLOC |
 				__GFP_COMP;
 
 /*
+ * ALLOC_ flags other mm callers are allowed to set. More could be trivially
+ * added here if needed.
+ */
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+#define SUPPORTED_INPUT_ALLOC_FLAGS ALLOC_NOLOCK | ALLOC_NO_CODETAG | ALLOC_UNMAPPED
+#else
+#define SUPPORTED_INPUT_ALLOC_FLAGS ALLOC_NOLOCK | ALLOC_NO_CODETAG
+#endif
+
+/*
  * This is the 'heart' of the zoned buddy allocator.
  */
 struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
@@ -5540,8 +5707,7 @@ struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
 	};
 	unsigned int fastpath_alloc_flags = ac.alloc_flags;
 
-	/* Other flags could be supported later if needed. */
-	if (WARN_ON(alloc_flags & ~(ALLOC_NOLOCK | ALLOC_NO_CODETAG)))
+	if (WARN_ON(alloc_flags & ~(SUPPORTED_INPUT_ALLOC_FLAGS)))
 		return NULL;
 
 	if (!alloc_order_allowed(gfp, order, alloc_flags))
