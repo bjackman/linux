@@ -2,6 +2,7 @@
 #ifndef _LINUX_FREETYPE_H
 #define _LINUX_FREETYPE_H
 
+#include <linux/log2.h>
 #include <linux/types.h>
 #include <linux/mmdebug.h>
 
@@ -64,13 +65,30 @@ static inline bool migratetype_is_mergeable(int mt)
 	return mt < MIGRATE_PCPTYPES;
 }
 
+enum {
+	/* Defined unconditionally as a hack to avoid a zero-width bitfield. */
+	FREETYPE_UNMAPPED_BIT,
+	NUM_FREETYPE_FLAGS,
+};
+
 /*
  * A freetype is the identifier for a page freelist. This consists of a
  * migratetype, and other bits which encode orthogonal properties of memory.
  */
 typedef struct {
-	int migratetype;
+	unsigned int migratetype : order_base_2(MIGRATE_TYPES);
+	unsigned int flags : NUM_FREETYPE_FLAGS;
 } freetype_t;
+
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+#define FREETYPE_UNMAPPED			BIT(FREETYPE_UNMAPPED_BIT)
+#define NUM_UNMAPPED_FREETYPES			1
+#else
+#define FREETYPE_UNMAPPED			0
+#define NUM_UNMAPPED_FREETYPES			0
+#endif
+
+#define FREETYPE_FLAGS_MASK FREETYPE_UNMAPPED
 
 /*
  * Return a dense linear index for freetypes that have lists in the free area.
@@ -78,6 +96,16 @@ typedef struct {
  */
 static inline int freetype_idx(freetype_t freetype)
 {
+	/* For FREETYPE_UNMAPPED, only MIGRATE_UNMOVABLE has an index. */
+	if (freetype.flags & FREETYPE_UNMAPPED) {
+		VM_WARN_ON_ONCE(freetype.flags & ~FREETYPE_UNMAPPED);
+		if (freetype.migratetype != MIGRATE_UNMOVABLE)
+			return -1;
+		return MIGRATE_TYPES;
+	}
+	/* No other flags are supported. */
+	VM_WARN_ON_ONCE(freetype.flags);
+
 	return freetype.migratetype;
 }
 
@@ -85,33 +113,53 @@ static inline freetype_t freetype_from_idx(unsigned int idx)
 {
 	freetype_t freetype;
 
-	freetype.migratetype = idx;
+	if (idx == MIGRATE_TYPES) {
+		freetype.flags = FREETYPE_UNMAPPED;
+		freetype.migratetype = MIGRATE_UNMOVABLE;
+	} else {
+		VM_WARN_ON_ONCE(idx < 0 || idx > MIGRATE_TYPES);
+		freetype.flags = 0;
+		freetype.migratetype = idx;
+	}
 	return freetype;
 }
 
-/* No freetype flags actually exist yet. */
-#define NR_FREETYPE_IDXS MIGRATE_TYPES
+/* One for each migratetype, plus one for MIGRATE_UNMOVABLE-FREETYPE_UNMAPPED */
+#define NR_FREETYPE_IDXS (MIGRATE_TYPES + NUM_UNMAPPED_FREETYPES)
 
 static inline unsigned int freetype_flags(freetype_t freetype)
 {
-	/* No flags supported yet. */
-	return 0;
+	return freetype.flags;
 }
+
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+static inline bool freetype_unmapped(freetype_t freetype)
+{
+	return !!(freetype.flags & FREETYPE_UNMAPPED);
+}
+#else
+static inline bool freetype_unmapped(freetype_t freetype)
+{
+	return false;
+}
+#endif
 
 static inline bool freetypes_equal(freetype_t a, freetype_t b)
 {
-	return a.migratetype == b.migratetype;
+	return a.migratetype == b.migratetype && a.flags == b.flags;
 }
 
 static inline freetype_t migrate_to_freetype(enum migratetype mt,
 					     unsigned int flags)
 {
-	freetype_t freetype;
+	freetype_t freetype = {
+		.migratetype = mt,
+		.flags = flags,
+	};
 
-	/* No flags supported yet. */
-	VM_WARN_ON_ONCE(flags);
+	VM_WARN_ON_ONCE(flags & ~FREETYPE_FLAGS_MASK);
+	VM_WARN_ON_ONCE(mt >= MIGRATE_TYPES);
 
-	freetype.migratetype = mt;
 	return freetype;
 }
 

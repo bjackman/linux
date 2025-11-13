@@ -1530,3 +1530,6 @@ config MERMAP_KUNIT_TEST
 source "mm/damon/Kconfig"
 
 endmenu
+
+config PAGE_ALLOC_UNMAPPED
+	bool
