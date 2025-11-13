@@ -49,6 +49,24 @@
 #define ALLOC_HIGHATOMIC	0x200 /* Allows access to MIGRATE_HIGHATOMIC */
 #define ALLOC_NOLOCK		0x400 /* Only use spin_trylock in allocation path */
 #define ALLOC_KSWAPD		0x800 /* allow waking of kswapd, __GFP_KSWAPD_RECLAIM set */
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+/*
+ * Allocate pages that aren't present in the direct map. If the caller changes
+ * direct map presence, it must be restored to the previous state before freeing
+ * the page. (This is true regardless of ALLOC_UNMAPPED).
+ *
+ * This uses the mermap (when __GFP_ZERO), so it's only valid to allocate with
+ * this flag where that's valid, namely from process context after the mermap
+ * has been initialised for that process. This also means that the allocator
+ * leaves behind stale TLB entries in the mermap region. The caller is
+ * responsible for ensuring they are flushed as needed.
+ *
+ * This is currently incompatible with __GFP_MOVABLE and __GFP_RECLAIMABLE, but
+ * only because of allocator implementation details, if a usecase arises this
+ * restriction could be dropped.
+ */
+#define ALLOC_UNMAPPED	       0x2000
+#endif
 
 /* Flags that allow allocations below the min watermark. */
 #define ALLOC_RESERVES (ALLOC_NON_BLOCK|ALLOC_MIN_RESERVE|ALLOC_HIGHATOMIC|ALLOC_OOM)
