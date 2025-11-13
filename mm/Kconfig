@@ -1536,9 +1536,10 @@ config MERMAP_KUNIT_TEST
 
 	  If unsure, say N.
 
+config PAGE_ALLOC_UNMAPPED
+	bool
+	depends on !HIGHMEM
+
 source "mm/damon/Kconfig"
 
 endmenu
-
-config PAGE_ALLOC_UNMAPPED
-	bool
