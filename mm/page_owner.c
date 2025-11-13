@@ -482,7 +482,7 @@ void pagetypeinfo_showmixedcount_print(struct seq_file *m,
 
 			page_owner = get_page_owner(page_ext);
 			page_mt = free_to_migratetype(
-					gfp_freetype(page_owner->gfp_mask));
+				gfp_freetype(page_owner->gfp_mask, ALLOC_DEFAULT));
 			if (pageblock_mt != page_mt) {
 				if (is_migrate_cma(pageblock_mt))
 					count[MIGRATE_MOVABLE]++;
@@ -567,7 +567,7 @@ print_page_owner(char __user *buf, size_t count, unsigned long pfn,
 
 	/* Print information relevant to grouping pages by mobility */
 	pageblock_mt = get_pageblock_migratetype(page);
-	page_mt  = free_to_migratetype(gfp_freetype(page_owner->gfp_mask));
+	page_mt  = free_to_migratetype(gfp_freetype(page_owner->gfp_mask, ALLOC_DEFAULT));
 	ret += scnprintf(kbuf + ret, count - ret,
 			"PFN 0x%lx type %s Block %lu type %s Flags %pGp\n",
 			pfn,
@@ -618,7 +618,7 @@ void __dump_page_owner(const struct page *page)
 
 	page_owner = get_page_owner(page_ext);
 	gfp_mask = page_owner->gfp_mask;
-	mt = free_to_migratetype(gfp_freetype(gfp_mask));
+	mt = free_to_migratetype(gfp_freetype(gfp_mask, ALLOC_DEFAULT));
 
 	if (!test_bit(PAGE_EXT_OWNER, &page_ext->flags)) {
 		pr_alert("page_owner info is not present (never set?)\n");

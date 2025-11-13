@@ -293,9 +293,10 @@ static inline bool free_area_empty(struct free_area *area, freetype_t freetype)
 #define GFP_MOVABLE_MASK (__GFP_RECLAIMABLE|__GFP_MOVABLE)
 #define GFP_MOVABLE_SHIFT 3
 
-static inline freetype_t gfp_freetype(const gfp_t gfp_flags)
+static inline freetype_t gfp_freetype(const gfp_t gfp_flags, unsigned int alloc_flags)
 {
 	unsigned int migratetype;
+	unsigned int ft_flags = 0;
 
 	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) == GFP_MOVABLE_MASK);
 	BUILD_BUG_ON((1UL << GFP_MOVABLE_SHIFT) != ___GFP_MOVABLE);
@@ -312,7 +313,15 @@ static inline freetype_t gfp_freetype(const gfp_t gfp_flags)
 			>> GFP_MOVABLE_SHIFT;
 	}
 
-	return migrate_to_freetype(migratetype, 0);
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	if (alloc_flags & ALLOC_UNMAPPED) {
+		if (WARN_ON_ONCE(migratetype != MIGRATE_UNMOVABLE))
+			migratetype = MIGRATE_UNMOVABLE;
+		ft_flags |= FREETYPE_UNMAPPED;
+	}
+#endif
+
+	return migrate_to_freetype(migratetype, ft_flags);
 }
 #undef GFP_MOVABLE_MASK
 #undef GFP_MOVABLE_SHIFT
