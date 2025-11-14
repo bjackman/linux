@@ -534,6 +534,8 @@ static int kvm_gmem_mmap(struct file *file, struct vm_area_struct *vma)
 
 static struct file_operations kvm_gmem_fops = {
 	.mmap		= kvm_gmem_mmap,
+	.llseek		= default_llseek,
+	.write_iter     = generic_perform_write,
 	.open		= generic_file_open,
 	.release	= kvm_gmem_release,
 	.fallocate	= kvm_gmem_fallocate,
@@ -585,8 +587,55 @@ static void kvm_gmem_free_folio(struct folio *folio)
 	kvm_arch_gmem_invalidate(pfn, pfn + (1ul << order));
 }
 
+static bool kvm_gmem_supports_write(struct inode *inode)
+{
+	return GMEM_I(inode)->flags & GUEST_MEMFD_FLAG_WRITE;
+}
+
+static int kvm_gmem_write_begin(const struct kiocb *kiocb,
+				struct address_space *mapping,
+				loff_t pos, unsigned int len,
+				struct folio **folio, void **fsdata)
+{
+	struct inode *inode = file_inode(kiocb->ki_filp);
+
+	if (!kvm_gmem_supports_write(inode))
+		return -ENODEV;
+
+	if (pos + len > i_size_read(inode))
+		return -EINVAL;
+
+	if (!IS_ALIGNED(pos, PAGE_SIZE) || !IS_ALIGNED(len, PAGE_SIZE))
+		return -EINVAL;
+
+	*folio = kvm_gmem_get_folio(inode, pos >> PAGE_SHIFT);
+	if (IS_ERR(*folio))
+		return PTR_ERR(*folio);
+
+	return 0;
+}
+
+static int kvm_gmem_write_end(const struct kiocb *kiocb,
+			      struct address_space *mapping,
+			      loff_t pos, unsigned int len,
+			      unsigned int copied,
+			      struct folio *folio, void *fsdata)
+{
+	if (!folio_test_uptodate(folio)) {
+		folio_zero_range(folio, copied, len - copied);
+		folio_mark_uptodate(folio);
+	}
+
+	folio_unlock(folio);
+	folio_put(folio);
+
+	return copied;
+}
+
 static const struct address_space_operations kvm_gmem_aops = {
 	.dirty_folio = noop_dirty_folio,
+	.write_begin = kvm_gmem_write_begin,
+	.write_end = kvm_gmem_write_end,
 	.migrate_folio	= kvm_gmem_migrate_folio,
 	.error_remove_folio = kvm_gmem_error_folio,
 	.free_folio = kvm_gmem_free_folio,
@@ -657,6 +706,7 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 	}
 
 	file->f_flags |= O_LARGEFILE;
+	file->f_mode |= FMODE_LSEEK | FMODE_PWRITE;
 	file->private_data = f;
 
 	kvm_get_kvm(kvm);
