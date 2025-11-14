@@ -6471,6 +6471,8 @@ specified via KVM_CREATE_GUEST_MEMFD.  Currently defined flags:
   GUEST_MEMFD_FLAG_NO_DIRECT_MAP The guest_memfd instance will unmap the memory
                                  backing it from the kernel's address space
                                  before passing it off to userspace or the guest.
+  GUEST_MEMFD_FLAG_WRITE         Enable using write() on the guest_memfd file
+                                 descriptor.
   ============================== ================================================
 
 When the KVM MMU performs a PFN lookup to service a guest fault and the backing
