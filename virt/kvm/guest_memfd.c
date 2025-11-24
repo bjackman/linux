@@ -612,6 +612,12 @@ static int kvm_gmem_write_begin(const struct kiocb *kiocb,
 	if (IS_ERR(*folio))
 		return PTR_ERR(*folio);
 
+	if (kvm_gmem_folio_no_direct_map(*folio)) {
+		folio_unlock(*folio);
+		folio_put(*folio);
+		return -EEXIST;
+	}
+
 	return 0;
 }
 
@@ -623,6 +629,7 @@ static int kvm_gmem_write_end(const struct kiocb *kiocb,
 {
 	if (!folio_test_uptodate(folio)) {
 		folio_zero_range(folio, copied, len - copied);
+		kvm_gmem_folio_zap_direct_map(folio);
 		folio_mark_uptodate(folio);
 	}
 
