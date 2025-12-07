@@ -1,0 +1,112 @@
+on:
+  push:
+    branches:
+      - github/linus/master
+      - github/akpm-mm/mm-stable
+      - github/akpm-mm/mm-unstable
+
+name: Linux mm selftests in virtme-ng
+jobs:
+  build-rootfs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install mkosi
+        id: apt-mkosi
+        run: |
+          sudo apt update && sudo apt install apparmor debian-archive-keyring
+          pipx install git+https://github.com/systemd/mkosi.git
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build rootfs
+        run: mkosi -C .github/scripts/rootfs --output-directory=$PWD
+
+      - name: Upload rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image.tar.zst
+          path: image.tar.zst
+
+  build-kernel:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install apt packages for kernel build
+        run: |
+          sudo apt update && sudo apt install \
+            build-essential ncurses-dev xz-utils libssl-dev bc flex libelf-dev bison virtme-ng \
+            libnuma-dev libcap-dev libelf-dev ccache
+
+      - name: Restore ccache cache
+        id: ccache-cache
+        uses: actions/cache@v3
+        with:
+          path: $HOME/.ccache
+          # I'm not entirely sure how this bit works, for some reason I can't
+          # quite bring myself to read the Github docs.
+          key: ccache-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            ccache-${{ github.ref_name }}-
+            ccache-
+
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          ccache --show-stats
+
+      - name: Build kernel + kselftests
+        run: .github/scripts/build_kernel.sh
+
+      - name: Save updated ccache
+        if: always() # Save even if run fails
+        uses: actions/cache@v3
+        with:
+          path: $HOME/.ccache
+          key: ccache-${{ github.ref_name }}-${{ github.run_number }}
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel.tgz
+          path: kernel.tgz
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: [build-rootfs, build-kernel]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/
+            tools/testing/kunit/
+
+      - name: Download rootfs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image.tar.zst
+
+      - name: Download kernel + kselftests
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel.tgz
+
+      - name: Install runtime dependencies
+        id: apt-vng
+        run: |
+          sudo apt update && sudo apt install \
+            qemu-kvm udev iproute2 qemu-system-x86 python3-requests \
+            coreutils libvirt-clients kbd kmod file rsync zstd udev virtme-ng
+
+      - name: Disable AppArmor noise
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Run selftests via virtme-ng
+        run: .github/scripts/test.sh
