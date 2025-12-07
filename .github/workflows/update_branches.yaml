@@ -1,8 +1,9 @@
 name: Update kernel branches
 
 on:
-  schedule:
-    - cron: "0 0 * * *" # Nightly
+  # Disabled, see README
+  # schedule:
+  #   - cron: "0 0 * * *" # Nightly
   workflow_dispatch: # Allows manual triggering
 
 

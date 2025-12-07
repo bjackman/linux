@@ -1,5 +1,12 @@
 # Linux Kernel Github CI???
 
+> [!NOTE]
+> This has been disabled and superseded by the CI for
+> https://github.com/bjackman/limmat-kernel-nix.
+> It has a bug in the branch-updating logic, I'm not sure what it is but it's
+> probably something simple and stupid. However, the Nix-based approach seems
+> clearly superior so I just switched to that.
+
 This repo contains my attempts to run Linux
 [kselftests](https://docs.kernel.org/dev-tools/kselftest.html) via GitHub
 Actions (GHA).
