@@ -3,6 +3,7 @@
 #define _LINUX_KERNEL_PGTABLE_H
 
 #include <linux/hugetlb.h>
+#include <linux/log2.h>
 #include <linux/mm.h>
 #include <linux/pgtable.h>
 #include <linux/vmalloc.h>
@@ -13,10 +14,25 @@
  * Helpers for manipulating kernel pagetables.
  */
 
+struct kp_opts {
+	struct mm_struct *mm;
+	unsigned int max_page_shift : order_base_2(MAX_PGDIR_SHIFT);
+	/*
+	 * Permitted to allocate pagetables. Otherwise, caller is responsible
+	 * for ensuring pagetables have already been allocated for this region.
+	 */
+	bool may_alloc : 1;
+	/*
+	 * Otherwise, caller is responsible for not doing too much work in a single
+	 * call.
+	 */
+	bool may_sleep : 1;
+};
+
 static inline int kernel_map_pte_range(pmd_t *pmd,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			const struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	pte_t *pte;
 	u64 pfn;
@@ -27,9 +43,16 @@ static inline int kernel_map_pte_range(pmd_t *pmd,
 		return -EINVAL;
 
 	pfn = phys_addr >> PAGE_SHIFT;
-	pte = pte_alloc_kernel_track(pmd, addr, mask);
-	if (!pte)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		// BUG: doesn't account PTE in mm->pgtables_bytes
+		pte = pte_alloc_kernel_track(pmd, addr, mask);
+		if (!pte)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(pmd_none(*pmd))) {
+		return -EINVAL;
+	} else {
+		pte = pte_offset_kernel(pmd, addr);
+	}
 
 	lazy_mmu_mode_enable();
 
@@ -43,17 +66,17 @@ static inline int kernel_map_pte_range(pmd_t *pmd,
 		}
 
 #ifdef CONFIG_HUGETLB_PAGE
-		size = arch_vmap_pte_range_map_size(addr, end, pfn, max_page_shift);
+		size = arch_vmap_pte_range_map_size(addr, end, pfn, opts->max_page_shift);
 		if (size != PAGE_SIZE) {
 			pte_t entry = pfn_pte(pfn, prot);
 
 			entry = arch_make_huge_pte(entry, ilog2(size), 0);
-			set_huge_pte_at(&init_mm, addr, pte, entry, size);
+			set_huge_pte_at(opts->mm, addr, pte, entry, size);
 			pfn += PFN_DOWN(size);
 			continue;
 		}
 #endif
-		set_pte_at(&init_mm, addr, pte, pfn_pte(pfn, prot));
+		set_pte_at(opts->mm, addr, pte, pfn_pte(pfn, prot));
 		pfn++;
 	} while (pte += PFN_DOWN(size), addr += size, addr != end);
 
@@ -91,25 +114,32 @@ static inline int kernel_try_huge_pmd(pmd_t *pmd,
 static inline int kernel_map_pmd_range(pud_t *pud,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			const struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	pmd_t *pmd;
 	unsigned long next;
 	int err = 0;
 
-	pmd = pmd_alloc_track(&init_mm, pud, addr, mask);
-	if (!pmd)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		pmd = pmd_alloc_track(opts->mm, pud, addr, mask);
+		if (!pmd)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(pud_none(*pud))) {
+		return -EINVAL;
+	} else {
+		pmd = pmd_offset(pud, addr);
+	}
+
 	do {
 		next = pmd_addr_end(addr, end);
 
 		if (kernel_try_huge_pmd(pmd, addr, next, phys_addr, prot,
-					max_page_shift)) {
+					opts->max_page_shift)) {
 			*mask |= PGTBL_PMD_MODIFIED;
 			continue;
 		}
 
-		err = kernel_map_pte_range(pmd, addr, next, phys_addr, prot, max_page_shift, mask);
+		err = kernel_map_pte_range(pmd, addr, next, phys_addr, prot, opts, mask);
 		if (err)
 			break;
 	} while (pmd++, phys_addr += (next - addr), addr = next, addr != end);
@@ -145,25 +175,32 @@ static inline int kernel_map_try_huge_pud(pud_t *pud,
 static inline int kernel_map_pud_range(p4d_t *p4d,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			const struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	pud_t *pud;
 	unsigned long next;
 	int err = 0;
 
-	pud = pud_alloc_track(&init_mm, p4d, addr, mask);
-	if (!pud)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		pud = pud_alloc_track(opts->mm, p4d, addr, mask);
+		if (!pud)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(p4d_none(*p4d))) {
+		return -EINVAL;
+	} else {
+		pud = pud_offset(p4d, addr);
+	}
+
 	do {
 		next = pud_addr_end(addr, end);
 
 		if (kernel_map_try_huge_pud(pud, addr, next, phys_addr, prot,
-					max_page_shift)) {
+					opts->max_page_shift)) {
 			*mask |= PGTBL_PUD_MODIFIED;
 			continue;
 		}
 
-		err = kernel_map_pmd_range(pud, addr, next, phys_addr, prot, max_page_shift, mask);
+		err = kernel_map_pmd_range(pud, addr, next, phys_addr, prot, opts, mask);
 		if (err)
 			break;
 	} while (pud++, phys_addr += (next - addr), addr = next, addr != end);
@@ -199,25 +236,32 @@ static inline int kernel_try_huge_p4d(p4d_t *p4d,
 static inline int kernel_map_p4d_range(pgd_t *pgd,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			const struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	p4d_t *p4d;
 	unsigned long next;
 	int err = 0;
 
-	p4d = p4d_alloc_track(&init_mm, pgd, addr, mask);
-	if (!p4d)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		p4d = p4d_alloc_track(opts->mm, pgd, addr, mask);
+		if (!p4d)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(pgd_none(*pgd))) {
+		return -EINVAL;
+	} else {
+		p4d = p4d_offset(pgd, addr);
+	}
+
 	do {
 		next = p4d_addr_end(addr, end);
 
 		if (kernel_try_huge_p4d(p4d, addr, next, phys_addr, prot,
-					max_page_shift)) {
+					opts->max_page_shift)) {
 			*mask |= PGTBL_P4D_MODIFIED;
 			continue;
 		}
 
-		err = kernel_map_pud_range(p4d, addr, next, phys_addr, prot, max_page_shift, mask);
+		err = kernel_map_pud_range(p4d, addr, next, phys_addr, prot, opts, mask);
 		if (err)
 			break;
 	} while (p4d++, phys_addr += (next - addr), addr = next, addr != end);
@@ -226,7 +270,7 @@ static inline int kernel_map_p4d_range(pgd_t *pgd,
 
 static inline int kernel_map_range_noflush(unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift)
+			const struct kp_opts *opts)
 {
 	pgd_t *pgd;
 	unsigned long start;
@@ -234,15 +278,15 @@ static inline int kernel_map_range_noflush(unsigned long addr, unsigned long end
 	int err;
 	pgtbl_mod_mask mask = 0;
 
-	might_sleep();
+	might_sleep_if(opts->may_alloc);
 	BUG_ON(addr >= end);
 
 	start = addr;
-	pgd = pgd_offset_k(addr);
+	pgd = pgd_offset(opts->mm, addr);
 	do {
 		next = pgd_addr_end(addr, end);
 		err = kernel_map_p4d_range(pgd, addr, next, phys_addr, prot,
-					max_page_shift, &mask);
+					opts, &mask);
 		if (err)
 			break;
 	} while (pgd++, phys_addr += (next - addr), addr = next, addr != end);
@@ -272,6 +316,11 @@ static inline void kernel_unmap_pte_range(pmd_t *pmd,
 				addr = ALIGN_DOWN(addr, size);
 				pte = PTR_ALIGN_DOWN(pte, sizeof(*pte) * (size >> PAGE_SHIFT));
 			}
+			/*
+			 * huge_ptep_get_and_clear() just uses &init_mm as a
+			 * sentinel for "kernel", we don't want to pass the real
+			 * mm_struct here.
+			 */
 			ptent = huge_ptep_get_and_clear(&init_mm, addr, pte, size);
 			if (WARN_ON(end - addr < size))
 				size = end - addr;
@@ -287,7 +336,7 @@ static inline void kernel_unmap_pte_range(pmd_t *pmd,
 
 static inline void kernel_unmap_pmd_range(pud_t *pud,
 			unsigned long addr, unsigned long end,
-			pgtbl_mod_mask *mask)
+			pgtbl_mod_mask *mask, const struct kp_opts *opts)
 {
 	pmd_t *pmd;
 	unsigned long next;
@@ -309,13 +358,14 @@ static inline void kernel_unmap_pmd_range(pud_t *pud,
 			continue;
 		kernel_unmap_pte_range(pmd, addr, next, mask);
 
-		cond_resched();
+		if (opts->may_sleep)
+			cond_resched();
 	} while (pmd++, addr = next, addr != end);
 }
 
 static inline void kernel_unmap_pud_range(p4d_t *p4d,
 			unsigned long addr, unsigned long end,
-			pgtbl_mod_mask *mask)
+			pgtbl_mod_mask *mask, const struct kp_opts *opts)
 {
 	pud_t *pud;
 	unsigned long next;
@@ -335,13 +385,13 @@ static inline void kernel_unmap_pud_range(p4d_t *p4d,
 		}
 		if (pud_none_or_clear_bad(pud))
 			continue;
-		kernel_unmap_pmd_range(pud, addr, next, mask);
+		kernel_unmap_pmd_range(pud, addr, next, mask, opts);
 	} while (pud++, addr = next, addr != end);
 }
 
 static inline void kernel_unmap_p4d_range(pgd_t *pgd,
 			unsigned long addr, unsigned long end,
-			pgtbl_mod_mask *mask)
+			pgtbl_mod_mask *mask, const struct kp_opts *opts)
 {
 	p4d_t *p4d;
 	unsigned long next;
@@ -356,27 +406,29 @@ static inline void kernel_unmap_p4d_range(pgd_t *pgd,
 
 		if (p4d_none_or_clear_bad(p4d))
 			continue;
-		kernel_unmap_pud_range(p4d, addr, next, mask);
+		kernel_unmap_pud_range(p4d, addr, next, mask, opts);
 	} while (p4d++, addr = next, addr != end);
 }
 
 static inline void kernel_unmap_range_noflush(unsigned long start,
-					      unsigned long end)
+					      unsigned long end,
+					      const struct kp_opts *opts)
 {
 	unsigned long next;
 	pgd_t *pgd;
 	unsigned long addr = start;
 	pgtbl_mod_mask mask = 0;
 
+	might_sleep_if(opts->may_sleep);
 	BUG_ON(addr >= end);
-	pgd = pgd_offset_k(addr);
+	pgd = pgd_offset_pgd(opts->mm->pgd, addr);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_bad(*pgd))
 			mask |= PGTBL_PGD_MODIFIED;
 		if (pgd_none_or_clear_bad(pgd))
 			continue;
-		kernel_unmap_p4d_range(pgd, addr, next, &mask);
+		kernel_unmap_p4d_range(pgd, addr, next, &mask, opts);
 	} while (pgd++, addr = next, addr != end);
 
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)

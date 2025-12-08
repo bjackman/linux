@@ -52,16 +52,26 @@
 #include "kernel_pgtable.h"
 
 #ifdef CONFIG_HAVE_ARCH_HUGE_VMAP
-static unsigned int __ro_after_init ioremap_max_page_shift = BITS_PER_LONG - 1;
+static struct kp_opts __ro_after_init vmalloc_kp_opts = {
+	.mm = &init_mm,
+	.may_alloc = true,
+	.may_sleep = true,
+	.max_page_shift = MAX_PGDIR_SHIFT,
+};
 
 static int __init set_nohugeiomap(char *str)
 {
-	ioremap_max_page_shift = PAGE_SHIFT;
+	vmalloc_kp_opts.max_page_shift = PAGE_SHIFT;
 	return 0;
 }
 early_param("nohugeiomap", set_nohugeiomap);
 #else /* CONFIG_HAVE_ARCH_HUGE_VMAP */
-static const unsigned int ioremap_max_page_shift = PAGE_SHIFT;
+static const struct kp_opts __ro_after_init vmalloc_kp_opts = {
+	.mm = &init_mm,
+	.may_alloc = true,
+	.may_sleep = true,
+	.max_page_shift = PAGE_SHIFT,
+};
 #endif	/* CONFIG_HAVE_ARCH_HUGE_VMAP */
 
 #ifdef CONFIG_HAVE_ARCH_HUGE_VMALLOC
@@ -97,11 +107,11 @@ int vmap_page_range(unsigned long addr, unsigned long end,
 	int err;
 
 	err = kernel_map_range_noflush(addr, end, phys_addr, pgprot_nx(prot),
-				 ioremap_max_page_shift);
+				       &vmalloc_kp_opts);
 	flush_cache_vmap(addr, end);
 	if (!err)
 		err = kmsan_ioremap_page_range(addr, end, phys_addr, prot,
-					       ioremap_max_page_shift);
+					       vmalloc_kp_opts.max_page_shift);
 	return err;
 }
 
@@ -139,7 +149,7 @@ int ioremap_page_range(unsigned long addr, unsigned long end,
  */
 void __vunmap_range_noflush(unsigned long start, unsigned long end)
 {
-	kernel_unmap_range_noflush(start, end);
+	kernel_unmap_range_noflush(start, end, &vmalloc_kp_opts);
 }
 
 void vunmap_range_noflush(unsigned long start, unsigned long end)
@@ -310,11 +320,13 @@ int __vmap_pages_range_noflush(unsigned long addr, unsigned long end,
 		return vmap_small_pages_range_noflush(addr, end, prot, pages);
 
 	for (i = 0; i < nr; i += 1U << (page_shift - PAGE_SHIFT)) {
+		struct kp_opts opts = vmalloc_kp_opts;
 		int err;
 
+		opts.max_page_shift = page_shift;
 		err = kernel_map_range_noflush(addr, addr + (1UL << page_shift),
 					page_to_phys(pages[i]), prot,
-					page_shift);
+					&opts);
 		if (err)
 			return err;
 
