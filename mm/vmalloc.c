@@ -95,9 +95,12 @@ int vmap_page_range(unsigned long addr, unsigned long end,
 		    phys_addr_t phys_addr, pgprot_t prot)
 {
 	int err;
+	struct kp_opts opts = {
+		.max_page_shift = ioremap_max_page_shift,
+	};
 
 	err = kernel_map_range_noflush(addr, end, phys_addr, pgprot_nx(prot),
-				 ioremap_max_page_shift);
+				 &opts);
 	flush_cache_vmap(addr, end);
 	if (!err)
 		err = kmsan_ioremap_page_range(addr, end, phys_addr, prot,
@@ -302,6 +305,9 @@ int __vmap_pages_range_noflush(unsigned long addr, unsigned long end,
 		pgprot_t prot, struct page **pages, unsigned int page_shift)
 {
 	unsigned int i, nr = (end - addr) >> PAGE_SHIFT;
+	struct kp_opts opts = {
+		.max_page_shift = page_shift,
+	};
 
 	WARN_ON(page_shift < PAGE_SHIFT);
 
@@ -314,7 +320,7 @@ int __vmap_pages_range_noflush(unsigned long addr, unsigned long end,
 
 		err = kernel_map_range_noflush(addr, addr + (1UL << page_shift),
 					page_to_phys(pages[i]), prot,
-					page_shift);
+					&opts);
 		if (err)
 			return err;
 

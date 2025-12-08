@@ -13,10 +13,14 @@
  * Helpers for manipulating kernel pagetables.
  */
 
+struct kp_opts {
+	unsigned int max_page_shift;
+};
+
 static inline int kernel_map_pte_range(pmd_t *pmd,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	pte_t *pte;
 	u64 pfn;
@@ -43,7 +47,7 @@ static inline int kernel_map_pte_range(pmd_t *pmd,
 		}
 
 #ifdef CONFIG_HUGETLB_PAGE
-		size = arch_vmap_pte_range_map_size(addr, end, pfn, max_page_shift);
+		size = arch_vmap_pte_range_map_size(addr, end, pfn, opts->max_page_shift);
 		if (size != PAGE_SIZE) {
 			pte_t entry = pfn_pte(pfn, prot);
 
@@ -91,7 +95,7 @@ static inline int kernel_try_huge_pmd(pmd_t *pmd,
 static inline int kernel_map_pmd_range(pud_t *pud,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	pmd_t *pmd;
 	unsigned long next;
@@ -104,12 +108,12 @@ static inline int kernel_map_pmd_range(pud_t *pud,
 		next = pmd_addr_end(addr, end);
 
 		if (kernel_try_huge_pmd(pmd, addr, next, phys_addr, prot,
-					max_page_shift)) {
+					opts->max_page_shift)) {
 			*mask |= PGTBL_PMD_MODIFIED;
 			continue;
 		}
 
-		err = kernel_map_pte_range(pmd, addr, next, phys_addr, prot, max_page_shift, mask);
+		err = kernel_map_pte_range(pmd, addr, next, phys_addr, prot, opts, mask);
 		if (err)
 			break;
 	} while (pmd++, phys_addr += (next - addr), addr = next, addr != end);
@@ -145,7 +149,7 @@ static inline int kernel_map_try_huge_pud(pud_t *pud,
 static inline int kernel_map_pud_range(p4d_t *p4d,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	pud_t *pud;
 	unsigned long next;
@@ -158,12 +162,12 @@ static inline int kernel_map_pud_range(p4d_t *p4d,
 		next = pud_addr_end(addr, end);
 
 		if (kernel_map_try_huge_pud(pud, addr, next, phys_addr, prot,
-					max_page_shift)) {
+					opts->max_page_shift)) {
 			*mask |= PGTBL_PUD_MODIFIED;
 			continue;
 		}
 
-		err = kernel_map_pmd_range(pud, addr, next, phys_addr, prot, max_page_shift, mask);
+		err = kernel_map_pmd_range(pud, addr, next, phys_addr, prot, opts, mask);
 		if (err)
 			break;
 	} while (pud++, phys_addr += (next - addr), addr = next, addr != end);
@@ -199,7 +203,7 @@ static inline int kernel_try_huge_p4d(p4d_t *p4d,
 static inline int kernel_map_p4d_range(pgd_t *pgd,
 			unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift, pgtbl_mod_mask *mask)
+			struct kp_opts *opts, pgtbl_mod_mask *mask)
 {
 	p4d_t *p4d;
 	unsigned long next;
@@ -212,12 +216,12 @@ static inline int kernel_map_p4d_range(pgd_t *pgd,
 		next = p4d_addr_end(addr, end);
 
 		if (kernel_try_huge_p4d(p4d, addr, next, phys_addr, prot,
-					max_page_shift)) {
+					opts->max_page_shift)) {
 			*mask |= PGTBL_P4D_MODIFIED;
 			continue;
 		}
 
-		err = kernel_map_pud_range(p4d, addr, next, phys_addr, prot, max_page_shift, mask);
+		err = kernel_map_pud_range(p4d, addr, next, phys_addr, prot, opts, mask);
 		if (err)
 			break;
 	} while (p4d++, phys_addr += (next - addr), addr = next, addr != end);
@@ -226,7 +230,7 @@ static inline int kernel_map_p4d_range(pgd_t *pgd,
 
 static inline int kernel_map_range_noflush(unsigned long addr, unsigned long end,
 			phys_addr_t phys_addr, pgprot_t prot,
-			unsigned int max_page_shift)
+			struct kp_opts *opts)
 {
 	pgd_t *pgd;
 	unsigned long start;
@@ -242,7 +246,7 @@ static inline int kernel_map_range_noflush(unsigned long addr, unsigned long end
 	do {
 		next = pgd_addr_end(addr, end);
 		err = kernel_map_p4d_range(pgd, addr, next, phys_addr, prot,
-					max_page_shift, &mask);
+					opts, &mask);
 		if (err)
 			break;
 	} while (pgd++, phys_addr += (next - addr), addr = next, addr != end);
