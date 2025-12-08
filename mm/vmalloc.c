@@ -97,6 +97,7 @@ int vmap_page_range(unsigned long addr, unsigned long end,
 	int err;
 	struct kp_opts opts = {
 		.max_page_shift = ioremap_max_page_shift,
+		.may_alloc = true,
 	};
 
 	err = kernel_map_range_noflush(addr, end, phys_addr, pgprot_nx(prot),
@@ -307,6 +308,7 @@ int __vmap_pages_range_noflush(unsigned long addr, unsigned long end,
 	unsigned int i, nr = (end - addr) >> PAGE_SHIFT;
 	struct kp_opts opts = {
 		.max_page_shift = page_shift,
+		.may_alloc = true,
 	};
 
 	WARN_ON(page_shift < PAGE_SHIFT);

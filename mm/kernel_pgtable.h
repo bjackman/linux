@@ -15,6 +15,11 @@
 
 struct kp_opts {
 	unsigned int max_page_shift;
+	/*
+	 * Permitted to allocate pagetables. Otherwise, caller is responsible
+	 * for ensuring pagetables have already been allocated for this region.
+	 */
+	bool may_alloc : 1;
 };
 
 static inline int kernel_map_pte_range(pmd_t *pmd,
@@ -31,9 +36,15 @@ static inline int kernel_map_pte_range(pmd_t *pmd,
 		return -EINVAL;
 
 	pfn = phys_addr >> PAGE_SHIFT;
-	pte = pte_alloc_kernel_track(pmd, addr, mask);
-	if (!pte)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		pte = pte_alloc_kernel_track(pmd, addr, mask);
+		if (!pte)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(pmd_none(*pmd))) {
+		return -EINVAL;
+	} else {
+		pte = pte_offset_kernel(pmd, addr);
+	}
 
 	arch_enter_lazy_mmu_mode();
 
@@ -101,9 +112,16 @@ static inline int kernel_map_pmd_range(pud_t *pud,
 	unsigned long next;
 	int err = 0;
 
-	pmd = pmd_alloc_track(&init_mm, pud, addr, mask);
-	if (!pmd)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		pmd = pmd_alloc_track(&init_mm, pud, addr, mask);
+		if (!pmd)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(pud_none(*pud))) {
+		return -EINVAL;
+	} else {
+		pmd = pmd_offset(pud, addr);
+	}
+
 	do {
 		next = pmd_addr_end(addr, end);
 
@@ -155,9 +173,16 @@ static inline int kernel_map_pud_range(p4d_t *p4d,
 	unsigned long next;
 	int err = 0;
 
-	pud = pud_alloc_track(&init_mm, p4d, addr, mask);
-	if (!pud)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		pud = pud_alloc_track(&init_mm, p4d, addr, mask);
+		if (!pud)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(p4d_none(*p4d))) {
+		return -EINVAL;
+	} else {
+		pud = pud_offset(p4d, addr);
+	}
+
 	do {
 		next = pud_addr_end(addr, end);
 
@@ -209,9 +234,16 @@ static inline int kernel_map_p4d_range(pgd_t *pgd,
 	unsigned long next;
 	int err = 0;
 
-	p4d = p4d_alloc_track(&init_mm, pgd, addr, mask);
-	if (!p4d)
-		return -ENOMEM;
+	if (opts->may_alloc) {
+		p4d = p4d_alloc_track(&init_mm, pgd, addr, mask);
+		if (!p4d)
+			return -ENOMEM;
+	} else if (WARN_ON_ONCE(pgd_none(*pgd))) {
+		return -EINVAL;
+	} else {
+		p4d = p4d_offset(pgd, addr);
+	}
+
 	do {
 		next = p4d_addr_end(addr, end);
 
@@ -238,7 +270,7 @@ static inline int kernel_map_range_noflush(unsigned long addr, unsigned long end
 	int err;
 	pgtbl_mod_mask mask = 0;
 
-	might_sleep();
+	might_sleep_if(opts->may_alloc);
 	BUG_ON(addr >= end);
 
 	start = addr;
