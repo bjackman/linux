@@ -1400,6 +1400,16 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct flush_tlb_info, flush_tlb_info);
 static DEFINE_PER_CPU(unsigned int, flush_tlb_info_idx);
 #endif
 
+/*
+ * Is this range big enough that it's probably faster to do a full flush instead
+ * of a bunch of individual ones?
+ */
+static inline bool above_ceiling(unsigned long start, unsigned long end,
+				 unsigned int stride_shift)
+{
+	return (end - start) >> stride_shift > tlb_single_page_flush_ceiling;
+}
+
 static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
 			unsigned long start, unsigned long end,
 			unsigned int stride_shift, bool freed_tables,
@@ -1416,11 +1426,7 @@ static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
 	BUG_ON(this_cpu_inc_return(flush_tlb_info_idx) != 1);
 #endif
 
-	/*
-	 * If the number of flushes is so large that a full flush
-	 * would be faster, do a full flush.
-	 */
-	if ((end - start) >> stride_shift > tlb_single_page_flush_ceiling) {
+	if (above_ceiling(start, end, stride_shift)) {
 		start = 0;
 		end = TLB_FLUSH_ALL;
 	}
@@ -1520,14 +1526,20 @@ static void invlpgb_kernel_range_flush(struct flush_tlb_info *info)
 	__tlbsync();
 }
 
-static void do_kernel_range_flush(void *info)
+static inline void __do_kernel_range_flush(unsigned long start, unsigned long end)
 {
-	struct flush_tlb_info *f = info;
 	unsigned long addr;
 
 	/* flush range by one by one 'invlpg' */
-	for (addr = f->start; addr < f->end; addr += PAGE_SIZE)
+	for (addr = start; addr < end; addr += PAGE_SIZE)
 		flush_tlb_one_kernel(addr);
+}
+
+static void do_kernel_range_flush(void *info)
+{
+	struct flush_tlb_info *f = info;
+
+	__do_kernel_range_flush(f->start, f->end);
 }
 
 static void kernel_tlb_flush_all(struct flush_tlb_info *info)
@@ -1561,6 +1573,15 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 		kernel_tlb_flush_range(info);
 
 	put_flush_tlb_info();
+}
+
+void flush_tlb_kernel_range_local(unsigned long start, unsigned long end)
+{
+	if (end == TLB_FLUSH_ALL || above_ceiling(start, end, PAGE_SHIFT))
+		__flush_tlb_all();
+	else
+		__do_kernel_range_flush(start, end);
+
 }
 
 /*
