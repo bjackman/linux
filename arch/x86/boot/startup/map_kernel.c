@@ -24,7 +24,7 @@ static inline bool check_la57_support(void)
 		return false;
 
 	__pgtable_l5_enabled	= 1;
-	pgdir_shift		= 48;
+	pgdir_shift		= PGDIR_SHIFT_L5;
 	ptrs_per_p4d		= 512;
 
 	return true;

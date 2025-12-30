@@ -53,7 +53,7 @@ pmdval_t early_pmd_flags = __PAGE_KERNEL_LARGE & ~(_PAGE_GLOBAL | _PAGE_NX);
 
 unsigned int __pgtable_l5_enabled __ro_after_init;
 SYM_PIC_ALIAS(__pgtable_l5_enabled);
-unsigned int pgdir_shift __ro_after_init = 39;
+unsigned int pgdir_shift __ro_after_init = PGDIR_SHIFT_L4;
 EXPORT_SYMBOL(pgdir_shift);
 SYM_PIC_ALIAS(pgdir_shift);
 unsigned int ptrs_per_p4d __ro_after_init = 1;

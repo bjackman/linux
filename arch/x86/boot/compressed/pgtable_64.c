@@ -13,7 +13,7 @@
 
 /* __pgtable_l5_enabled needs to be in .data to avoid being cleared along with .bss */
 unsigned int __section(".data") __pgtable_l5_enabled;
-unsigned int __section(".data") pgdir_shift = 39;
+unsigned int __section(".data") pgdir_shift = PGDIR_SHIFT_L4;
 unsigned int __section(".data") ptrs_per_p4d = 1;
 
 /* Buffer to preserve trampoline memory */

@@ -8,6 +8,14 @@
 #define PMD_ORDER	(PMD_SHIFT - PAGE_SHIFT)
 #define PUD_ORDER	(PUD_SHIFT - PAGE_SHIFT)
 
+/*
+ * Max possible value of PGDIR_SHIFT in the current kernel build. Must be a
+ * compile-time constant.
+ */
+#ifndef MAX_PGDIR_SHIFT
+#define MAX_PGDIR_SHIFT	PGDIR_SHIFT
+#endif
+
 #ifndef __ASSEMBLY__
 #ifdef CONFIG_MMU
 

@@ -43,6 +43,7 @@
  */
 /* PGDIR_SHIFT determines what a top-level page table entry can map */
 #define PGDIR_SHIFT	(PAGE_SHIFT + PTE_INDEX_SIZE)
+#define MAX_PGDIR_SHIFT	(PAGE_SHIFT + RADIX_PTE_INDEX_SIZE)
 #define PGDIR_SIZE	(1UL << PGDIR_SHIFT)
 #define PGDIR_MASK	(~(PGDIR_SIZE-1))
 

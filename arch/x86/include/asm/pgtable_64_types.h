@@ -50,7 +50,10 @@ extern unsigned int ptrs_per_p4d;
 /*
  * PGDIR_SHIFT determines what a top-level page table entry can map
  */
+#define PGDIR_SHIFT_L5	48
+#define PGDIR_SHIFT_L4	39
 #define PGDIR_SHIFT	pgdir_shift
+#define MAX_PGDIR_SHIFT	PGDIR_SHIFT_L5
 #define PTRS_PER_PGD	512
 
 /*
