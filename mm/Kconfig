@@ -1525,6 +1525,17 @@ config MERMAP
 	depends on ARCH_SUPPORTS_MERMAP
 	select MM_LOCAL_REGION
 
+config MERMAP_KUNIT_TEST
+	tristate "KUnit tests for the mermap" if !KUNIT_ALL_TESTS
+	depends on ARCH_SUPPORTS_MERMAP
+	depends on KUNIT
+	depends on MERMAP
+	default KUNIT_ALL_TESTS
+	help
+	  KUnit test for the mermap.
+
+	  If unsure, say N.
+
 source "mm/damon/Kconfig"
 
 endmenu
