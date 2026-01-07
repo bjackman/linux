@@ -1502,7 +1502,8 @@ config MERMAP_KUNIT_TEST
 	  If unsure, say N.
 
 config PAGE_ALLOC_UNMAPPED
-	bool "Support allocating pages that aren't in the direct map" if COMPILE_TEST
+	bool "Support allocating pages that aren't in the direct map"
 	default COMPILE_TEST
+	depends on MERMAP
 
 endmenu
