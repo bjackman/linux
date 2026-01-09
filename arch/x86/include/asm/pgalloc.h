@@ -2,6 +2,7 @@
 #ifndef _ASM_X86_PGALLOC_H
 #define _ASM_X86_PGALLOC_H
 
+#include <linux/printk.h>
 #include <linux/threads.h>
 #include <linux/mm.h>		/* for struct page */
 #include <linux/pagemap.h>
@@ -127,6 +128,8 @@ static inline void __pud_free_tlb(struct mmu_gather *tlb, pud_t *pud,
 {
 	___pud_free_tlb(tlb, pud);
 }
+
+extern int preallocate_sub_pgd(struct mm_struct *mm, unsigned long addr);
 
 #if CONFIG_PGTABLE_LEVELS > 4
 static inline void pgd_populate(struct mm_struct *mm, pgd_t *pgd, p4d_t *p4d)

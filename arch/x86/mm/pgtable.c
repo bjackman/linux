@@ -833,3 +833,41 @@ void arch_check_zapped_pud(struct vm_area_struct *vma, pud_t pud)
 	/* See note in arch_check_zapped_pte() */
 	VM_WARN_ON_ONCE(!(vma->vm_flags & VM_SHADOW_STACK) && pud_shstk(pud));
 }
+
+#if CONFIG_PGTABLE_LEVELS > 3
+/*
+ * Allocate all possibly required hardware page tables pointed to ths
+ * top hardware level. In other words, allocate a p4d on 5-level or a
+ * pud on 4-level.
+ */
+int preallocate_sub_pgd(struct mm_struct *mm, unsigned long addr)
+{
+	const char *lvl;
+	p4d_t *p4d;
+	pud_t *pud;
+
+	lvl = "p4d";
+	p4d = p4d_alloc(mm, pgd_offset_pgd(mm->pgd, addr), addr);
+	if (!p4d)
+		goto failed;
+
+	if (pgtable_l5_enabled())
+		return 0;
+
+	/*
+	 * On 4-level systems, the P4D layer is folded away and
+	 * the above code does no preallocation.  Below, go down
+	 * to the pud _software_ level to ensure the second
+	 * hardware level is allocated on 4-level systems too.
+	 */
+	lvl = "pud";
+	pud = pud_alloc(mm, p4d, addr);
+	if (!pud)
+		goto failed;
+	return 0;
+
+failed:
+	pr_warn_ratelimited("Failed to preallocate %s\n", lvl);
+	return -ENOMEM;
+}
+#endif
