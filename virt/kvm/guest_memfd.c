@@ -88,6 +88,7 @@ static bool kvm_gmem_folio_no_direct_map(struct folio *folio)
 
 static int kvm_gmem_folio_zap_direct_map(struct folio *folio)
 {
+	unsigned long addr = (unsigned long)folio_address(folio);
 	u64 gmem_flags = GMEM_I(folio_inode(folio))->flags;
 	int r = 0;
 
@@ -95,7 +96,9 @@ static int kvm_gmem_folio_zap_direct_map(struct folio *folio)
 		goto out;
 
 	folio->private = (void *)((u64)folio->private | KVM_GMEM_FOLIO_NO_DIRECT_MAP);
-	r = folio_zap_direct_map(folio);
+	r = set_direct_map_valid_noflush(folio_address(folio), folio_nr_pages(folio), false);
+	if (guest_memfd_tlb_flush)
+		flush_tlb_kernel_range(addr, addr + folio_size(folio));
 
 out:
 	return r;

@@ -2643,15 +2643,14 @@ int set_direct_map_valid_noflush(const void *addr, unsigned long numpages,
 
 	return __set_pages_np(addr, numpages);
 }
+EXPORT_SYMBOL_FOR_MODULES(set_direct_map_valid_noflush, "kvm");
 
 int folio_zap_direct_map(struct folio *folio)
 {
-	const void *addr = folio_address(folio);
 	int ret;
 
-	ret = set_direct_map_valid_noflush(addr, folio_nr_pages(folio), false);
-	flush_tlb_kernel_range((unsigned long)addr,
-			       (unsigned long)addr + folio_size(folio));
+	ret = set_direct_map_valid_noflush(folio_address(folio),
+					   folio_nr_pages(folio), false);
 
 	return ret;
 }

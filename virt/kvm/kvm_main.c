@@ -95,6 +95,9 @@ unsigned int halt_poll_ns_shrink = 2;
 module_param(halt_poll_ns_shrink, uint, 0644);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(halt_poll_ns_shrink);
 
+bool guest_memfd_tlb_flush = false;
+module_param(guest_memfd_tlb_flush, bool, 0444);
+
 /*
  * Allow direct access (from KVM or the CPU) without MMU notifier protection
  * to unpinned pages.
