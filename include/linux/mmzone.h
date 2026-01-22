@@ -5,6 +5,7 @@
 #ifndef __ASSEMBLY__
 #ifndef __GENERATING_BOUNDS_H
 
+#include <linux/freetype.h>
 #include <linux/spinlock.h>
 #include <linux/list.h>
 #include <linux/list_nulls.h>
@@ -61,39 +62,7 @@
  */
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
-enum migratetype {
-	MIGRATE_UNMOVABLE,
-	MIGRATE_MOVABLE,
-	MIGRATE_RECLAIMABLE,
-	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
-	MIGRATE_HIGHATOMIC = MIGRATE_PCPTYPES,
 #ifdef CONFIG_CMA
-	/*
-	 * MIGRATE_CMA migration type is designed to mimic the way
-	 * ZONE_MOVABLE works.  Only movable pages can be allocated
-	 * from MIGRATE_CMA pageblocks and page allocator never
-	 * implicitly change migration type of MIGRATE_CMA pageblock.
-	 *
-	 * The way to use it is to change migratetype of a range of
-	 * pageblocks to MIGRATE_CMA which can be done by
-	 * __free_pageblock_cma() function.
-	 */
-	MIGRATE_CMA,
-	__MIGRATE_TYPE_END = MIGRATE_CMA,
-#else
-	__MIGRATE_TYPE_END = MIGRATE_HIGHATOMIC,
-#endif
-#ifdef CONFIG_MEMORY_ISOLATION
-	MIGRATE_ISOLATE,	/* can't allocate from here */
-#endif
-	MIGRATE_TYPES
-};
-
-/* In mm/page_alloc.c; keep in sync also with show_migration_types() there */
-extern const char * const migratetype_names[MIGRATE_TYPES];
-
-#ifdef CONFIG_CMA
-#  define is_migrate_cma(migratetype) unlikely((migratetype) == MIGRATE_CMA)
 #  define is_migrate_cma_page(_page) (get_pageblock_migratetype(_page) == MIGRATE_CMA)
 /*
  * __dump_folio() in mm/debug.c passes a folio pointer to on-stack struct folio,
@@ -102,43 +71,43 @@ extern const char * const migratetype_names[MIGRATE_TYPES];
 #  define is_migrate_cma_folio(folio, pfn) \
 	(get_pfnblock_migratetype(&folio->page, pfn) == MIGRATE_CMA)
 #else
-#  define is_migrate_cma(migratetype) false
 #  define is_migrate_cma_page(_page) false
 #  define is_migrate_cma_folio(folio, pfn) false
 #endif
 
-static inline bool is_migrate_movable(int mt)
-{
-	return is_migrate_cma(mt) || mt == MIGRATE_MOVABLE;
-}
-
-/*
- * Check whether a migratetype can be merged with another migratetype.
- *
- * It is only mergeable when it can fall back to other migratetypes for
- * allocation. See fallbacks[MIGRATE_TYPES][3] in page_alloc.c.
- */
-static inline bool migratetype_is_mergeable(int mt)
-{
-	return mt < MIGRATE_PCPTYPES;
-}
-
-#define for_each_migratetype_order(order, type) \
+#define for_each_free_list(list, zone, order) \
 	for (order = 0; order < NR_PAGE_ORDERS; order++) \
-		for (type = 0; type < MIGRATE_TYPES; type++)
+		for (unsigned int idx = 0; \
+		     list = &zone->free_area[order].free_list[idx], \
+		     idx < NR_FREETYPE_IDXS; \
+		     idx++)
 
 extern int page_group_by_mobility_disabled;
 
+freetype_t get_pfnblock_freetype(const struct page *page, unsigned long pfn);
+
 #define get_pageblock_migratetype(page) \
 	get_pfnblock_migratetype(page, page_to_pfn(page))
+
+#define get_pageblock_freetype(page) \
+	get_pfnblock_freetype(page, page_to_pfn(page))
 
 #define folio_migratetype(folio) \
 	get_pageblock_migratetype(&folio->page)
 
 struct free_area {
-	struct list_head	free_list[MIGRATE_TYPES];
+	struct list_head	free_list[NR_FREETYPE_IDXS];
 	unsigned long		nr_free;
 };
+
+static inline
+struct list_head *free_area_list(struct free_area *area, freetype_t type)
+{
+	int idx = freetype_idx(type);
+
+	VM_BUG_ON(idx < 0);
+	return &area->free_list[idx];
+}
 
 struct pglist_data;
 
@@ -723,8 +692,17 @@ enum zone_watermarks {
 #else
 #define NR_PCP_THP 0
 #endif
+/*
+ * FREETYPE_UNMAPPED can currently only be used with MIGRATE_UNMOVABLE, no for
+ * those there's no need to encode the migratetype in the pindex.
+ */
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+#define NR_UNMAPPED_PCP_LISTS (PAGE_ALLOC_COSTLY_ORDER + 1 + !!NR_PCP_THP)
+#else
+#define NR_UNMAPPED_PCP_LISTS 0
+#endif
 #define NR_LOWORDER_PCP_LISTS (MIGRATE_PCPTYPES * (PAGE_ALLOC_COSTLY_ORDER + 1))
-#define NR_PCP_LISTS (NR_LOWORDER_PCP_LISTS + NR_PCP_THP)
+#define NR_PCP_LISTS (NR_LOWORDER_PCP_LISTS + NR_PCP_THP + NR_UNMAPPED_PCP_LISTS)
 
 /*
  * Flags used in pcp->flags field.
