@@ -14097,10 +14097,12 @@ void kvm_arch_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end)
 }
 #endif
 
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
 bool kvm_arch_gmem_supports_no_direct_map(struct kvm *kvm)
 {
 	return can_set_direct_map() && kvm->arch.vm_type != KVM_X86_TDX_VM;
 }
+#endif
 #endif
 
 int kvm_spec_ctrl_test_value(u64 value)
