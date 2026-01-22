@@ -3,8 +3,10 @@
 #include <linux/backing-dev.h>
 #include <linux/falloc.h>
 #include <linux/fs.h>
+#include <linux/gfp.h>
 #include <linux/kvm_host.h>
 #include <linux/mempolicy.h>
+#include <linux/mermap.h>
 #include <linux/pseudo_fs.h>
 #include <linux/pagemap.h>
 #include <linux/set_memory.h>
@@ -85,24 +87,6 @@ static int __kvm_gmem_prepare_folio(struct kvm *kvm, struct kvm_memory_slot *slo
 static bool kvm_gmem_folio_no_direct_map(struct folio *folio)
 {
 	return ((u64)folio->private) & KVM_GMEM_FOLIO_NO_DIRECT_MAP;
-}
-
-static int kvm_gmem_folio_zap_direct_map(struct folio *folio)
-{
-	unsigned long addr = (unsigned long)folio_address(folio);
-	u64 gmem_flags = GMEM_I(folio_inode(folio))->flags;
-	int r = 0;
-
-	if (kvm_gmem_folio_no_direct_map(folio) || !(gmem_flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP))
-		goto out;
-
-	folio->private = (void *)((u64)folio->private | KVM_GMEM_FOLIO_NO_DIRECT_MAP);
-	r = set_direct_map_valid_noflush(folio_address(folio), folio_nr_pages(folio), false);
-	if (guest_memfd_tlb_flush)
-		flush_tlb_kernel_range(addr, addr + folio_size(folio));
-
-out:
-	return r;
 }
 
 static void kvm_gmem_folio_restore_direct_map(struct folio *folio)
@@ -447,7 +431,6 @@ static vm_fault_t kvm_gmem_fault_user_mapping(struct vm_fault *vmf)
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	struct folio *folio;
 	vm_fault_t ret = VM_FAULT_LOCKED;
-	int err;
 
 	if (((loff_t)vmf->pgoff << PAGE_SHIFT) >= i_size_read(inode))
 		return VM_FAULT_SIGBUS;
@@ -468,18 +451,8 @@ static vm_fault_t kvm_gmem_fault_user_mapping(struct vm_fault *vmf)
 		goto out_folio;
 	}
 
-	if (!folio_test_uptodate(folio)) {
-		clear_highpage(folio_page(folio, 0));
-		kvm_gmem_mark_prepared(folio);
-	}
-
-	if (kvm_gmem_no_direct_map(folio_inode(folio))) {
-		err = kvm_gmem_folio_zap_direct_map(folio);
-		if (err) {
-			ret = vmf_error(err);
-			goto out_folio;
-		}
-	}
+	// TODO errrr what does this mean?
+	kvm_gmem_mark_prepared(folio);
 
 	if (userfaultfd_minor(vmf->vma) &&
 	    !(vmf->flags & FAULT_FLAG_USERFAULT_CONTINUE)) {
@@ -653,8 +626,7 @@ static int kvm_gmem_write_end(const struct kiocb *kiocb,
 			      struct folio *folio, void *fsdata)
 {
 	if (!folio_test_uptodate(folio)) {
-		folio_zero_range(folio, copied, len - copied);
-		kvm_gmem_folio_zap_direct_map(folio);
+		// TODO: Original code zeroes the page here
 		folio_mark_uptodate(folio);
 	}
 
@@ -690,6 +662,7 @@ bool __weak kvm_arch_supports_gmem_init_shared(struct kvm *kvm)
 static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 {
 	static const char *name = "[kvm-gmem]";
+	gfp_t gfp = GFP_HIGHUSER | __GFP_ZERO;
 	struct gmem_file *f;
 	struct inode *inode;
 	struct file *file;
@@ -721,13 +694,22 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 	inode->i_mapping->a_ops = &kvm_gmem_aops;
 	inode->i_mode |= S_IFREG;
 	inode->i_size = size;
-	mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
 	mapping_set_inaccessible(inode->i_mapping);
 	/* Unmovable mappings are supposed to be marked unevictable as well. */
 	WARN_ON_ONCE(!mapping_unevictable(inode->i_mapping));
 
-	if (flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP)
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	if (flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP) {
 		mapping_set_no_direct_map(inode->i_mapping);
+		gfp |= __GFP_UNMAPPED;
+
+		err = mermap_mm_init(current->mm);
+		if (err)
+			return err;
+	}
+#endif
+
+	mapping_set_gfp_mask(inode->i_mapping, gfp);
 
 	GMEM_I(inode)->flags = flags;
 
@@ -944,13 +926,6 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 			goto out_unlock;
 	}
 
-	if (kvm_gmem_no_direct_map(folio_inode(folio))) {
-		r = kvm_gmem_folio_zap_direct_map(folio);
-		if (r)
-			goto out_unlock;
-	}
-
-	*page = folio_file_page(folio, index);
 	folio_unlock(folio);
 	return 0;
 
