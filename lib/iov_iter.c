@@ -4,6 +4,7 @@
 #include <linux/fault-inject-usercopy.h>
 #include <linux/uio.h>
 #include <linux/pagemap.h>
+#include <linux/mermap.h>
 #include <linux/highmem.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -469,6 +470,72 @@ size_t iov_iter_zero(size_t bytes, struct iov_iter *i)
 }
 EXPORT_SYMBOL(iov_iter_zero);
 
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+static inline bool mapping_needs_mermap(struct address_space *mapping)
+{
+		/* Hack - looking at gfp_mask for this is dumb. */
+		return mapping->gfp_mask & __GFP_UNMAPPED;
+}
+
+static inline ssize_t __from_iter_mermap(struct folio *folio, size_t offset,
+					 size_t size, struct iov_iter *i)
+{
+	struct page *page = folio_page(folio, offset > PAGE_OFFSET);
+	struct mermap_alloc *mermap;
+	bool partial = false;
+	char *to;
+
+	/* Try large alloc (preemptible, likely to fail) */
+	/* Hack - assuming mermap is available. */
+	mermap = mermap_get(page, PAGE_ALIGN(size), PAGE_KERNEL);
+	if (!mermap) {
+		/* Fall back to smaller alloc, requires preemption off. */
+		preempt_disable();
+		mermap = mermap_get_reserved(page, PAGE_KERNEL);
+		size = PAGE_SIZE - offset_in_page(offset);
+		partial = true;
+	}
+
+	to = mermap_addr(mermap);
+	pagefault_disable();
+	size = __copy_from_iter(to, size, i);
+	pagefault_enable();
+
+	mermap_put(mermap);
+	if (partial)
+		preempt_enable();
+
+	return size;
+}
+#else /* CONFIG_PAGE_ALLOC_UNMAPPED */
+static inline bool mapping_needs_mermap(struct address_space *mapping)
+{
+		return false;
+}
+
+static inline ssize_t __from_iter_mermap(struct folio *folio, size_t offset,
+					 size_t size, struct iov_iter *i)
+{
+	BUG();
+}
+#endif
+
+static inline ssize_t __from_iter_kmap(struct folio *folio, size_t offset,
+				       size_t n, struct iov_iter *i)
+{
+	char *to = kmap_local_folio(folio, offset);
+
+	if (folio_test_partial_kmap(folio) && n > PAGE_SIZE - offset_in_page(offset))
+		n = PAGE_SIZE - offset_in_page(offset);
+
+	pagefault_disable();
+	n = __copy_from_iter(to, n, i);
+	pagefault_enable();
+	kunmap_local(to);
+
+	return n;
+}
+
 size_t copy_folio_from_iter_atomic(struct folio *folio, size_t offset,
 		size_t bytes, struct iov_iter *i)
 {
@@ -480,17 +547,13 @@ size_t copy_folio_from_iter_atomic(struct folio *folio, size_t offset,
 		return 0;
 
 	do {
-		char *to = kmap_local_folio(folio, offset);
-
 		n = bytes - copied;
-		if (folio_test_partial_kmap(folio) &&
-		    n > PAGE_SIZE - offset_in_page(offset))
-			n = PAGE_SIZE - offset_in_page(offset);
 
-		pagefault_disable();
-		n = __copy_from_iter(to, n, i);
-		pagefault_enable();
-		kunmap_local(to);
+		if (mapping_needs_mermap(folio->mapping))
+			n = __from_iter_mermap(folio, offset, n, i);
+		else
+			n = __from_iter_kmap(folio, offset, n, i);
+
 		copied += n;
 		offset += n;
 	} while (copied != bytes && n > 0);
