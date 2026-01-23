@@ -250,15 +250,13 @@ static inline void mm_local_region_free(struct mm_struct *mm)
 	}
 }
 
-/* Do initial setup of the user-local region. Call from process context. */
-static inline int mm_local_region_init(struct mm_struct *mm)
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+static inline void mm_local_map_user(struct mm_struct *mm)
 {
 	pgd_t *pgd;
-	int err;
 
-	err = preallocate_sub_pgd(mm, MM_LOCAL_BASE_ADDR);
-	if (err)
-		return err;
+	if (!boot_cpu_has(X86_FEATURE_PTI))
+		return;
 
 	/*
 	 * The mm-local region is shared with userspace. This is useful for the
@@ -268,10 +266,24 @@ static inline int mm_local_region_init(struct mm_struct *mm)
 	 * Note this can be called multiple times, also concurrently - it's
 	 * assuming the set_pgd() is idempotent.
 	 */
-	if (boot_cpu_has(X86_FEATURE_PTI)) {
-		pgd = pgd_offset(mm, LDT_BASE_ADDR);
-		set_pgd(kernel_to_user_pgdp(pgd), *pgd);
-	}
+	pgd = pgd_offset(mm, LDT_BASE_ADDR);
+	set_pgd(kernel_to_user_pgdp(pgd), *pgd);
+}
+#else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+static inline void mm_local_map_user(struct mm_struct *mm) { }
+#endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+
+/* Do initial setup of the user-local region. Call from process context. */
+static inline int mm_local_region_init(struct mm_struct *mm)
+{
+	int err;
+
+	err = preallocate_sub_pgd(mm, MM_LOCAL_BASE_ADDR);
+	if (err)
+		return err;
+
+	mm_local_map_user(mm);
+
 	mm_flags_set(MMF_LOCAL_REGION_USED, mm);
 
 	return 0;
