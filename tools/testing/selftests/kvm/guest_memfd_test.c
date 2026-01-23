@@ -458,6 +458,13 @@ static void test_guest_memfd(unsigned long vm_type)
 			__test_guest_memfd(vm, GUEST_MEMFD_FLAG_NO_DIRECT_MAP |
 					       GUEST_MEMFD_FLAG_MMAP |
 					       GUEST_MEMFD_FLAG_INIT_SHARED);
+		if (flags & GUEST_MEMFD_FLAG_WRITE) {
+			printf("__test_guest_memfd(DIRECT_MAP|MMAP|WRITE|)\n");
+			__test_guest_memfd(vm, GUEST_MEMFD_FLAG_NO_DIRECT_MAP |
+					       GUEST_MEMFD_FLAG_MMAP |
+					       GUEST_MEMFD_FLAG_WRITE);
+			printf("__test_guest_memfd(DIRECT_MAP|MMAP|WRITE|) - done\n");
+		}
 	}
 
 	kvm_vm_free(vm);
