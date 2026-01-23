@@ -1496,9 +1496,9 @@ config ARCH_SUPPORTS_MERMAP
 
 config MERMAP
 	bool "Support for epheMERal mappings within the kernel"
-	# TODO: Yuck - see also definition of PAGE_ALLOC_UNMAPPED
-	default COMPILE_TEST || KVM_GUEST_MEMFD
+	default COMPILE_TEST
 	depends on ARCH_SUPPORTS_MERMAP
+	select MM_LOCAL_REGION
 	help
 	  Support for epheMERal mappings within the kernel.
 
@@ -1514,10 +1514,9 @@ config MERMAP_KUNIT_TEST
 	  If unsure, say N.
 
 config PAGE_ALLOC_UNMAPPED
-	# TODO ummm.... this is yucky. How to define this so that it just works if you enable GUEST_MEMFD?
-	bool "Support allocating pages that aren't in the direct map" if COMPILE_TEST || KUNIT || KVM_GUEST_MEMFD
-	default COMPILE_TEST || KUNIT || KVM_GUEST_MEMFD
-	depends on MERMAP
+	bool "Support allocating pages that aren't in the direct map"
+	default COMPILE_TEST || KUNIT
+	select MERMAP
 
 config PAGE_ALLOC_KUNIT_TEST
 	tristate "KUnit tests for the page allocator" if !KUNIT_ALL_TESTS

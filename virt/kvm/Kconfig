@@ -112,6 +112,8 @@ config KVM_GENERIC_MEMORY_ATTRIBUTES
 config KVM_GUEST_MEMFD
        depends on KVM_GENERIC_MMU_NOTIFIER
        select XARRAY_MULTI
+       # TODO: broken if arch doesn't support it
+       select PAGE_ALLOC_UNMAPPED
        bool
 
 config HAVE_KVM_ARCH_GMEM_PREPARE
