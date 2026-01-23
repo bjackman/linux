@@ -10,6 +10,7 @@
 #include <asm/mermap.h>
 
 int mermap_mm_init(struct mm_struct *mm);
+void mermap_mm_init_always(struct mm_struct *mm);
 void mermap_mm_teardown(struct mm_struct *mm);
 
 /* Can the mermap be called from this context? */
@@ -52,6 +53,7 @@ unsigned long mermap_cpu_end(int cpu);
 #else /* CONFIG_MERMAP */
 
 static inline int mermap_mm_init(struct mm_struct *mm) { return 0; }
+static inline void mermap_mm_init_always(struct mm_struct *mm) { }
 static inline void mermap_mm_teardown(struct mm_struct *mm) { }
 static inline bool mermap_ready(void) { return false; }
 

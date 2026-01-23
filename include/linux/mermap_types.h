@@ -2,6 +2,7 @@
 #ifndef _LINUX_MERMAP_TYPES_H
 #define _LINUX_MERMAP_TYPES_H
 
+#include <linux/mutex.h>
 #include <linux/percpu.h>
 #include <linux/types.h>
 
@@ -28,6 +29,7 @@ struct mermap_cpu {
 };
 
 struct mermap {
+	struct mutex init_lock;
 	struct mermap_cpu __percpu *cpu;
 };
 
