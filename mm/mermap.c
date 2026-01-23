@@ -3,6 +3,7 @@
 #include <linux/mermap.h>
 #include <linux/mm.h>
 #include <linux/mmu_context.h>
+#include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/pgtable.h>
 #include <linux/sched.h>
@@ -248,14 +249,30 @@ void *mermap_get_reserved(struct page *page, pgprot_t prot)
 EXPORT_SYMBOL(mermap_get_reserved);
 
 /*
+ * Internal - do unconditional (cheap) setup that's done for every mm. This
+ * doesn't actually prepare the mermap for use until someone calls
+ * mermap_mm_init().
+ */
+void mermap_mm_init_always(struct mm_struct *mm)
+{
+	mutex_init(&mm->mermap.init_lock);
+}
+
+/*
  * Set up the mermap for this mm. The caller doesn't need to call
  * mermap_mm_teardown(), that's take care of by the normal mm teardown
- * mechanism.
+ * mechanism. This is idempotent and thread-safe.
  */
 int mermap_mm_init(struct mm_struct *mm)
 {
 	int err = 0;
 	int cpu;
+
+	guard(mutex)(&mm->mermap.init_lock);
+
+	/* Already done? */
+	if (likely(mm->mermap.cpu))
+		return 0;
 
 	mm->mermap.cpu = alloc_percpu_gfp(struct mermap_cpu,
 					  GFP_KERNEL_ACCOUNT | __GFP_ZERO);
