@@ -19,7 +19,7 @@ static inline int set_unmapped_pte(pte_t *ptep, unsigned long addr, void *data)
 {
 	pte_t pte = pfn_pte(0, pgprot_nx(PAGE_NONE));
 
-	BUILD_BUG_ON(pte_none(pte));
+	VM_BUG_ON(pte_none(pte));
 	set_pte(ptep, pte);
 	return 0;
 }
