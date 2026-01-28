@@ -2334,6 +2334,7 @@ extern unsigned int halt_poll_ns;
 extern unsigned int halt_poll_ns_grow;
 extern unsigned int halt_poll_ns_grow_start;
 extern unsigned int halt_poll_ns_shrink;
+extern bool guest_memfd_tlb_flush;
 
 struct kvm_device {
 	const struct kvm_device_ops *ops;
