@@ -88,6 +88,7 @@ int set_pages_rw(struct page *page, int numpages);
 int set_direct_map_invalid_noflush(struct page *page);
 int set_direct_map_default_noflush(struct page *page);
 int set_direct_map_valid_noflush(struct page *page, unsigned nr, bool valid);
+struct folio;
 int folio_zap_direct_map(struct folio *folio);
 int folio_restore_direct_map(struct folio *folio);
 bool kernel_page_present(struct page *page);
