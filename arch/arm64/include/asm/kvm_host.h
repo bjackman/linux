@@ -1656,7 +1656,7 @@ static __always_inline enum fgt_group_id __fgt_reg_to_group_id(enum vcpu_sysreg 
 		p;							\
 	})
 #ifdef CONFIG_KVM_GUEST_MEMFD
-static inline bool kvm_arch_gmem_supports_no_direct_map(void)
+static inline bool kvm_arch_gmem_supports_no_direct_map(struct kvm *kvm)
 {
 	/*
 	 * Without FWB, direct map access is needed in kvm_pgtable_stage2_map(),
