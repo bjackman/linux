@@ -17,8 +17,11 @@ struct mempolicy;
 #define GFP_MOVABLE_MASK (__GFP_RECLAIMABLE|__GFP_MOVABLE)
 #define GFP_MOVABLE_SHIFT 3
 
-static inline int gfp_migratetype(const gfp_t gfp_flags)
+static inline freetype_t gfp_freetype(const gfp_t gfp_flags)
 {
+	int migratetype;
+	unsigned int ft_flags = 0;
+
 	VM_WARN_ON((gfp_flags & GFP_MOVABLE_MASK) == GFP_MOVABLE_MASK);
 	BUILD_BUG_ON((1UL << GFP_MOVABLE_SHIFT) != ___GFP_MOVABLE);
 	BUILD_BUG_ON((___GFP_MOVABLE >> GFP_MOVABLE_SHIFT) != MIGRATE_MOVABLE);
@@ -26,11 +29,23 @@ static inline int gfp_migratetype(const gfp_t gfp_flags)
 	BUILD_BUG_ON(((___GFP_MOVABLE | ___GFP_RECLAIMABLE) >>
 		      GFP_MOVABLE_SHIFT) != MIGRATE_HIGHATOMIC);
 
-	if (unlikely(page_group_by_mobility_disabled))
-		return MIGRATE_UNMOVABLE;
+	if (unlikely(page_group_by_mobility_disabled)) {
+		migratetype = MIGRATE_UNMOVABLE;
+	} else {
+		/* Group based on mobility */
+		migratetype = (__force unsigned long)(gfp_flags & GFP_MOVABLE_MASK)
+			>> GFP_MOVABLE_SHIFT;
+	}
 
-	/* Group based on mobility */
-	return (__force unsigned long)(gfp_flags & GFP_MOVABLE_MASK) >> GFP_MOVABLE_SHIFT;
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	if (gfp_flags & __GFP_UNMAPPED) {
+		if (WARN_ON_ONCE(migratetype != MIGRATE_UNMOVABLE))
+			migratetype = MIGRATE_UNMOVABLE;
+		ft_flags |= FREETYPE_UNMAPPED;
+	}
+#endif
+
+	return migrate_to_freetype(migratetype, ft_flags);
 }
 #undef GFP_MOVABLE_MASK
 #undef GFP_MOVABLE_SHIFT

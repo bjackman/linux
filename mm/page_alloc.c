@@ -15,6 +15,7 @@
  *          (lots of bits borrowed from Ingo Molnar & Andrew Morton)
  */
 
+#include <linux/mermap.h>
 #include <linux/stddef.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
@@ -35,6 +36,7 @@
 #include <linux/pagevec.h>
 #include <linux/memory_hotplug.h>
 #include <linux/nodemask.h>
+#include <linux/set_memory.h>
 #include <linux/vmstat.h>
 #include <linux/fault-inject.h>
 #include <linux/compaction.h>
@@ -56,6 +58,7 @@
 #include <linux/cacheinfo.h>
 #include <linux/pgalloc_tag.h>
 #include <asm/div64.h>
+#include <kunit/visibility.h>
 #include "internal.h"
 #include "shuffle.h"
 #include "page_reporting.h"
@@ -393,12 +396,9 @@ get_pfnblock_bitmap_bitidx(const struct page *page, unsigned long pfn,
 	unsigned long *bitmap;
 	unsigned long word_bitidx;
 
-#ifdef CONFIG_MEMORY_ISOLATION
-	BUILD_BUG_ON(NR_PAGEBLOCK_BITS != 8);
-#else
-	BUILD_BUG_ON(NR_PAGEBLOCK_BITS != 4);
-#endif
-	BUILD_BUG_ON(__MIGRATE_TYPE_END > MIGRATETYPE_MASK);
+	/* NR_PAGEBLOCK_BITS must divide word size. */
+	BUILD_BUG_ON(NR_PAGEBLOCK_BITS != 4 && NR_PAGEBLOCK_BITS != 8);
+	BUILD_BUG_ON(__MIGRATE_TYPE_END > PAGEBLOCK_MIGRATETYPE_MASK);
 	VM_BUG_ON_PAGE(!zone_spans_pfn(page_zone(page), pfn), page);
 
 	bitmap = get_pageblock_bitmap(page, pfn);
@@ -459,6 +459,49 @@ bool get_pfnblock_bit(const struct page *page, unsigned long pfn,
 }
 
 /**
+ * __get_pfnblock_freetype - Return the freetype of a pageblock, optionally
+ * ignoring the fact that it's currently isolated.
+ * @page: The page within the block of interest
+ * @pfn: The target page frame number
+ * @ignore_iso: If isolated, return the migratetype that the block had before
+ *              isolation.
+ */
+__always_inline freetype_t
+__get_pfnblock_freetype(const struct page *page, unsigned long pfn,
+			bool ignore_iso)
+{
+	unsigned long mask = PAGEBLOCK_FREETYPE_MASK;
+	enum migratetype migratetype;
+	unsigned int ft_flags;
+	unsigned long flags;
+
+	flags = __get_pfnblock_flags_mask(page, pfn, mask);
+	ft_flags = (flags & PAGEBLOCK_FREETYPE_FLAGS_MASK) >> PB_freetype_flags;
+
+	migratetype = flags & PAGEBLOCK_MIGRATETYPE_MASK;
+#ifdef CONFIG_MEMORY_ISOLATION
+	if (!ignore_iso && flags & BIT(PB_migrate_isolate))
+		migratetype = MIGRATE_ISOLATE;
+#endif
+	return migrate_to_freetype(migratetype, ft_flags);
+}
+
+/**
+ * get_pfnblock_migratetype - Return the freetype of a pageblock
+ * @page: The page within the block of interest
+ * @pfn: The target page frame number
+ *
+ * Return: The freetype of the pageblock
+ */
+__always_inline freetype_t
+get_pfnblock_freetype(const struct page *page, unsigned long pfn)
+{
+	return __get_pfnblock_freetype(page, pfn, 0);
+}
+EXPORT_SYMBOL_IF_KUNIT(get_pfnblock_freetype);
+
+
+/**
  * get_pfnblock_migratetype - Return the migratetype of a pageblock
  * @page: The page within the block of interest
  * @pfn: The target page frame number
@@ -471,7 +514,7 @@ bool get_pfnblock_bit(const struct page *page, unsigned long pfn,
 __always_inline enum migratetype
 get_pfnblock_migratetype(const struct page *page, unsigned long pfn)
 {
-	unsigned long mask = MIGRATETYPE_AND_ISO_MASK;
+	unsigned long mask = PAGEBLOCK_MIGRATETYPE_MASK | PAGEBLOCK_ISO_MASK;
 	unsigned long flags;
 
 	flags = __get_pfnblock_flags_mask(page, pfn, mask);
@@ -480,7 +523,7 @@ get_pfnblock_migratetype(const struct page *page, unsigned long pfn)
 	if (flags & BIT(PB_migrate_isolate))
 		return MIGRATE_ISOLATE;
 #endif
-	return flags & MIGRATETYPE_MASK;
+	return flags & PAGEBLOCK_MIGRATETYPE_MASK;
 }
 
 /**
@@ -568,11 +611,20 @@ static void set_pageblock_migratetype(struct page *page,
 	}
 	VM_WARN_ONCE(get_pageblock_isolate(page),
 		     "Use clear_pageblock_isolate() to unisolate pageblock");
-	/* MIGRATETYPE_AND_ISO_MASK clears PB_migrate_isolate if it is set */
+	/* PAGEBLOCK_ISO_MASK clears PB_migrate_isolate if it is set */
 #endif
 	__set_pfnblock_flags_mask(page, page_to_pfn(page),
 				  (unsigned long)migratetype,
-				  MIGRATETYPE_AND_ISO_MASK);
+				  PAGEBLOCK_MIGRATETYPE_MASK | PAGEBLOCK_ISO_MASK);
+}
+
+static inline void set_pageblock_freetype_flags(struct page *page,
+						unsigned int ft_flags)
+{
+	unsigned int flags = ft_flags << PB_freetype_flags;
+
+	__set_pfnblock_flags_mask(page, page_to_pfn(page), flags,
+				  PAGEBLOCK_FREETYPE_FLAGS_MASK);
 }
 
 void __meminit init_pageblock_migratetype(struct page *page,
@@ -598,7 +650,7 @@ void __meminit init_pageblock_migratetype(struct page *page,
 		flags |= BIT(PB_migrate_isolate);
 #endif
 	__set_pfnblock_flags_mask(page, page_to_pfn(page), flags,
-				  MIGRATETYPE_AND_ISO_MASK);
+				  PAGEBLOCK_FREETYPE_MASK);
 }
 
 #ifdef CONFIG_DEBUG_VM
@@ -682,40 +734,62 @@ out:
 	add_taint(TAINT_BAD_PAGE, LOCKDEP_NOW_UNRELIABLE);
 }
 
-static inline unsigned int order_to_pindex(int migratetype, int order)
+VISIBLE_IF_KUNIT inline unsigned int order_to_pindex(freetype_t freetype, int order)
 {
+	int migratetype = free_to_migratetype(freetype);
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	bool movable;
-	if (order > PAGE_ALLOC_COSTLY_ORDER) {
-		VM_BUG_ON(order != HPAGE_PMD_ORDER);
+	VM_BUG_ON(migratetype >= MIGRATE_PCPTYPES);
+	VM_BUG_ON(order > PAGE_ALLOC_COSTLY_ORDER &&
+		(!IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) || order != HPAGE_PMD_ORDER));
 
-		movable = migratetype == MIGRATE_MOVABLE;
+	/* FREETYPE_UNMAPPED currently always means MIGRATE_UNMOVABLE. */
+	if (freetype_flags(freetype) & FREETYPE_UNMAPPED) {
+		int order_offset = order;
 
-		return NR_LOWORDER_PCP_LISTS + movable;
+		VM_BUG_ON(migratetype != MIGRATE_UNMOVABLE);
+		if (order > PAGE_ALLOC_COSTLY_ORDER)
+			order_offset = PAGE_ALLOC_COSTLY_ORDER + 1;
+
+		return NR_LOWORDER_PCP_LISTS + NR_PCP_THP + order_offset;
 	}
-#else
-	VM_BUG_ON(order > PAGE_ALLOC_COSTLY_ORDER);
-#endif
+
+	if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE)) {
+		bool movable = migratetype == MIGRATE_MOVABLE;
+
+		if (order > PAGE_ALLOC_COSTLY_ORDER)
+			return NR_LOWORDER_PCP_LISTS + movable;
+	}
 
 	return (MIGRATE_PCPTYPES * order) + migratetype;
 }
+EXPORT_SYMBOL_IF_KUNIT(order_to_pindex);
 
-static inline int pindex_to_order(unsigned int pindex)
+VISIBLE_IF_KUNIT int pindex_to_order(unsigned int pindex)
 {
-	int order = pindex / MIGRATE_PCPTYPES;
+	unsigned int unmapped_base = NR_LOWORDER_PCP_LISTS + NR_PCP_THP;
+	int order;
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	if (pindex >= NR_LOWORDER_PCP_LISTS)
-		order = HPAGE_PMD_ORDER;
-#else
-	VM_BUG_ON(order > PAGE_ALLOC_COSTLY_ORDER);
-#endif
+	if (pindex >= unmapped_base) {
+		order = pindex - unmapped_base;
+		if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
+		    order > PAGE_ALLOC_COSTLY_ORDER)
+			return HPAGE_PMD_ORDER;
+		return order;
+	}
+
+	order = pindex / MIGRATE_PCPTYPES;
+	if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE)) {
+		if (pindex >= NR_LOWORDER_PCP_LISTS)
+			order = HPAGE_PMD_ORDER;
+	} else {
+		VM_BUG_ON(order > PAGE_ALLOC_COSTLY_ORDER);
+	}
 
 	return order;
 }
+EXPORT_SYMBOL_IF_KUNIT(pindex_to_order);
 
-static inline bool pcp_allowed_order(unsigned int order)
+VISIBLE_IF_KUNIT inline bool pcp_allowed_order(unsigned int order)
 {
 	if (order <= PAGE_ALLOC_COSTLY_ORDER)
 		return true;
@@ -725,6 +799,7 @@ static inline bool pcp_allowed_order(unsigned int order)
 #endif
 	return false;
 }
+EXPORT_SYMBOL_IF_KUNIT(pcp_allowed_order);
 
 /*
  * Higher-order pages are called "compound pages".  They are structured thusly:
@@ -769,8 +844,11 @@ static inline struct capture_control *task_capc(struct zone *zone)
 
 static inline bool
 compaction_capture(struct capture_control *capc, struct page *page,
-		   int order, int migratetype)
+		   int order, freetype_t freetype)
 {
+	enum migratetype migratetype = free_to_migratetype(freetype);
+	enum migratetype capc_mt;
+
 	if (!capc || order != capc->cc->order)
 		return false;
 
@@ -778,6 +856,8 @@ compaction_capture(struct capture_control *capc, struct page *page,
 	if (is_migrate_cma(migratetype) ||
 	    is_migrate_isolate(migratetype))
 		return false;
+
+	capc_mt = free_to_migratetype(capc->cc->freetype);
 
 	/*
 	 * Do not let lower order allocations pollute a movable pageblock
@@ -787,12 +867,12 @@ compaction_capture(struct capture_control *capc, struct page *page,
 	 * have trouble finding a high-order free page.
 	 */
 	if (order < pageblock_order && migratetype == MIGRATE_MOVABLE &&
-	    capc->cc->migratetype != MIGRATE_MOVABLE)
+	    capc_mt != MIGRATE_MOVABLE)
 		return false;
 
-	if (migratetype != capc->cc->migratetype)
+	if (migratetype != capc_mt)
 		trace_mm_page_alloc_extfrag(page, capc->cc->order, order,
-					    capc->cc->migratetype, migratetype);
+					    capc_mt, migratetype);
 
 	capc->page = page;
 	return true;
@@ -806,7 +886,7 @@ static inline struct capture_control *task_capc(struct zone *zone)
 
 static inline bool
 compaction_capture(struct capture_control *capc, struct page *page,
-		   int order, int migratetype)
+		   int order, freetype_t freetype)
 {
 	return false;
 }
@@ -831,23 +911,28 @@ static inline void account_freepages(struct zone *zone, int nr_pages,
 
 /* Used for pages not on another list */
 static inline void __add_to_free_list(struct page *page, struct zone *zone,
-				      unsigned int order, int migratetype,
+				      unsigned int order, freetype_t freetype,
 				      bool tail)
 {
 	struct free_area *area = &zone->free_area[order];
 	int nr_pages = 1 << order;
 
-	VM_WARN_ONCE(get_pageblock_migratetype(page) != migratetype,
-		     "page type is %d, passed migratetype is %d (nr=%d)\n",
-		     get_pageblock_migratetype(page), migratetype, nr_pages);
+	if (IS_ENABLED(CONFIG_DEBUG_VM)) {
+		freetype_t block_ft = get_pageblock_freetype(page);
+
+		VM_WARN_ONCE(!freetypes_equal(block_ft, freetype),
+				"page type is %d/%#x, passed type is %d/%3x (nr=%d)\n",
+				block_ft.migratetype, freetype_flags(block_ft),
+				freetype.migratetype, freetype_flags(freetype), nr_pages);
+	}
 
 	if (tail)
-		list_add_tail(&page->buddy_list, &area->free_list[migratetype]);
+		list_add_tail(&page->buddy_list, free_area_list(area, freetype));
 	else
-		list_add(&page->buddy_list, &area->free_list[migratetype]);
+		list_add(&page->buddy_list, free_area_list(area, freetype));
 	area->nr_free++;
 
-	if (order >= pageblock_order && !is_migrate_isolate(migratetype))
+	if (order >= pageblock_order && !is_migrate_isolate(free_to_migratetype(freetype)))
 		__mod_zone_page_state(zone, NR_FREE_PAGES_BLOCKS, nr_pages);
 }
 
@@ -857,17 +942,25 @@ static inline void __add_to_free_list(struct page *page, struct zone *zone,
  * allocation again (e.g., optimization for memory onlining).
  */
 static inline void move_to_free_list(struct page *page, struct zone *zone,
-				     unsigned int order, int old_mt, int new_mt)
+				     unsigned int order,
+				     freetype_t old_ft, freetype_t new_ft)
 {
 	struct free_area *area = &zone->free_area[order];
+	int old_mt = free_to_migratetype(old_ft);
+	int new_mt = free_to_migratetype(new_ft);
 	int nr_pages = 1 << order;
 
 	/* Free page moving can fail, so it happens before the type update */
-	VM_WARN_ONCE(get_pageblock_migratetype(page) != old_mt,
-		     "page type is %d, passed migratetype is %d (nr=%d)\n",
-		     get_pageblock_migratetype(page), old_mt, nr_pages);
+	if (IS_ENABLED(CONFIG_DEBUG_VM)) {
+		freetype_t block_ft = get_pageblock_freetype(page);
 
-	list_move_tail(&page->buddy_list, &area->free_list[new_mt]);
+		VM_WARN_ONCE(!freetypes_equal(block_ft, old_ft),
+				"page type is %d/%#x, passed freetype is %d/%#x (nr=%d)\n",
+				block_ft.migratetype, freetype_flags(block_ft),
+				old_ft.migratetype, freetype_flags(old_ft), nr_pages);
+	}
+
+	list_move_tail(&page->buddy_list, free_area_list(area, new_ft));
 
 	account_freepages(zone, -nr_pages, old_mt);
 	account_freepages(zone, nr_pages, new_mt);
@@ -910,9 +1003,9 @@ static inline void del_page_from_free_list(struct page *page, struct zone *zone,
 }
 
 static inline struct page *get_page_from_free_area(struct free_area *area,
-					    int migratetype)
+						   freetype_t freetype)
 {
-	return list_first_entry_or_null(&area->free_list[migratetype],
+	return list_first_entry_or_null(free_area_list(area, freetype),
 					struct page, buddy_list);
 }
 
@@ -953,6 +1046,26 @@ static void change_pageblock_range(struct page *pageblock_page,
 }
 
 /*
+ * Can pages of these two freetypes be combined into a single higher-order free
+ * page?
+ */
+static inline bool can_merge_freetypes(freetype_t a, freetype_t b)
+{
+	if (freetypes_equal(a, b))
+		return true;
+
+	if (!migratetype_is_mergeable(free_to_migratetype(a)) ||
+	    !migratetype_is_mergeable(free_to_migratetype(b)))
+		return false;
+
+	/*
+	 * Mustn't "just" merge pages with different freetype flags, changing
+	 * those requires updating pagetables.
+	 */
+	return freetype_flags(a) == freetype_flags(b);
+}
+
+/*
  * Freeing function for a buddy system allocator.
  *
  * The concept of a buddy system is to maintain direct-mapped table
@@ -979,9 +1092,10 @@ static void change_pageblock_range(struct page *pageblock_page,
 static inline void __free_one_page(struct page *page,
 		unsigned long pfn,
 		struct zone *zone, unsigned int order,
-		int migratetype, fpi_t fpi_flags)
+		freetype_t freetype, fpi_t fpi_flags)
 {
 	struct capture_control *capc = task_capc(zone);
+	int migratetype = free_to_migratetype(freetype);
 	unsigned long buddy_pfn = 0;
 	unsigned long combined_pfn;
 	struct page *buddy;
@@ -990,16 +1104,17 @@ static inline void __free_one_page(struct page *page,
 	VM_BUG_ON(!zone_is_initialized(zone));
 	VM_BUG_ON_PAGE(page->flags.f & PAGE_FLAGS_CHECK_AT_PREP, page);
 
-	VM_BUG_ON(migratetype == -1);
+	VM_BUG_ON(freetype.migratetype == -1);
 	VM_BUG_ON_PAGE(pfn & ((1 << order) - 1), page);
 	VM_BUG_ON_PAGE(bad_range(zone, page), page);
 
 	account_freepages(zone, 1 << order, migratetype);
 
 	while (order < MAX_PAGE_ORDER) {
-		int buddy_mt = migratetype;
+		freetype_t buddy_ft = freetype;
+		enum migratetype buddy_mt = free_to_migratetype(buddy_ft);
 
-		if (compaction_capture(capc, page, order, migratetype)) {
+		if (compaction_capture(capc, page, order, freetype)) {
 			account_freepages(zone, -(1 << order), migratetype);
 			return;
 		}
@@ -1015,11 +1130,10 @@ static inline void __free_one_page(struct page *page,
 			 * pageblock isolation could cause incorrect freepage or CMA
 			 * accounting or HIGHATOMIC accounting.
 			 */
-			buddy_mt = get_pfnblock_migratetype(buddy, buddy_pfn);
+			buddy_ft = get_pfnblock_freetype(buddy, buddy_pfn);
+			buddy_mt = free_to_migratetype(buddy_ft);
 
-			if (migratetype != buddy_mt &&
-			    (!migratetype_is_mergeable(migratetype) ||
-			     !migratetype_is_mergeable(buddy_mt)))
+			if (!can_merge_freetypes(freetype, buddy_ft))
 				goto done_merging;
 		}
 
@@ -1036,7 +1150,9 @@ static inline void __free_one_page(struct page *page,
 			/*
 			 * Match buddy type. This ensures that an
 			 * expand() down the line puts the sub-blocks
-			 * on the right freelists.
+			 * on the right freelists. Freetype flags are
+			 * already set correctly because of
+			 * can_merge_freetypes().
 			 */
 			change_pageblock_range(buddy, order, migratetype);
 		}
@@ -1057,7 +1173,7 @@ done_merging:
 	else
 		to_tail = buddy_merge_likely(pfn, buddy_pfn, page, order);
 
-	__add_to_free_list(page, zone, order, migratetype, to_tail);
+	__add_to_free_list(page, zone, order, freetype, to_tail);
 
 	/* Notify page reporting subsystem of freed page */
 	if (!(fpi_flags & FPI_SKIP_REPORT_NOTIFY))
@@ -1253,15 +1369,72 @@ static inline bool should_skip_kasan_poison(struct page *page)
 	return page_kasan_tag(page) == KASAN_TAG_KERNEL;
 }
 
-static void kernel_init_pages(struct page *page, int numpages)
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+static inline bool pageblock_unmapped(struct page *page)
 {
-	int i;
+	return freetype_flags(get_pageblock_freetype(page)) & FREETYPE_UNMAPPED;
+}
 
-	/* s390's use of memset() could override KASAN redzones. */
-	kasan_disable_current();
-	for (i = 0; i < numpages; i++)
-		clear_highpage_kasan_tagged(page + i);
-	kasan_enable_current();
+static inline void clear_page_mermap(struct page *page, unsigned int numpages)
+{
+	void *mermap;
+
+	// TODO: what about kasan_reset_tag()?
+	BUILD_BUG_ON(IS_ENABLED(CONFIG_HIGHMEM));
+
+	/* Fast path: single mapping (may fail under preemption). */
+	mermap = mermap_get(page, numpages << PAGE_SHIFT, PAGE_KERNEL);
+	if (mermap) {
+		void *buf = mermap_addr(mermap);
+
+		for (int i = 0; i < numpages; i++)
+			clear_page(buf + (i << PAGE_SHIFT));
+		mermap_put(mermap);
+		return;
+	}
+
+	/* Slow path, map each page individually (always succeeds). */
+	for (int i = 0; i < numpages; i++) {
+		unsigned long flags;
+
+		local_irq_save(flags);
+		mermap = mermap_get_reserved(page, PAGE_KERNEL);
+		clear_page(mermap_addr(mermap));
+		mermap_put(mermap);
+		local_irq_restore(flags);
+	}
+}
+#else
+static inline bool pageblock_unmapped(struct page *page)
+{
+	return false;
+}
+
+static inline void clear_page_mermap(struct page *page, unsigned int numpages)
+{
+	BUG();
+}
+#endif
+
+static void kernel_init_pages(struct page *page, unsigned int numpages)
+{
+	int num_blocks = DIV_ROUND_UP(numpages, pageblock_nr_pages);
+
+	for (int block = 0; block < num_blocks; block++) {
+		struct page *block_page = page + (block << pageblock_order);
+
+		if (pageblock_unmapped(block_page)) {
+			clear_page_mermap(page, numpages);
+		} else {
+			/* s390's use of memset() could override KASAN redzones. */
+			kasan_disable_current();
+			for (int i = 0; i < min(numpages, pageblock_nr_pages); i++)
+				clear_highpage_kasan_tagged(block_page + i);
+			kasan_enable_current();
+		}
+
+		numpages -= pageblock_nr_pages;
+	}
 }
 
 #ifdef CONFIG_MEM_ALLOC_PROFILING
@@ -1515,19 +1688,20 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 		nr_pages = 1 << order;
 		do {
 			unsigned long pfn;
-			int mt;
+			freetype_t ft;
 
 			page = list_last_entry(list, struct page, pcp_list);
 			pfn = page_to_pfn(page);
-			mt = get_pfnblock_migratetype(page, pfn);
+			ft = get_pfnblock_freetype(page, pfn);
 
 			/* must delete to avoid corrupting pcp list */
 			list_del(&page->pcp_list);
 			count -= nr_pages;
 			pcp->count -= nr_pages;
 
-			__free_one_page(page, pfn, zone, order, mt, FPI_NONE);
-			trace_mm_page_pcpu_drain(page, order, mt);
+			__free_one_page(page, pfn, zone, order, ft, FPI_NONE);
+			trace_mm_page_pcpu_drain(page, order,
+						 free_to_migratetype(ft));
 		} while (count > 0 && !list_empty(list));
 	}
 
@@ -1548,9 +1722,9 @@ static void split_large_buddy(struct zone *zone, struct page *page,
 		order = pageblock_order;
 
 	do {
-		int mt = get_pfnblock_migratetype(page, pfn);
+		freetype_t ft = get_pfnblock_freetype(page, pfn);
 
-		__free_one_page(page, pfn, zone, order, mt, fpi);
+		__free_one_page(page, pfn, zone, order, ft, fpi);
 		pfn += 1 << order;
 		if (pfn == end)
 			break;
@@ -1728,7 +1902,7 @@ struct page *__pageblock_pfn_to_page(unsigned long start_pfn,
  * -- nyc
  */
 static inline unsigned int expand(struct zone *zone, struct page *page, int low,
-				  int high, int migratetype)
+				  int high, freetype_t freetype)
 {
 	unsigned int size = 1 << high;
 	unsigned int nr_added = 0;
@@ -1747,7 +1921,7 @@ static inline unsigned int expand(struct zone *zone, struct page *page, int low,
 		if (set_page_guard(zone, &page[size], high))
 			continue;
 
-		__add_to_free_list(&page[size], zone, high, migratetype, false);
+		__add_to_free_list(&page[size], zone, high, freetype, false);
 		set_buddy_order(&page[size], high);
 		nr_added += size;
 	}
@@ -1757,12 +1931,13 @@ static inline unsigned int expand(struct zone *zone, struct page *page, int low,
 
 static __always_inline void page_del_and_expand(struct zone *zone,
 						struct page *page, int low,
-						int high, int migratetype)
+						int high, freetype_t freetype)
 {
+	enum migratetype migratetype = free_to_migratetype(freetype);
 	int nr_pages = 1 << high;
 
 	__del_page_from_free_list(page, zone, high, migratetype);
-	nr_pages -= expand(zone, page, low, high, migratetype);
+	nr_pages -= expand(zone, page, low, high, freetype);
 	account_freepages(zone, -nr_pages, migratetype);
 }
 
@@ -1915,7 +2090,7 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
  */
 static __always_inline
 struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
-						int migratetype)
+						freetype_t freetype)
 {
 	unsigned int current_order;
 	struct free_area *area;
@@ -1923,13 +2098,15 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 
 	/* Find a page of the appropriate size in the preferred list */
 	for (current_order = order; current_order < NR_PAGE_ORDERS; ++current_order) {
+		enum migratetype migratetype = free_to_migratetype(freetype);
+
 		area = &(zone->free_area[current_order]);
-		page = get_page_from_free_area(area, migratetype);
+		page = get_page_from_free_area(area, freetype);
 		if (!page)
 			continue;
 
 		page_del_and_expand(zone, page, order, current_order,
-				    migratetype);
+				    freetype);
 		trace_mm_page_alloc_zone_locked(page, order, migratetype,
 				pcp_allowed_order(order) &&
 				migratetype < MIGRATE_PCPTYPES);
@@ -1954,13 +2131,18 @@ static int fallbacks[MIGRATE_PCPTYPES][MIGRATE_PCPTYPES - 1] = {
 
 #ifdef CONFIG_CMA
 static __always_inline struct page *__rmqueue_cma_fallback(struct zone *zone,
-					unsigned int order)
+					unsigned int order, unsigned int ft_flags)
 {
-	return __rmqueue_smallest(zone, order, MIGRATE_CMA);
+	freetype_t freetype = migrate_to_freetype(MIGRATE_CMA, ft_flags);
+
+	return __rmqueue_smallest(zone, order, freetype);
 }
 #else
 static inline struct page *__rmqueue_cma_fallback(struct zone *zone,
-					unsigned int order) { return NULL; }
+					unsigned int order, bool sensitive)
+{
+	return NULL;
+}
 #endif
 
 /*
@@ -1968,7 +2150,7 @@ static inline struct page *__rmqueue_cma_fallback(struct zone *zone,
  * change the block type.
  */
 static int __move_freepages_block(struct zone *zone, unsigned long start_pfn,
-				  int old_mt, int new_mt)
+				  freetype_t old_ft, freetype_t new_ft)
 {
 	struct page *page;
 	unsigned long pfn, end_pfn;
@@ -1991,7 +2173,7 @@ static int __move_freepages_block(struct zone *zone, unsigned long start_pfn,
 
 		order = buddy_order(page);
 
-		move_to_free_list(page, zone, order, old_mt, new_mt);
+		move_to_free_list(page, zone, order, old_ft, new_ft);
 
 		pfn += 1 << order;
 		pages_moved += 1 << order;
@@ -2051,7 +2233,7 @@ static bool prep_move_freepages_block(struct zone *zone, struct page *page,
 }
 
 static int move_freepages_block(struct zone *zone, struct page *page,
-				int old_mt, int new_mt)
+				freetype_t old_ft, freetype_t new_ft)
 {
 	unsigned long start_pfn;
 	int res;
@@ -2059,8 +2241,11 @@ static int move_freepages_block(struct zone *zone, struct page *page,
 	if (!prep_move_freepages_block(zone, page, &start_pfn, NULL, NULL))
 		return -1;
 
-	res = __move_freepages_block(zone, start_pfn, old_mt, new_mt);
-	set_pageblock_migratetype(pfn_to_page(start_pfn), new_mt);
+	VM_BUG_ON(freetype_flags(old_ft) != freetype_flags(new_ft));
+
+	res = __move_freepages_block(zone, start_pfn, old_ft, new_ft);
+	set_pageblock_migratetype(pfn_to_page(start_pfn),
+				  free_to_migratetype(new_ft));
 
 	return res;
 
@@ -2128,8 +2313,7 @@ static bool __move_freepages_block_isolate(struct zone *zone,
 		struct page *page, bool isolate)
 {
 	unsigned long start_pfn, buddy_pfn;
-	int from_mt;
-	int to_mt;
+	freetype_t from_ft, to_ft;
 	struct page *buddy;
 
 	if (isolate == get_pageblock_isolate(page)) {
@@ -2159,18 +2343,15 @@ static bool __move_freepages_block_isolate(struct zone *zone,
 	}
 
 move:
-	/* Use MIGRATETYPE_MASK to get non-isolate migratetype */
 	if (isolate) {
-		from_mt = __get_pfnblock_flags_mask(page, page_to_pfn(page),
-						    MIGRATETYPE_MASK);
-		to_mt = MIGRATE_ISOLATE;
+		from_ft = __get_pfnblock_freetype(page, page_to_pfn(page), true);
+		to_ft = freetype_with_migrate(from_ft, MIGRATE_ISOLATE);
 	} else {
-		from_mt = MIGRATE_ISOLATE;
-		to_mt = __get_pfnblock_flags_mask(page, page_to_pfn(page),
-						  MIGRATETYPE_MASK);
+		to_ft = __get_pfnblock_freetype(page, page_to_pfn(page), true);
+		from_ft = freetype_with_migrate(to_ft, MIGRATE_ISOLATE);
 	}
 
-	__move_freepages_block(zone, start_pfn, from_mt, to_mt);
+	__move_freepages_block(zone, start_pfn, from_ft, to_ft);
 	toggle_pageblock_isolate(pfn_to_page(start_pfn), isolate);
 
 	return true;
@@ -2274,29 +2455,42 @@ static bool should_try_claim_block(unsigned int order, int start_mt)
 
 /*
  * Check whether there is a suitable fallback freepage with requested order.
- * If claimable is true, this function returns fallback_mt only if
+ * If claimable is true, this function returns a fallback only if
  * we would do this whole-block claiming. This would help to reduce
  * fragmentation due to mixed migratetype pages in one pageblock.
  */
-int find_suitable_fallback(struct free_area *area, unsigned int order,
-			   int migratetype, bool claimable)
+enum fallback_result
+find_suitable_fallback(struct free_area *area, unsigned int order,
+		       freetype_t freetype, bool claimable, freetype_t *ft_out)
 {
 	int i;
+	enum migratetype migratetype = free_to_migratetype(freetype);
 
 	if (claimable && !should_try_claim_block(order, migratetype))
-		return -2;
+		return FALLBACK_NOCLAIM;
 
 	if (area->nr_free == 0)
-		return -1;
+		return FALLBACK_EMPTY;
 
 	for (i = 0; i < MIGRATE_PCPTYPES - 1 ; i++) {
 		int fallback_mt = fallbacks[migratetype][i];
+		/*
+		 * Fallback to different migratetypes, but currently always with
+		 * the same freetype flags.
+		 */
+		freetype_t fallback_ft = freetype_with_migrate(freetype, fallback_mt);
 
-		if (!free_area_empty(area, fallback_mt))
-			return fallback_mt;
+		if (freetype_idx(fallback_ft) < 0)
+			continue;
+
+		if (!free_area_empty(area, fallback_ft)) {
+			if (ft_out)
+				*ft_out = fallback_ft;
+			return FALLBACK_FOUND;
+		}
 	}
 
-	return -1;
+	return FALLBACK_EMPTY;
 }
 
 /*
@@ -2308,20 +2502,22 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
  */
 static struct page *
 try_to_claim_block(struct zone *zone, struct page *page,
-		   int current_order, int order, int start_type,
-		   int block_type, unsigned int alloc_flags)
+		   int current_order, int order, freetype_t start_type,
+		   freetype_t block_type, unsigned int alloc_flags)
 {
 	int free_pages, movable_pages, alike_pages;
+	int block_mt = free_to_migratetype(block_type);
+	int start_mt = free_to_migratetype(start_type);
 	unsigned long start_pfn;
 
 	/* Take ownership for orders >= pageblock_order */
 	if (current_order >= pageblock_order) {
 		unsigned int nr_added;
 
-		del_page_from_free_list(page, zone, current_order, block_type);
-		change_pageblock_range(page, current_order, start_type);
+		del_page_from_free_list(page, zone, current_order, block_mt);
+		change_pageblock_range(page, current_order, start_mt);
 		nr_added = expand(zone, page, order, current_order, start_type);
-		account_freepages(zone, nr_added, start_type);
+		account_freepages(zone, nr_added, start_mt);
 		return page;
 	}
 
@@ -2343,7 +2539,7 @@ try_to_claim_block(struct zone *zone, struct page *page,
 	 * For movable allocation, it's the number of movable pages which
 	 * we just obtained. For other types it's a bit more tricky.
 	 */
-	if (start_type == MIGRATE_MOVABLE) {
+	if (start_mt == MIGRATE_MOVABLE) {
 		alike_pages = movable_pages;
 	} else {
 		/*
@@ -2353,7 +2549,7 @@ try_to_claim_block(struct zone *zone, struct page *page,
 		 * vice versa, be conservative since we can't distinguish the
 		 * exact migratetype of non-movable pages.
 		 */
-		if (block_type == MIGRATE_MOVABLE)
+		if (block_mt == MIGRATE_MOVABLE)
 			alike_pages = pageblock_nr_pages
 						- (free_pages + movable_pages);
 		else
@@ -2366,7 +2562,7 @@ try_to_claim_block(struct zone *zone, struct page *page,
 	if (free_pages + alike_pages >= (1 << (pageblock_order-1)) ||
 			page_group_by_mobility_disabled) {
 		__move_freepages_block(zone, start_pfn, block_type, start_type);
-		set_pageblock_migratetype(pfn_to_page(start_pfn), start_type);
+		set_pageblock_migratetype(pfn_to_page(start_pfn), start_mt);
 		return __rmqueue_smallest(zone, order, start_type);
 	}
 
@@ -2382,14 +2578,13 @@ try_to_claim_block(struct zone *zone, struct page *page,
  * condition simpler.
  */
 static __always_inline struct page *
-__rmqueue_claim(struct zone *zone, int order, int start_migratetype,
+__rmqueue_claim(struct zone *zone, int order, freetype_t start_freetype,
 						unsigned int alloc_flags)
 {
 	struct free_area *area;
 	int current_order;
 	int min_order = order;
 	struct page *page;
-	int fallback_mt;
 
 	/*
 	 * Do not steal pages from freelists belonging to other pageblocks
@@ -2406,25 +2601,27 @@ __rmqueue_claim(struct zone *zone, int order, int start_migratetype,
 	 */
 	for (current_order = MAX_PAGE_ORDER; current_order >= min_order;
 				--current_order) {
-		area = &(zone->free_area[current_order]);
-		fallback_mt = find_suitable_fallback(area, current_order,
-						     start_migratetype, true);
+		int start_mt = free_to_migratetype(start_freetype);
+		enum fallback_result result;
+		freetype_t fallback_ft;
 
-		/* No block in that order */
-		if (fallback_mt == -1)
+		area = &(zone->free_area[current_order]);
+		result = find_suitable_fallback(area, current_order, start_freetype,
+						true, &fallback_ft);
+
+		if (result == FALLBACK_EMPTY)
 			continue;
 
-		/* Advanced into orders too low to claim, abort */
-		if (fallback_mt == -2)
+		if (result == FALLBACK_NOCLAIM)
 			break;
 
-		page = get_page_from_free_area(area, fallback_mt);
+		page = get_page_from_free_area(area, fallback_ft);
 		page = try_to_claim_block(zone, page, current_order, order,
-					  start_migratetype, fallback_mt,
+					  start_freetype, fallback_ft,
 					  alloc_flags);
 		if (page) {
 			trace_mm_page_alloc_extfrag(page, order, current_order,
-						    start_migratetype, fallback_mt);
+				start_mt, free_to_migratetype(fallback_ft));
 			return page;
 		}
 	}
@@ -2437,24 +2634,27 @@ __rmqueue_claim(struct zone *zone, int order, int start_migratetype,
  * the block as its current migratetype, potentially causing fragmentation.
  */
 static __always_inline struct page *
-__rmqueue_steal(struct zone *zone, int order, int start_migratetype)
+__rmqueue_steal(struct zone *zone, int order, freetype_t start_freetype)
 {
 	struct free_area *area;
 	int current_order;
 	struct page *page;
-	int fallback_mt;
 
 	for (current_order = order; current_order < NR_PAGE_ORDERS; current_order++) {
+		enum fallback_result result;
+		freetype_t fallback_ft;
+
 		area = &(zone->free_area[current_order]);
-		fallback_mt = find_suitable_fallback(area, current_order,
-						     start_migratetype, false);
-		if (fallback_mt == -1)
+		result = find_suitable_fallback(area, current_order, start_freetype,
+						false, &fallback_ft);
+		if (result == FALLBACK_EMPTY)
 			continue;
 
-		page = get_page_from_free_area(area, fallback_mt);
-		page_del_and_expand(zone, page, order, current_order, fallback_mt);
+		page = get_page_from_free_area(area, fallback_ft);
+		page_del_and_expand(zone, page, order, current_order, fallback_ft);
 		trace_mm_page_alloc_extfrag(page, order, current_order,
-					    start_migratetype, fallback_mt);
+					    free_to_migratetype(start_freetype),
+						free_to_migratetype(fallback_ft));
 		return page;
 	}
 
@@ -2473,7 +2673,7 @@ enum rmqueue_mode {
  * Call me with the zone->lock already held.
  */
 static __always_inline struct page *
-__rmqueue(struct zone *zone, unsigned int order, int migratetype,
+__rmqueue(struct zone *zone, unsigned int order, freetype_t freetype,
 	  unsigned int alloc_flags, enum rmqueue_mode *mode)
 {
 	struct page *page;
@@ -2487,7 +2687,8 @@ __rmqueue(struct zone *zone, unsigned int order, int migratetype,
 		if (alloc_flags & ALLOC_CMA &&
 		    zone_page_state(zone, NR_FREE_CMA_PAGES) >
 		    zone_page_state(zone, NR_FREE_PAGES) / 2) {
-			page = __rmqueue_cma_fallback(zone, order);
+			page = __rmqueue_cma_fallback(zone, order,
+						freetype_flags(freetype));
 			if (page)
 				return page;
 		}
@@ -2504,13 +2705,14 @@ __rmqueue(struct zone *zone, unsigned int order, int migratetype,
 	 */
 	switch (*mode) {
 	case RMQUEUE_NORMAL:
-		page = __rmqueue_smallest(zone, order, migratetype);
+		page = __rmqueue_smallest(zone, order, freetype);
 		if (page)
 			return page;
 		fallthrough;
 	case RMQUEUE_CMA:
 		if (alloc_flags & ALLOC_CMA) {
-			page = __rmqueue_cma_fallback(zone, order);
+			page = __rmqueue_cma_fallback(zone, order,
+						freetype_flags(freetype));
 			if (page) {
 				*mode = RMQUEUE_CMA;
 				return page;
@@ -2518,7 +2720,7 @@ __rmqueue(struct zone *zone, unsigned int order, int migratetype,
 		}
 		fallthrough;
 	case RMQUEUE_CLAIM:
-		page = __rmqueue_claim(zone, order, migratetype, alloc_flags);
+		page = __rmqueue_claim(zone, order, freetype, alloc_flags);
 		if (page) {
 			/* Replenished preferred freelist, back to normal mode. */
 			*mode = RMQUEUE_NORMAL;
@@ -2527,7 +2729,7 @@ __rmqueue(struct zone *zone, unsigned int order, int migratetype,
 		fallthrough;
 	case RMQUEUE_STEAL:
 		if (!(alloc_flags & ALLOC_NOFRAGMENT)) {
-			page = __rmqueue_steal(zone, order, migratetype);
+			page = __rmqueue_steal(zone, order, freetype);
 			if (page) {
 				*mode = RMQUEUE_STEAL;
 				return page;
@@ -2544,7 +2746,7 @@ __rmqueue(struct zone *zone, unsigned int order, int migratetype,
  */
 static int rmqueue_bulk(struct zone *zone, unsigned int order,
 			unsigned long count, struct list_head *list,
-			int migratetype, unsigned int alloc_flags)
+			freetype_t freetype, unsigned int alloc_flags)
 {
 	enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
 	unsigned long flags;
@@ -2557,7 +2759,7 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 		spin_lock_irqsave(&zone->lock, flags);
 	}
 	for (i = 0; i < count; ++i) {
-		struct page *page = __rmqueue(zone, order, migratetype,
+		struct page *page = __rmqueue(zone, order, freetype,
 					      alloc_flags, &rmqm);
 		if (unlikely(page == NULL))
 			break;
@@ -2855,7 +3057,7 @@ static int nr_pcp_high(struct per_cpu_pages *pcp, struct zone *zone,
  * reacquired. Return true if pcp is locked, false otherwise.
  */
 static bool free_frozen_page_commit(struct zone *zone,
-		struct per_cpu_pages *pcp, struct page *page, int migratetype,
+		struct per_cpu_pages *pcp, struct page *page, freetype_t freetype,
 		unsigned int order, fpi_t fpi_flags, unsigned long *UP_flags)
 {
 	int high, batch;
@@ -2872,7 +3074,7 @@ static bool free_frozen_page_commit(struct zone *zone,
 	 */
 	pcp->alloc_factor >>= 1;
 	__count_vm_events(PGFREE, 1 << order);
-	pindex = order_to_pindex(migratetype, order);
+	pindex = order_to_pindex(freetype, order);
 	list_add(&page->pcp_list, &pcp->lists[pindex]);
 	pcp->count += 1 << order;
 
@@ -2967,6 +3169,7 @@ static void __free_frozen_pages(struct page *page, unsigned int order,
 	struct zone *zone;
 	unsigned long pfn = page_to_pfn(page);
 	int migratetype;
+	freetype_t freetype;
 
 	if (!pcp_allowed_order(order)) {
 		__free_pages_ok(page, order, fpi_flags);
@@ -2984,13 +3187,14 @@ static void __free_frozen_pages(struct page *page, unsigned int order,
 	 * excessively into the page allocator
 	 */
 	zone = page_zone(page);
-	migratetype = get_pfnblock_migratetype(page, pfn);
+	freetype = get_pfnblock_freetype(page, pfn);
+	migratetype = free_to_migratetype(freetype);
 	if (unlikely(migratetype >= MIGRATE_PCPTYPES)) {
 		if (unlikely(is_migrate_isolate(migratetype))) {
 			free_one_page(zone, page, pfn, order, fpi_flags);
 			return;
 		}
-		migratetype = MIGRATE_MOVABLE;
+		freetype = freetype_with_migrate(freetype, MIGRATE_MOVABLE);
 	}
 
 	if (unlikely((fpi_flags & FPI_TRYLOCK) && IS_ENABLED(CONFIG_PREEMPT_RT)
@@ -3000,7 +3204,7 @@ static void __free_frozen_pages(struct page *page, unsigned int order,
 	}
 	pcp = pcp_spin_trylock(zone->per_cpu_pageset, UP_flags);
 	if (pcp) {
-		if (!free_frozen_page_commit(zone, pcp, page, migratetype,
+		if (!free_frozen_page_commit(zone, pcp, page, freetype,
 						order, fpi_flags, &UP_flags))
 			return;
 		pcp_spin_unlock(pcp, UP_flags);
@@ -3053,10 +3257,12 @@ void free_unref_folios(struct folio_batch *folios)
 		struct zone *zone = folio_zone(folio);
 		unsigned long pfn = folio_pfn(folio);
 		unsigned int order = (unsigned long)folio->private;
+		freetype_t freetype;
 		int migratetype;
 
 		folio->private = NULL;
-		migratetype = get_pfnblock_migratetype(&folio->page, pfn);
+		freetype = get_pfnblock_freetype(&folio->page, pfn);
+		migratetype = free_to_migratetype(freetype);
 
 		/* Different zone requires a different pcp lock */
 		if (zone != locked_zone ||
@@ -3095,11 +3301,12 @@ void free_unref_folios(struct folio_batch *folios)
 		 * to the MIGRATE_MOVABLE pcp list.
 		 */
 		if (unlikely(migratetype >= MIGRATE_PCPTYPES))
-			migratetype = MIGRATE_MOVABLE;
+			freetype = freetype_with_migrate(freetype,
+							MIGRATE_MOVABLE);
 
 		trace_mm_page_free_batched(&folio->page);
 		if (!free_frozen_page_commit(zone, pcp, &folio->page,
-				migratetype, order, FPI_NONE, &UP_flags)) {
+				freetype, order, FPI_NONE, &UP_flags)) {
 			pcp = NULL;
 			locked_zone = NULL;
 		}
@@ -3160,14 +3367,16 @@ int __isolate_free_page(struct page *page, unsigned int order)
 	if (order >= pageblock_order - 1) {
 		struct page *endpage = page + (1 << order) - 1;
 		for (; page < endpage; page += pageblock_nr_pages) {
-			int mt = get_pageblock_migratetype(page);
+			freetype_t old_ft = get_pageblock_freetype(page);
+			freetype_t new_ft = freetype_with_migrate(old_ft,
+				MIGRATE_MOVABLE);
+
 			/*
 			 * Only change normal pageblocks (i.e., they can merge
 			 * with others)
 			 */
 			if (migratetype_is_mergeable(mt))
-				move_freepages_block(zone, page, mt,
-						     MIGRATE_MOVABLE);
+				move_freepages_block(zone, page, old_ft, new_ft);
 		}
 	}
 
@@ -3183,7 +3392,8 @@ int __isolate_free_page(struct page *page, unsigned int order)
  * This function is meant to return a page pulled from the free lists via
  * __isolate_free_page back to the free lists they were pulled from.
  */
-void __putback_isolated_page(struct page *page, unsigned int order, int mt)
+void __putback_isolated_page(struct page *page, unsigned int order,
+			     freetype_t freetype)
 {
 	struct zone *zone = page_zone(page);
 
@@ -3191,7 +3401,7 @@ void __putback_isolated_page(struct page *page, unsigned int order, int mt)
 	lockdep_assert_held(&zone->lock);
 
 	/* Return isolated page to tail of freelist. */
-	__free_one_page(page, page_to_pfn(page), zone, order, mt,
+	__free_one_page(page, page_to_pfn(page), zone, order, freetype,
 			FPI_SKIP_REPORT_NOTIFY | FPI_TO_TAIL);
 }
 
@@ -3221,13 +3431,121 @@ static inline void zone_statistics(struct zone *preferred_zone, struct zone *z,
 #endif
 }
 
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+/* Try to allocate a page by mapping/unmapping a block from the direct map. */
+static inline struct page *
+__rmqueue_direct_map(struct zone *zone, unsigned int request_order,
+		     unsigned int alloc_flags, freetype_t freetype)
+{
+	unsigned int ft_flags_other = freetype_flags(freetype) ^ FREETYPE_UNMAPPED;
+	freetype_t ft_other = migrate_to_freetype(free_to_migratetype(freetype),
+						  ft_flags_other);
+	bool want_mapped = !(freetype_flags(freetype) & FREETYPE_UNMAPPED);
+	enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
+	unsigned long irq_flags;
+	int nr_pageblocks;
+	struct page *page;
+	int alloc_order;
+	int err;
+
+	/*
+	 * Might need a TLB shootdown. Even if IRQs are on this isn't
+	 * safe if the caller holds a lock (in case the other CPUs need that
+	 * lock to handle the shootdown IPI).
+	 */
+	if (alloc_flags & ALLOC_NOBLOCK)
+		return NULL;
+
+	if (!can_set_direct_map())
+		return NULL;
+
+	lockdep_assert(!irqs_disabled() || unlikely(early_boot_irqs_disabled));
+
+	/*
+	 * Need to [un]map a whole pageblock (otherwise it might require
+	 * allocating pagetables). First allocate it.
+	 */
+	alloc_order = max(request_order, pageblock_order);
+	nr_pageblocks = 1 << (alloc_order - pageblock_order);
+	spin_lock_irqsave(&zone->lock, irq_flags);
+	page = __rmqueue(zone, alloc_order, ft_other, alloc_flags, &rmqm);
+	spin_unlock_irqrestore(&zone->lock, irq_flags);
+	if (!page)
+		return NULL;
+
+	/*
+	 * Now that IRQs are on it's safe to do a TLB shootdown, and now that we
+	 * released the zone lock it's possibl to allocate a pagetable if needed
+	 * to split up a huge page.
+	 *
+	 * Note that modifying the direct map may need to allocate pagetables.
+	 * What about unbounded recursion? Here are the assumptions that make it
+	 * safe:
+	 *
+	 * - The direct map starts out fully mapped at boot. (This is not really
+	 *   an assumption" as its in direct control of page_alloc.c).
+	 *
+	 * - Once pages in the direct map are broken down, they are not
+	 *   re-aggregated into larger pages again.
+	 *
+	 * - Pagetables are never allocated with __GFP_UNMAPPED.
+	 *
+	 * Under these assumptions, a pagetable might need to be allocated while
+	 * _unmapping_ stuff from the direct map during a __GFP_UNMAPPED
+	 * allocation. But, the allocation of that pagetable never requires
+	 * allocating a further pagetable.
+	 */
+	err = set_direct_map_valid_noflush(page, nr_pageblocks << pageblock_order, want_mapped);
+	if (err == -ENOMEM)
+		return NULL;
+	if (WARN_ONCE(err, "err=%d\n", err))
+		return NULL;
+
+	if (!want_mapped) {
+		unsigned long start = (unsigned long)page_address(page);
+		unsigned long end = start + (nr_pageblocks << (pageblock_order + PAGE_SHIFT));
+
+		flush_tlb_kernel_range(start, end);
+	}
+
+	for (int i = 0; i < nr_pageblocks; i++) {
+		struct page *block_page = page + (pageblock_nr_pages * i);
+
+		set_pageblock_freetype_flags(block_page, freetype_flags(freetype));
+	}
+
+	if (request_order >= alloc_order)
+		return page;
+
+	/* Free any remaining pages in the block. */
+	spin_lock_irqsave(&zone->lock, irq_flags);
+	for (unsigned int i = request_order; i < alloc_order; i++) {
+		struct page *page_to_free = page + (1 << i);
+
+		__free_one_page(page_to_free, page_to_pfn(page_to_free), zone,
+			i, freetype, FPI_SKIP_REPORT_NOTIFY);
+	}
+	spin_unlock_irqrestore(&zone->lock, irq_flags);
+
+	return page;
+}
+#else /* CONFIG_PAGE_ALLOC_UNMAPPED */
+static inline struct page *__rmqueue_direct_map(struct zone *zone, unsigned int request_order,
+				unsigned int alloc_flags, freetype_t freetype)
+{
+	return NULL;
+}
+#endif /* CONFIG_PAGE_ALLOC_UNMAPPED */
+
 static __always_inline
 struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			   unsigned int order, unsigned int alloc_flags,
-			   int migratetype)
+			   freetype_t freetype)
 {
 	struct page *page;
 	unsigned long flags;
+	freetype_t ft_high = freetype_with_migrate(freetype,
+						       MIGRATE_HIGHATOMIC);
 
 	do {
 		page = NULL;
@@ -3238,11 +3556,11 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			spin_lock_irqsave(&zone->lock, flags);
 		}
 		if (alloc_flags & ALLOC_HIGHATOMIC)
-			page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
+			page = __rmqueue_smallest(zone, order, ft_high);
 		if (!page) {
 			enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
 
-			page = __rmqueue(zone, order, migratetype, alloc_flags, &rmqm);
+			page = __rmqueue(zone, order, freetype, alloc_flags, &rmqm);
 
 			/*
 			 * If the allocation fails, allow OOM handling and
@@ -3250,15 +3568,17 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			 * reserves as failing now is worse than failing a
 			 * high-order atomic allocation in the future.
 			 */
-			if (!page && (alloc_flags & (ALLOC_OOM|ALLOC_NON_BLOCK)))
-				page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
-
-			if (!page) {
-				spin_unlock_irqrestore(&zone->lock, flags);
-				return NULL;
-			}
+			if (!page && (alloc_flags & (ALLOC_OOM|ALLOC_HARDER)))
+				page = __rmqueue_smallest(zone, order, ft_high);
 		}
 		spin_unlock_irqrestore(&zone->lock, flags);
+
+		/* Try changing direct map, now we've released the zone lock */
+		if (!page)
+			page = __rmqueue_direct_map(zone, order, alloc_flags, freetype);
+		if (!page)
+			return NULL;
+
 	} while (check_new_pages(page, order));
 
 	__count_zid_vm_events(PGALLOC, page_zonenum(page), 1 << order);
@@ -3320,7 +3640,7 @@ static int nr_pcp_alloc(struct per_cpu_pages *pcp, struct zone *zone, int order)
 /* Remove page from the per-cpu list, caller must protect the list */
 static inline
 struct page *__rmqueue_pcplist(struct zone *zone, unsigned int order,
-			int migratetype,
+			freetype_t freetype,
 			unsigned int alloc_flags,
 			struct per_cpu_pages *pcp,
 			struct list_head *list)
@@ -3334,7 +3654,7 @@ struct page *__rmqueue_pcplist(struct zone *zone, unsigned int order,
 
 			alloced = rmqueue_bulk(zone, order,
 					batch, list,
-					migratetype, alloc_flags);
+					freetype, alloc_flags);
 
 			pcp->count += alloced << order;
 			if (unlikely(list_empty(list)))
@@ -3352,7 +3672,7 @@ struct page *__rmqueue_pcplist(struct zone *zone, unsigned int order,
 /* Lock and remove page from the per-cpu list */
 static struct page *rmqueue_pcplist(struct zone *preferred_zone,
 			struct zone *zone, unsigned int order,
-			int migratetype, unsigned int alloc_flags)
+			freetype_t freetype, unsigned int alloc_flags)
 {
 	struct per_cpu_pages *pcp;
 	struct list_head *list;
@@ -3364,14 +3684,17 @@ static struct page *rmqueue_pcplist(struct zone *preferred_zone,
 	if (!pcp)
 		return NULL;
 
+	// TODO cleanup
+	BUG_ON(order_to_pindex(freetype, order) >= ARRAY_SIZE(pcp->lists));
+
 	/*
 	 * On allocation, reduce the number of pages that are batch freed.
 	 * See nr_pcp_free() where free_factor is increased for subsequent
 	 * frees.
 	 */
 	pcp->free_count >>= 1;
-	list = &pcp->lists[order_to_pindex(migratetype, order)];
-	page = __rmqueue_pcplist(zone, order, migratetype, alloc_flags, pcp, list);
+	list = &pcp->lists[order_to_pindex(freetype, order)];
+	page = __rmqueue_pcplist(zone, order, freetype, alloc_flags, pcp, list);
 	pcp_spin_unlock(pcp, UP_flags);
 	if (page) {
 		__count_zid_vm_events(PGALLOC, page_zonenum(page), 1 << order);
@@ -3396,19 +3719,19 @@ static inline
 struct page *rmqueue(struct zone *preferred_zone,
 			struct zone *zone, unsigned int order,
 			gfp_t gfp_flags, unsigned int alloc_flags,
-			int migratetype)
+			freetype_t freetype)
 {
 	struct page *page;
 
 	if (likely(pcp_allowed_order(order))) {
 		page = rmqueue_pcplist(preferred_zone, zone, order,
-				       migratetype, alloc_flags);
+				       freetype, alloc_flags);
 		if (likely(page))
 			goto out;
 	}
 
 	page = rmqueue_buddy(preferred_zone, zone, order, alloc_flags,
-							migratetype);
+							freetype);
 
 out:
 	/* Separate test+clear to avoid unnecessary atomics */
@@ -3430,7 +3753,7 @@ out:
 static void reserve_highatomic_pageblock(struct page *page, int order,
 					 struct zone *zone)
 {
-	int mt;
+	freetype_t ft, ft_high;
 	unsigned long max_managed, flags;
 
 	/*
@@ -3452,13 +3775,14 @@ static void reserve_highatomic_pageblock(struct page *page, int order,
 		goto out_unlock;
 
 	/* Yoink! */
-	mt = get_pageblock_migratetype(page);
+	ft = get_pageblock_freetype(page);
 	/* Only reserve normal pageblocks (i.e., they can merge with others) */
-	if (!migratetype_is_mergeable(mt))
+	if (!migratetype_is_mergeable(free_to_migratetype(ft)))
 		goto out_unlock;
 
+	ft_high = freetype_with_migrate(ft, MIGRATE_HIGHATOMIC);
 	if (order < pageblock_order) {
-		if (move_freepages_block(zone, page, mt, MIGRATE_HIGHATOMIC) == -1)
+		if (move_freepages_block(zone, page, ft, ft_high) == -1)
 			goto out_unlock;
 		zone->nr_reserved_highatomic += pageblock_nr_pages;
 	} else {
@@ -3482,6 +3806,8 @@ out_unlock:
 static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 						bool force)
 {
+	freetype_t ft_high = freetype_with_migrate(ac->freetype,
+					MIGRATE_HIGHATOMIC);
 	struct zonelist *zonelist = ac->zonelist;
 	unsigned long flags;
 	struct zoneref *z;
@@ -3489,6 +3815,9 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 	struct page *page;
 	int order;
 	int ret;
+
+	if (freetype_idx(ft_high) < 0)
+		return false;
 
 	for_each_zone_zonelist_nodemask(zone, z, zonelist, ac->highest_zoneidx,
 								ac->nodemask) {
@@ -3505,7 +3834,7 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 			struct free_area *area = &(zone->free_area[order]);
 			unsigned long size;
 
-			page = get_page_from_free_area(area, MIGRATE_HIGHATOMIC);
+			page = get_page_from_free_area(area, ft_high);
 			if (!page)
 				continue;
 
@@ -3532,14 +3861,14 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 			 */
 			if (order < pageblock_order)
 				ret = move_freepages_block(zone, page,
-							   MIGRATE_HIGHATOMIC,
-							   ac->migratetype);
+							   ft_high,
+							   ac->freetype);
 			else {
 				move_to_free_list(page, zone, order,
-						  MIGRATE_HIGHATOMIC,
-						  ac->migratetype);
+						  ft_high,
+						  ac->freetype);
 				change_pageblock_range(page, order,
-						       ac->migratetype);
+					free_to_migratetype(ac->freetype));
 				ret = 1;
 			}
 			/*
@@ -3610,7 +3939,7 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 			 * or (GFP_KERNEL & ~__GFP_DIRECT_RECLAIM) do not get
 			 * access to the min reserve.
 			 */
-			if (alloc_flags & ALLOC_NON_BLOCK)
+			if (alloc_flags & ALLOC_HARDER)
 				min -= min / 4;
 		}
 
@@ -3645,18 +3974,18 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 			continue;
 
 		for (mt = 0; mt < MIGRATE_PCPTYPES; mt++) {
-			if (!free_area_empty(area, mt))
+			if (!free_area_empty(area, migrate_to_freetype(mt, 0)))
 				return true;
 		}
 
 #ifdef CONFIG_CMA
 		if ((alloc_flags & ALLOC_CMA) &&
-		    !free_area_empty(area, MIGRATE_CMA)) {
+		     !free_area_empty(area, migrate_to_freetype(MIGRATE_CMA, 0))) {
 			return true;
 		}
 #endif
 		if ((alloc_flags & (ALLOC_HIGHATOMIC|ALLOC_OOM)) &&
-		    !free_area_empty(area, MIGRATE_HIGHATOMIC)) {
+		    !free_area_empty(area, migrate_to_freetype(MIGRATE_HIGHATOMIC, 0))) {
 			return true;
 		}
 	}
@@ -3780,7 +4109,7 @@ static inline unsigned int gfp_to_alloc_flags_cma(gfp_t gfp_mask,
 						  unsigned int alloc_flags)
 {
 #ifdef CONFIG_CMA
-	if (gfp_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+	if (free_to_migratetype(gfp_freetype(gfp_mask)) == MIGRATE_MOVABLE)
 		alloc_flags |= ALLOC_CMA;
 #endif
 	return alloc_flags;
@@ -3943,7 +4272,7 @@ check_alloc_wmark:
 
 try_this_zone:
 		page = rmqueue(zonelist_zone(ac->preferred_zoneref), zone, order,
-				gfp_mask, alloc_flags, ac->migratetype);
+				gfp_mask, alloc_flags, ac->freetype);
 		if (page) {
 			prep_new_page(page, order, gfp_mask, alloc_flags);
 
@@ -4495,18 +4824,20 @@ gfp_to_alloc_flags(gfp_t gfp_mask, unsigned int order)
 	 * The caller may dip into page reserves a bit more if the caller
 	 * cannot run direct reclaim, or if the caller has realtime scheduling
 	 * policy or is asking for __GFP_HIGH memory.  GFP_ATOMIC requests will
-	 * set both ALLOC_NON_BLOCK and ALLOC_MIN_RESERVE(__GFP_HIGH).
+	 * set both ALLOC_HARDER and ALLOC_MIN_RESERVE(__GFP_HIGH).
 	 */
 	alloc_flags |= (__force int)
 		(gfp_mask & (__GFP_HIGH | __GFP_KSWAPD_RECLAIM));
 
 	if (!(gfp_mask & __GFP_DIRECT_RECLAIM)) {
+		alloc_flags |= ALLOC_NOBLOCK;
+
 		/*
 		 * Not worth trying to allocate harder for __GFP_NOMEMALLOC even
 		 * if it can't schedule.
 		 */
 		if (!(gfp_mask & __GFP_NOMEMALLOC)) {
-			alloc_flags |= ALLOC_NON_BLOCK;
+			alloc_flags |= ALLOC_HARDER;
 
 			if (order > 0 && (alloc_flags & ALLOC_MIN_RESERVE))
 				alloc_flags |= ALLOC_HIGHATOMIC;
@@ -4694,14 +5025,13 @@ check_retry_cpuset(int cpuset_mems_cookie, struct alloc_context *ac)
 
 static inline struct page *
 __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
-						struct alloc_context *ac)
+		       struct alloc_context *ac, unsigned int alloc_flags)
 {
 	bool can_direct_reclaim = gfp_mask & __GFP_DIRECT_RECLAIM;
 	bool can_compact = gfp_compaction_allowed(gfp_mask);
 	bool nofail = gfp_mask & __GFP_NOFAIL;
 	const bool costly_order = order > PAGE_ALLOC_COSTLY_ORDER;
 	struct page *page = NULL;
-	unsigned int alloc_flags;
 	unsigned long did_some_progress;
 	enum compact_priority compact_priority;
 	enum compact_result compact_result;
@@ -4710,6 +5040,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	unsigned int cpuset_mems_cookie;
 	unsigned int zonelist_iter_cookie;
 	int reserve_flags;
+	enum migratetype migratetype;
 
 	if (unlikely(nofail)) {
 		/*
@@ -4738,7 +5069,7 @@ restart:
 	 * kswapd needs to be woken up, and to avoid the cost of setting up
 	 * alloc_flags precisely. So we do that now.
 	 */
-	alloc_flags = gfp_to_alloc_flags(gfp_mask, order);
+	alloc_flags |= gfp_to_alloc_flags(gfp_mask, order);
 
 	/*
 	 * We need to recalculate the starting point for the zonelist iterator
@@ -4775,6 +5106,8 @@ restart:
 	if (page)
 		goto got_pg;
 
+	migratetype = free_to_migratetype(ac->freetype);
+
 	/*
 	 * For costly allocations, try direct compaction first, as it's likely
 	 * that we have enough base pages and don't need to reclaim. For non-
@@ -4786,7 +5119,7 @@ restart:
 	 */
 	if (can_direct_reclaim && can_compact &&
 			(costly_order ||
-			   (order > 0 && ac->migratetype != MIGRATE_MOVABLE))
+			   (order > 0 && migratetype != MIGRATE_MOVABLE))
 			&& !gfp_pfmemalloc_allowed(gfp_mask)) {
 		page = __alloc_pages_direct_compact(gfp_mask, order,
 						alloc_flags, ac,
@@ -5000,6 +5333,18 @@ got_pg:
 	return page;
 }
 
+static inline unsigned int init_alloc_flags(gfp_t gfp_mask, unsigned int flags)
+{
+	/*
+	 * If the caller allowed __GFP_DIRECT_RECLAIM, they can't be atomic.
+	 * Note this is a separate determination from whether direct reclaim is
+	 * actually allowed, it must happen before applying gfp_allowed_mask.
+	 */
+	if (!(gfp_mask & __GFP_DIRECT_RECLAIM))
+		flags |= ALLOC_NOBLOCK;
+	return flags;
+}
+
 static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 		int preferred_nid, nodemask_t *nodemask,
 		struct alloc_context *ac, gfp_t *alloc_gfp,
@@ -5008,7 +5353,11 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 	ac->highest_zoneidx = gfp_zone(gfp_mask);
 	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
 	ac->nodemask = nodemask;
-	ac->migratetype = gfp_migratetype(gfp_mask);
+	ac->freetype = gfp_freetype(gfp_mask);
+
+	if (freetype_flags(ac->freetype) & FREETYPE_UNMAPPED &&
+	    WARN_ON(!mermap_ready()))
+		return false;
 
 	if (cpusets_enabled()) {
 		*alloc_gfp |= __GFP_HARDWALL;
@@ -5081,7 +5430,7 @@ unsigned long alloc_pages_bulk_noprof(gfp_t gfp, int preferred_nid,
 	struct list_head *pcp_list;
 	struct alloc_context ac;
 	gfp_t alloc_gfp;
-	unsigned int alloc_flags = ALLOC_WMARK_LOW;
+	unsigned int alloc_flags = init_alloc_flags(gfp, ALLOC_WMARK_LOW);
 	int nr_populated = 0, nr_account = 0;
 
 	/*
@@ -5173,7 +5522,7 @@ retry_this_zone:
 		goto failed;
 
 	/* Attempt the batch allocation */
-	pcp_list = &pcp->lists[order_to_pindex(ac.migratetype, 0)];
+	pcp_list = &pcp->lists[order_to_pindex(ac.freetype, 0)];
 	while (nr_populated < nr_pages) {
 
 		/* Skip existing pages */
@@ -5182,7 +5531,7 @@ retry_this_zone:
 			continue;
 		}
 
-		page = __rmqueue_pcplist(zone, 0, ac.migratetype, alloc_flags,
+		page = __rmqueue_pcplist(zone, 0, ac.freetype, alloc_flags,
 								pcp, pcp_list);
 		if (unlikely(!page)) {
 			/* Try and allocate at least one page */
@@ -5222,7 +5571,7 @@ struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
 		int preferred_nid, nodemask_t *nodemask)
 {
 	struct page *page;
-	unsigned int alloc_flags = ALLOC_WMARK_LOW;
+	unsigned int alloc_flags = init_alloc_flags(gfp, ALLOC_WMARK_LOW);
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
 
@@ -5267,7 +5616,7 @@ struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
 	 */
 	ac.nodemask = nodemask;
 
-	page = __alloc_pages_slowpath(alloc_gfp, order, &ac);
+	page = __alloc_pages_slowpath(alloc_gfp, order, &ac, alloc_flags);
 
 out:
 	if (memcg_kmem_online() && (gfp & __GFP_ACCOUNT) && page &&
@@ -5276,7 +5625,8 @@ out:
 		page = NULL;
 	}
 
-	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);
+	trace_mm_page_alloc(page, order, alloc_gfp,
+			    free_to_migratetype(ac.freetype));
 	kmsan_alloc_page(page, order, alloc_gfp);
 
 	return page;
@@ -7426,11 +7776,11 @@ EXPORT_SYMBOL(is_free_buddy_page);
 
 #ifdef CONFIG_MEMORY_FAILURE
 static inline void add_to_free_list(struct page *page, struct zone *zone,
-				    unsigned int order, int migratetype,
+				    unsigned int order, freetype_t freetype,
 				    bool tail)
 {
-	__add_to_free_list(page, zone, order, migratetype, tail);
-	account_freepages(zone, 1 << order, migratetype);
+	__add_to_free_list(page, zone, order, freetype, tail);
+	account_freepages(zone, 1 << order, free_to_migratetype(freetype));
 }
 
 /*
@@ -7439,7 +7789,7 @@ static inline void add_to_free_list(struct page *page, struct zone *zone,
  */
 static void break_down_buddy_pages(struct zone *zone, struct page *page,
 				   struct page *target, int low, int high,
-				   int migratetype)
+				   freetype_t freetype)
 {
 	unsigned long size = 1 << high;
 	struct page *current_buddy;
@@ -7458,7 +7808,7 @@ static void break_down_buddy_pages(struct zone *zone, struct page *page,
 		if (set_page_guard(zone, current_buddy, high))
 			continue;
 
-		add_to_free_list(current_buddy, zone, high, migratetype, false);
+		add_to_free_list(current_buddy, zone, high, freetype, false);
 		set_buddy_order(current_buddy, high);
 	}
 }
@@ -7481,13 +7831,13 @@ bool take_page_off_buddy(struct page *page)
 
 		if (PageBuddy(page_head) && page_order >= order) {
 			unsigned long pfn_head = page_to_pfn(page_head);
-			int migratetype = get_pfnblock_migratetype(page_head,
-								   pfn_head);
+			freetype_t freetype = get_pfnblock_freetype(page_head,
+								    pfn_head);
 
 			del_page_from_free_list(page_head, zone, page_order,
-						migratetype);
+						free_to_migratetype(freetype));
 			break_down_buddy_pages(zone, page_head, page, 0,
-						page_order, migratetype);
+						page_order, freetype);
 			SetPageHWPoisonTakenOff(page);
 			ret = true;
 			break;
@@ -7511,10 +7861,10 @@ bool put_page_back_buddy(struct page *page)
 	spin_lock_irqsave(&zone->lock, flags);
 	if (put_page_testzero(page)) {
 		unsigned long pfn = page_to_pfn(page);
-		int migratetype = get_pfnblock_migratetype(page, pfn);
+		freetype_t freetype = get_pfnblock_freetype(page, pfn);
 
 		ClearPageHWPoisonTakenOff(page);
-		__free_one_page(page, pfn, zone, 0, migratetype, FPI_NONE);
+		__free_one_page(page, pfn, zone, 0, freetype, FPI_NONE);
 		if (TestClearPageHWPoison(page)) {
 			ret = true;
 		}
@@ -7715,11 +8065,13 @@ struct page *alloc_frozen_pages_nolock_noprof(gfp_t gfp_flags, int nid, unsigned
 	 */
 	gfp_t alloc_gfp = __GFP_NOWARN | __GFP_ZERO | __GFP_NOMEMALLOC | __GFP_COMP
 			| gfp_flags;
-	unsigned int alloc_flags = ALLOC_TRYLOCK;
+	unsigned int alloc_flags = init_alloc_flags(alloc_gfp, ALLOC_TRYLOCK);
 	struct alloc_context ac = { };
 	struct page *page;
 
 	VM_WARN_ON_ONCE(gfp_flags & ~__GFP_ACCOUNT);
+	VM_WARN_ON_ONCE(!(alloc_flags & ALLOC_NOBLOCK));
+
 	/*
 	 * In PREEMPT_RT spin_trylock() will call raw_spin_lock() which is
 	 * unsafe in NMI. If spin_trylock() is called from hard IRQ the current
@@ -7759,7 +8111,8 @@ struct page *alloc_frozen_pages_nolock_noprof(gfp_t gfp_flags, int nid, unsigned
 		__free_frozen_pages(page, order, FPI_TRYLOCK);
 		page = NULL;
 	}
-	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);
+	trace_mm_page_alloc(page, order, alloc_gfp,
+			    free_to_migratetype(ac.freetype));
 	kmsan_alloc_page(page, order, alloc_gfp);
 	return page;
 }

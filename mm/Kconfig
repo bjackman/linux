@@ -1482,6 +1482,46 @@ config LAZY_MMU_MODE_KUNIT_TEST
 
 	  If unsure, say N.
 
+config ARCH_SUPPORTS_MM_LOCAL_REGION
+	def_bool n
+
+config MM_LOCAL_REGION
+	def_bool n
+	depends on ARCH_SUPPORTS_MM_LOCAL_REGION
+
 source "mm/damon/Kconfig"
+
+config ARCH_SUPPORTS_MERMAP
+	bool
+
+config MERMAP
+	bool "Support for epheMERal mappings within the kernel"
+	default COMPILE_TEST
+	depends on ARCH_SUPPORTS_MERMAP
+	help
+	  Support for epheMERal mappings within the kernel.
+
+config MERMAP_KUNIT_TEST
+	tristate "KUnit tests for the mermap" if !KUNIT_ALL_TESTS
+	depends on ARCH_SUPPORTS_MERMAP
+	depends on KUNIT
+	select MERMAP
+	default KUNIT_ALL_TESTS
+	help
+	  KUnit test for the mermap.
+
+	  If unsure, say N.
+
+config PAGE_ALLOC_UNMAPPED
+	bool "Support allocating pages that aren't in the direct map" if COMPILE_TEST || KUNIT
+	default COMPILE_TEST || KUNIT
+	depends on MERMAP
+
+config PAGE_ALLOC_KUNIT_TEST
+	tristate "KUnit tests for the page allocator" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Builds KUnit tests for the page allocator.
 
 endmenu

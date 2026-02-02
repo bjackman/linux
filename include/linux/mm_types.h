@@ -7,6 +7,7 @@
 #include <linux/auxvec.h>
 #include <linux/kref.h>
 #include <linux/list.h>
+#include <linux/mermap_types.h>
 #include <linux/spinlock.h>
 #include <linux/rbtree.h>
 #include <linux/maple_tree.h>
@@ -34,6 +35,7 @@
 struct address_space;
 struct futex_private_hash;
 struct mem_cgroup;
+struct mermap;
 
 typedef struct {
 	unsigned long f;
@@ -1111,6 +1113,8 @@ struct mm_struct {
 		atomic_t membarrier_state;
 #endif
 
+		struct mermap mermap;
+
 		/**
 		 * @mm_users: The number of users including userspace.
 		 *
@@ -1874,6 +1878,8 @@ enum {
 
 #define MMF_TOPDOWN		31	/* mm searches top down by default */
 #define MMF_TOPDOWN_MASK	BIT(MMF_TOPDOWN)
+
+#define MMF_LOCAL_REGION_USED	32
 
 #define MMF_INIT_LEGACY_MASK	(MMF_DUMPABLE_MASK | MMF_DUMP_FILTER_MASK |\
 				 MMF_DISABLE_THP_MASK | MMF_HAS_MDWE_MASK |\
