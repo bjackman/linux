@@ -304,6 +304,7 @@ int mermap_mm_init(struct mm_struct *mm)
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(mermap_mm_init);
 
 /* Clean up mermap stuff on mm teardown. */
 void mermap_mm_teardown(struct mm_struct *mm)

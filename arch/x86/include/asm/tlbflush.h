@@ -229,7 +229,6 @@ struct flush_tlb_info {
 	u8			trim_cpumask;
 };
 
-void flush_tlb_local(void);
 void flush_tlb_one_user(unsigned long addr);
 void flush_tlb_one_kernel(unsigned long addr);
 void flush_tlb_multi(const struct cpumask *cpumask,
@@ -472,6 +471,7 @@ static inline void cpu_tlbstate_update_lam(unsigned long lam, u64 untag_mask)
 				? huge_page_shift(hstate_vma(vma))	\
 				: PAGE_SHIFT, true)
 
+extern void flush_tlb_local(void);
 extern void flush_tlb_all(void);
 extern void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 				unsigned long end, unsigned int stride_shift,
