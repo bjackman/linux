@@ -3432,6 +3432,10 @@ static inline void zone_statistics(struct zone *preferred_zone, struct zone *z,
 }
 
 #ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+
+static bool zone_spans_last_pfn(const struct zone *zone,
+				unsigned long start_pfn, unsigned long nr_pages);
+
 /* Try to allocate a page by mapping/unmapping a block from the direct map. */
 static inline struct page *
 __rmqueue_direct_map(struct zone *zone, unsigned int request_order,
@@ -3475,8 +3479,8 @@ __rmqueue_direct_map(struct zone *zone, unsigned int request_order,
 
 	/*
 	 * Now that IRQs are on it's safe to do a TLB shootdown, and now that we
-	 * released the zone lock it's possibl to allocate a pagetable if needed
-	 * to split up a huge page.
+	 * released the zone lock it's possible to allocate a pagetable if
+	 * needed to split up a huge page.
 	 *
 	 * Note that modifying the direct map may need to allocate pagetables.
 	 * What about unbounded recursion? Here are the assumptions that make it
@@ -3521,9 +3525,14 @@ __rmqueue_direct_map(struct zone *zone, unsigned int request_order,
 	spin_lock_irqsave(&zone->lock, irq_flags);
 	for (unsigned int i = request_order; i < alloc_order; i++) {
 		struct page *page_to_free = page + (1 << i);
+		unsigned long pfn = page_to_pfn(page);
 
-		__free_one_page(page_to_free, page_to_pfn(page_to_free), zone,
-			i, freetype, FPI_SKIP_REPORT_NOTIFY);
+		if (!zone_spans_pfn(zone, pfn) || !zone_spans_last_pfn(zone, pfn, 1 << i)) {
+			// TODO: leak pages
+			WARN_ON_ONCE(1);
+			break;
+		};
+		__free_one_page(page_to_free, pfn, zone, i, freetype, FPI_SKIP_REPORT_NOTIFY);
 	}
 	spin_unlock_irqrestore(&zone->lock, irq_flags);
 
