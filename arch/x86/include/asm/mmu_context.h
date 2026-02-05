@@ -253,13 +253,13 @@ static inline void mm_local_region_free(struct mm_struct *mm)
 /* Do initial setup of the user-local region. Call from process context. */
 static inline int mm_local_region_init(struct mm_struct *mm)
 {
-	pgd_t *pgd;
 	int err;
 
 	err = preallocate_sub_pgd(mm, MM_LOCAL_BASE_ADDR);
 	if (err)
 		return err;
 
+#ifdef CONFIG_MITIGATION_PAGE_TABLE_ISOLATION
 	/*
 	 * The mm-local region is shared with userspace. This is useful for the
 	 * LDT remap. It's assuming nothing gets mapped in here that needs to be
@@ -269,9 +269,12 @@ static inline int mm_local_region_init(struct mm_struct *mm)
 	 * assuming the set_pgd() is idempotent.
 	 */
 	if (boot_cpu_has(X86_FEATURE_PTI)) {
-		pgd = pgd_offset(mm, LDT_BASE_ADDR);
+		pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
+
 		set_pgd(kernel_to_user_pgdp(pgd), *pgd);
 	}
+#endif
+
 	mm_flags_set(MMF_LOCAL_REGION_USED, mm);
 
 	return 0;
