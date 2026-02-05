@@ -2484,9 +2484,9 @@ static inline bool kvm_arch_has_irq_bypass(void)
 
 #if defined(CONFIG_KVM_GUEST_MEMFD) && defined(CONFIG_PAGE_ALLOC_UNMAPPED)
 bool kvm_arch_gmem_supports_no_direct_map(struct kvm *kvm);
-#define kvm_arch_gmem_supports_no_direct_map	kvm_arch_gmem_supports_no_direct_map
+#define kvm_arch_gmem_supports_no_direct_map		kvm_arch_gmem_supports_no_direct_map
 #else
-#define kvm_arch_gmem_supports_no_direct_map()	false
+#define kvm_arch_gmem_supports_no_direct_map(kvm)	false
 #endif
 
 #endif /* _ASM_X86_KVM_HOST_H */
