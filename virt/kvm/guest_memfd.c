@@ -123,8 +123,10 @@ static int kvm_gmem_prepare_folio(struct kvm *kvm, struct kvm_memory_slot *slot,
 	int r;
 
 	nr_pages = folio_nr_pages(folio);
-	for (i = 0; i < nr_pages; i++)
-		clear_highpage(folio_page(folio, i));
+	if (!mapping_no_direct_map(folio->mapping)) {
+		for (i = 0; i < nr_pages; i++)
+			clear_highpage(folio_page(folio, i));
+	}
 
 	/*
 	 * Preparing huge folios should always be safe, since it should
