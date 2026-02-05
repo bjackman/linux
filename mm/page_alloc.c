@@ -3504,7 +3504,8 @@ __rmqueue_direct_map(struct zone *zone, unsigned int request_order,
 	 * allocation. But, the allocation of that pagetable never requires
 	 * allocating a further pagetable.
 	 */
-	err = set_direct_map_valid_noflush(page, nr_pageblocks << pageblock_order, want_mapped);
+	err = set_direct_map_valid_noflush(page_to_virt(page),
+				nr_pageblocks << pageblock_order, want_mapped);
 	if (err == -ENOMEM)
 		return NULL;
 	if (WARN_ONCE(err, "err=%d\n", err))
