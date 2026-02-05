@@ -1499,6 +1499,7 @@ config MERMAP
 	# TODO: Yuck - see also definition of PAGE_ALLOC_UNMAPPED
 	default COMPILE_TEST || KVM_GUEST_MEMFD
 	depends on ARCH_SUPPORTS_MERMAP
+	select MM_LOCAL_REGION
 	help
 	  Support for epheMERal mappings within the kernel.
 
