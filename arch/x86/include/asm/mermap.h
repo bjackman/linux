@@ -11,7 +11,7 @@ static inline void arch_mermap_flush_tlb(void)
 	 * allowed to access our region so the stale mappings are harmless, as
 	 * long as they still point to data belonging to this process.
 	 */
-	flush_tlb_local();
+	__flush_tlb_all();
 }
 
 #endif /* _ASM_X86_MERMAP_H */
