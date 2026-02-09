@@ -5322,7 +5322,9 @@ static const struct vm_operations_struct shmem_vm_ops = {
 	.set_policy     = shmem_set_policy,
 	.get_policy     = shmem_get_policy,
 #endif
+#ifdef CONFIG_NUMA
 	.can_userfault  = shmem_can_userfault,
+#endif
 };
 
 static const struct vm_operations_struct shmem_anon_vm_ops = {
@@ -5332,7 +5334,9 @@ static const struct vm_operations_struct shmem_anon_vm_ops = {
 	.set_policy     = shmem_set_policy,
 	.get_policy     = shmem_get_policy,
 #endif
+#ifdef CONFIG_NUMA
 	.can_userfault  = shmem_can_userfault,
+#endif
 };
 
 int shmem_init_fs_context(struct fs_context *fc)
