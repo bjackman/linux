@@ -1398,7 +1398,7 @@ static inline void clear_page_mermap(struct page *page, unsigned int numpages)
 		unsigned long flags;
 
 		local_irq_save(flags);
-		mermap = mermap_get_reserved(page, PAGE_KERNEL);
+		mermap = mermap_get_reserved(page + i, PAGE_KERNEL);
 		clear_page(mermap_addr(mermap));
 		mermap_put(mermap);
 		local_irq_restore(flags);
