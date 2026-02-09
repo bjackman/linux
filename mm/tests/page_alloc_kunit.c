@@ -260,10 +260,14 @@ static void test_stress_interleaved_allocs(struct kunit *test)
 	 * Limit cap to avoid OOM on smaller test VMs, but high enough
 	 * to create fragmentation and exercise lists.
 	 */
-	const int CAP = 16 * 4096;
+	const int CAP = 4096;
 	const int ITERATIONS = 10000000;
 	struct stress_env *env;
 	int i, num_allocs = 0, num_frees = 0;
+
+	/* Batch control variables */
+	int batch_remaining = 0;
+	bool batch_is_alloc = true;
 
 	env = kunit_kzalloc(test, sizeof(*env), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, env);
@@ -290,13 +294,36 @@ static void test_stress_interleaved_allocs(struct kunit *test)
 	for (i = 0; i < ITERATIONS; i++) {
 		bool do_alloc;
 
-		/* Force alloc if low on pages, force free if full, otherwise random */
-		if (env->count < 100)
-			do_alloc = true;
-		else if (env->count == env->capacity)
-			do_alloc = false;
-		else
-			do_alloc = get_random_u32_below(2);
+		/* * BATCH LOGIC:
+		 * If our current batch is exhausted, pick a new direction
+		 * and a new random size.
+		 */
+		if (batch_remaining == 0) {
+			/* Pick direction based on fullness */
+			if (env->count < 100) {
+				batch_is_alloc = true;
+			} else if (env->count >= env->capacity - 100) {
+				batch_is_alloc = false;
+			} else {
+				batch_is_alloc = get_random_u32_below(2);
+			}
+
+			/* Calculate max possible items for this batch */
+			int limit = batch_is_alloc ?
+				(env->capacity - env->count) : env->count;
+
+			/* * Randomize batch size.
+			 * We use (limit / 2) + 1 to ensure we don't always fill/drain
+			 * completely, creating more "jagged" usage patterns.
+			 */
+			if (limit > 0)
+				batch_remaining = get_random_u32_below(limit / 2 + 1) + 1;
+			else
+				batch_remaining = 1; /* Should not happen due to <100 checks, but safety */
+		}
+
+		do_alloc = batch_is_alloc;
+		batch_remaining--;
 
 		if (do_alloc) {
 			struct page *page;
@@ -320,8 +347,11 @@ static void test_stress_interleaved_allocs(struct kunit *test)
 			 * We might hit OOM or fragmentation failure during stress.
 			 * That is acceptable for this test, just skip tracking.
 			 */
-			if (WARN_ON_ONCE(!page))
+			if (WARN_ON_ONCE(!page)) {
+				/* If we fail to alloc, force a switch to freeing next time */
+				batch_remaining = 0;
 				continue;
+			}
 
 			pfn = page_to_pfn(page);
 
