@@ -3531,7 +3531,7 @@ __rmqueue_direct_map(struct zone *zone, unsigned int request_order,
 	spin_lock_irqsave(&zone->lock, irq_flags);
 	for (unsigned int i = request_order; i < alloc_order; i++) {
 		struct page *page_to_free = page + (1 << i);
-		unsigned long pfn = page_to_pfn(page);
+		unsigned long pfn = page_to_pfn(page_to_free);
 
 		if (!zone_spans_pfn(zone, pfn) || !zone_spans_last_pfn(zone, pfn, 1 << i)) {
 			// TODO: leak pages
