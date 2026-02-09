@@ -4,11 +4,13 @@
 #include <linux/mermap.h>
 #include <linux/mm_types.h>
 #include <linux/mm.h>
+#include <linux/random.h>
 #include <linux/pgtable.h>
 #include <linux/set_memory.h>
 #include <linux/sched/mm.h>
 #include <linux/types.h>
 #include <linux/vmalloc.h>
+#include <linux/xarray.h>
 
 #include <kunit/resource.h>
 #include <kunit/test.h>
@@ -230,12 +232,156 @@ static void test_freetype_idx(struct kunit *test)
 		"unused idxs: %*pbl", NR_PCP_LISTS, bitmap);
 }
 
+struct stress_env {
+	struct xarray pfn_tracker;
+	struct {
+		struct page *page;
+		unsigned int order;
+	} *allocs;
+	int count;
+	int capacity;
+};
+
+static void stress_cleanup(void *context)
+{
+	struct stress_env *env = context;
+	int i;
+
+	for (i = 0; i < env->count; i++) {
+		if (env->allocs[i].page)
+			__free_pages(env->allocs[i].page, env->allocs[i].order);
+	}
+	xa_destroy(&env->pfn_tracker);
+}
+
+static void test_stress_interleaved_allocs(struct kunit *test)
+{
+	/*
+	 * Limit cap to avoid OOM on smaller test VMs, but high enough
+	 * to create fragmentation and exercise lists.
+	 */
+	const int CAP = 16 * 4096;
+	const int ITERATIONS = 10000000;
+	struct stress_env *env;
+	int i, num_allocs = 0, num_frees = 0;
+
+	env = kunit_kzalloc(test, sizeof(*env), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, env);
+
+	env->allocs = kunit_kcalloc(test, CAP, sizeof(env->allocs[0]), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, env->allocs);
+
+	xa_init(&env->pfn_tracker);
+	env->capacity = CAP;
+
+	/* Register cleanup to ensure pages are freed even if assertions fail */
+	kunit_add_action(test, stress_cleanup, env);
+
+	/*
+	 * If UNMAPPED is supported, we need to attach the mm to ensure
+	 * we have the context to handle unmapped page faults or accounting
+	 * if the allocator relies on it.
+	 */
+	if (IS_ENABLED(CONFIG_PAGE_ALLOC_UNMAPPED)) {
+		kunit_attach_mm();
+		mermap_mm_init(current->mm);
+	}
+
+	for (i = 0; i < ITERATIONS; i++) {
+		bool do_alloc;
+
+		/* Force alloc if low on pages, force free if full, otherwise random */
+		if (env->count < 100)
+			do_alloc = true;
+		else if (env->count == env->capacity)
+			do_alloc = false;
+		else
+			do_alloc = get_random_u32_below(2);
+
+		if (do_alloc) {
+			struct page *page;
+			unsigned long pfn;
+			int ret;
+
+			/* Randomize order: mostly 0, occasionally higher */
+			unsigned int order = get_random_u32_below(4);
+
+			/* Base flags */
+			gfp_t gfp = GFP_KERNEL | __GFP_NOWARN;
+
+			/* Randomly mix in UNMAPPED if config enabled */
+			if (IS_ENABLED(CONFIG_PAGE_ALLOC_UNMAPPED) &&
+			    get_random_u32_below(2))
+				gfp |= __GFP_UNMAPPED;
+
+			page = alloc_pages(gfp, order);
+
+			/*
+			 * We might hit OOM or fragmentation failure during stress.
+			 * That is acceptable for this test, just skip tracking.
+			 */
+			if (WARN_ON_ONCE(!page))
+				continue;
+
+			pfn = page_to_pfn(page);
+
+			/*
+			 * CRITICAL CHECK: Ensure this page isn't already
+			 * tracked as allocated by us.
+			 */
+			ret = xa_err(xa_store(&env->pfn_tracker, pfn, page, GFP_KERNEL));
+			if (ret) {
+				/* If store failed (alloc error), clean up and fail */
+				__free_pages(page, order);
+				KUNIT_FAIL_AND_ABORT(test, "xa_store failed: %d", ret);
+			}
+
+			/* If previous value was not NULL, we overwrote an entry -> Double Alloc */
+			if (xa_load(&env->pfn_tracker, pfn) != page) {
+				KUNIT_FAIL_AND_ABORT(test,
+					"Double allocation detected! PFN %lu returned twice.",
+					pfn);
+			}
+
+			/* Record for later freeing */
+			env->allocs[env->count].page = page;
+			env->allocs[env->count].order = order;
+			env->count++;
+
+			num_allocs++;
+		} else {
+			/* Perform a Free */
+			int idx = get_random_u32_below(env->count);
+			struct page *page = env->allocs[idx].page;
+			unsigned int order = env->allocs[idx].order;
+			unsigned long pfn = page_to_pfn(page);
+
+			/* Remove from tracker */
+			xa_erase(&env->pfn_tracker, pfn);
+
+			/* Actual free */
+			__free_pages(page, order);
+
+			/* Swap remove from array to keep it contiguous */
+			env->allocs[idx] = env->allocs[env->count - 1];
+			env->count--;
+
+			num_frees++;
+		}
+
+		cond_resched();
+	}
+
+	printk("%s: Did %d iterations, %d allocs %d frees\n", __func__, i, num_allocs, num_frees);
+}
+
 static struct kunit_case test_cases[] = {
 #ifdef CONFIG_PAGE_ALLOC_UNMAPPED
 	KUNIT_CASE_PARAM(test_alloc_map_unmap, gfp_gen_params),
 #endif
 	KUNIT_CASE(test_pindex_helpers),
 	KUNIT_CASE(test_freetype_idx),
+	KUNIT_CASE(test_stress_interleaved_allocs),
 	{}
 };
 
