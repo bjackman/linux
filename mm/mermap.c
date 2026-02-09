@@ -119,7 +119,7 @@ static inline struct mermap_alloc *mermap_alloc(struct mm_struct *mm,
 	guard(preempt)();
 
 	/* Out of already-available space? */
-	if (size > cpu_end - mc->next_addr) {
+	if (mc->next_addr + size > cpu_end) {
 		unsigned long new_next = mermap_cpu_base(cpu);
 
 		/* Would we have space after a TLB flush? */
