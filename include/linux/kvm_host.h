@@ -632,7 +632,11 @@ static inline bool kvm_slot_dirty_track_enabled(const struct kvm_memory_slot *sl
 static inline bool kvm_slot_no_direct_map(const struct kvm_memory_slot *slot)
 {
 	return slot && kvm_slot_has_gmem(slot) &&
-	       mapping_no_direct_map(slot->gmem.file->f_mapping);
+#ifdef CONFIG_KVM_GUEST_MEMFD
+		mapping_no_direct_map(slot->gmem.file->f_mapping);
+#else
+		false;
+#endif
 }
 
 static inline unsigned long kvm_dirty_bitmap_bytes(struct kvm_memory_slot *memslot)
