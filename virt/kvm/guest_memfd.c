@@ -175,6 +175,20 @@ static struct folio *kvm_gmem_get_folio(struct inode *inode, pgoff_t index)
 	if (!IS_ERR(folio))
 		return folio;
 
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	/*
+	 * Lazily initialize mermap - doing this late ensure it still works if
+	 * the fd is inherited.
+	 */
+	if (mapping_no_direct_map(inode->i_mapping)) {
+		int err = mermap_mm_init(current->mm);
+		if (err) {
+			WARN_ON_ONCE(err != -ENOMEM);
+			return NULL;
+		}
+	}
+#endif
+
 	policy = mpol_shared_policy_lookup(&GMEM_I(inode)->policy, index);
 	folio = __filemap_get_folio_mpol(inode->i_mapping, index,
 					 FGP_LOCK | FGP_ACCESSED | FGP_CREAT,
@@ -699,10 +713,6 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags)
 	if (flags & GUEST_MEMFD_FLAG_NO_DIRECT_MAP) {
 		mapping_set_no_direct_map(inode->i_mapping);
 		gfp |= __GFP_UNMAPPED;
-
-		err = mermap_mm_init(current->mm);
-		if (err)
-			return err;
 	}
 #endif
 
