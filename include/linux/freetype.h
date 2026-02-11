@@ -109,6 +109,21 @@ static inline int freetype_idx(freetype_t freetype)
 	return freetype.migratetype;
 }
 
+static inline freetype_t freetype_from_idx(unsigned int idx)
+{
+	freetype_t freetype = { .flags = 0, .migratetype = 0 };
+
+	if (IS_ENABLED(CONFIG_PAGE_ALLOC_UNMAPPED) && idx == MIGRATE_TYPES) {
+		freetype.flags = FREETYPE_UNMAPPED;
+		freetype.migratetype = MIGRATE_UNMOVABLE;
+	} else {
+		freetype.flags = 0;
+		freetype.migratetype = idx;
+	}
+
+	return freetype;
+}
+
 /* One for each migratetype, plus one for MIGRATE_UNMOVABLE-FREETYPE_UNMAPPED */
 #define NR_FREETYPE_IDXS (MIGRATE_TYPES + NUM_UNMAPPED_FREETYPES)
 

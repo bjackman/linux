@@ -132,9 +132,14 @@ static bool show_mem_node_skip(unsigned int flags, int nid, nodemask_t *nodemask
 	return !node_isset(nid, *nodemask);
 }
 
-static void show_migration_types(unsigned char type)
+/*
+ * Print a string representing the freetypes with the indexes whose bits are set
+ * in the provided mask. Each migratetype is represented as a capital letter,
+ * suffixed with any flags represented by lowercase letters.
+ */
+static void show_freetypes(unsigned int freetype_idxs)
 {
-	static const char types[MIGRATE_TYPES] = {
+	static const char migratetypes[MIGRATE_TYPES] = {
 		[MIGRATE_UNMOVABLE]	= 'U',
 		[MIGRATE_MOVABLE]	= 'M',
 		[MIGRATE_RECLAIMABLE]	= 'E',
@@ -146,13 +151,25 @@ static void show_migration_types(unsigned char type)
 		[MIGRATE_ISOLATE]	= 'I',
 #endif
 	};
-	char tmp[MIGRATE_TYPES + 1];
+	static const char flags[] = {
+		[FREETYPE_UNMAPPED]	= 'u',
+	};
+
+	char tmp[(MIGRATE_TYPES * (1 << (NUM_FREETYPE_FLAGS + 1))) + 1];
 	char *p = tmp;
 	int i;
 
-	for (i = 0; i < MIGRATE_TYPES; i++) {
-		if (type & (1 << i))
-			*p++ = types[i];
+	for (i = 0; i < NR_FREETYPE_IDXS; i++) {
+		freetype_t freetype = freetype_from_idx(i);
+
+		if (!(freetype_idxs & (1 << i)))
+			continue;
+
+		*p++ = migratetypes[freetype.migratetype];
+		for (int j = 0; j < NUM_FREETYPE_FLAGS; j++) {
+			if (freetype.flags & (1 << j))
+				*p++ = flags[1 << j];
+		}
 	}
 
 	*p = '\0';
@@ -373,7 +390,7 @@ static void show_free_areas(unsigned int filter, nodemask_t *nodemask, int max_z
 			total += nr[order] << order;
 
 			types[order] = 0;
-			for (type = 0; type < MIGRATE_TYPES; type++) {
+			for (type = 0; type < NR_FREETYPE_IDXS; type++) {
 				freetype_t ft = migrate_to_freetype(type, 0);
 
 				if (!free_area_empty(area, ft))
@@ -385,7 +402,7 @@ static void show_free_areas(unsigned int filter, nodemask_t *nodemask, int max_z
 			printk(KERN_CONT "%lu*%lukB ",
 			       nr[order], K(1UL) << order);
 			if (nr[order])
-				show_migration_types(types[order]);
+				show_freetypes(types[order]);
 		}
 		printk(KERN_CONT "= %lukB\n", K(total));
 	}
