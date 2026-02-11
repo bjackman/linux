@@ -3457,6 +3457,9 @@ __rmqueue_direct_map(struct zone *zone, unsigned int request_order,
 	int alloc_order;
 	int err;
 
+	if (freetype_idx(ft_other) < 0)
+		return NULL;
+
 	/*
 	 * Might need a TLB shootdown. Even if IRQs are on this isn't
 	 * safe if the caller holds a lock (in case the other CPUs need that
