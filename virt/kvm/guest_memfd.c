@@ -942,11 +942,6 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 	}
 
 	r = kvm_gmem_prepare_folio(kvm, slot, gfn, folio);
-	if (!is_prepared) {
-		r = kvm_gmem_prepare_folio(kvm, slot, gfn, folio);
-		if (r)
-			goto out_unlock;
-	}
 
 	if (kvm_gmem_no_direct_map(folio_inode(folio))) {
 		r = kvm_gmem_folio_zap_direct_map(folio);
