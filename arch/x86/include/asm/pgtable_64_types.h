@@ -5,8 +5,11 @@
 #include <asm/sparsemem.h>
 
 #ifndef __ASSEMBLER__
+#include <linux/build_bug.h>
 #include <linux/types.h>
 #include <asm/kaslr.h>
+#include <asm/page_types.h>
+#include <uapi/asm/ldt.h>
 
 /*
  * These are used to make use of C type-checking..
@@ -100,9 +103,19 @@ extern unsigned int ptrs_per_p4d;
 #define GUARD_HOLE_BASE_ADDR	(GUARD_HOLE_PGD_ENTRY << PGDIR_SHIFT)
 #define GUARD_HOLE_END_ADDR	(GUARD_HOLE_BASE_ADDR + GUARD_HOLE_SIZE)
 
-#define LDT_PGD_ENTRY		-240UL
-#define LDT_BASE_ADDR		(LDT_PGD_ENTRY << PGDIR_SHIFT)
-#define LDT_END_ADDR		(LDT_BASE_ADDR + PGDIR_SIZE)
+#define MM_LOCAL_PGD_ENTRY	-240UL
+#define MM_LOCAL_BASE_ADDR	(MM_LOCAL_PGD_ENTRY << PGDIR_SHIFT)
+#define MM_LOCAL_START_ADDR	((MM_LOCAL_PGD_ENTRY) << PGDIR_SHIFT)
+#define MM_LOCAL_END_ADDR	(MM_LOCAL_START_ADDR + (1UL << PGDIR_SHIFT))
+
+#define LDT_BASE_ADDR		MM_LOCAL_BASE_ADDR
+#define LDT_REMAP_SIZE		PMD_SIZE
+#define LDT_END_ADDR		(LDT_BASE_ADDR + LDT_REMAP_SIZE)
+
+#define MERMAP_BASE_ADDR	LDT_END_ADDR
+#define MERMAP_CPU_REGION_SIZE	PMD_SIZE
+#define MERMAP_SIZE		(MERMAP_CPU_REGION_SIZE * NR_CPUS)
+#define MERMAP_END_ADDR		(MERMAP_BASE_ADDR + (NR_CPUS * MERMAP_CPU_REGION_SIZE))
 
 #define __VMALLOC_BASE_L4	0xffffc90000000000UL
 #define __VMALLOC_BASE_L5 	0xffa0000000000000UL
