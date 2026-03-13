@@ -6,6 +6,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/mermap.h>
 #include <linux/fs.h>
 #include <linux/swap.h>
 #include <linux/mount.h>
@@ -47,6 +48,42 @@ bool secretmem_active(void)
 	return !!atomic_read(&secretmem_users);
 }
 
+/*
+ * If it's supported, allocate using __GFP_UNMAPPED. This lets the page
+ * allocator amortize TLB flushes and avoids direct map fragmentation.
+ */
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+static inline struct folio *secretmem_folio_alloc(gfp_t gfp, unsigned int order)
+{
+	int err;
+
+	/* Required for __GFP_UNMAPPED|__GFP_ZERO. */
+	err = mermap_mm_prepare(current->mm);
+	if (err)
+		return ERR_PTR(err);
+
+	return folio_alloc(gfp | __GFP_UNMAPPED, order);
+}
+#else
+static inline struct folio *secretmem_folio_alloc(gfp_t gfp, unsigned int order)
+{
+	struct folio *folio;
+	int err;
+
+	folio = folio_alloc(gfp, order);
+	if (!folio)
+		return NULL;
+
+	err = set_direct_map_invalid_noflush(folio_page(folio, 0));
+	if (err) {
+		folio_put(folio);
+		return ERR_PTR(err);
+	}
+
+	return folio;
+}
+#endif
+
 static vm_fault_t secretmem_fault(struct vm_fault *vmf)
 {
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
@@ -66,16 +103,9 @@ static vm_fault_t secretmem_fault(struct vm_fault *vmf)
 retry:
 	folio = filemap_lock_folio(mapping, offset);
 	if (IS_ERR(folio)) {
-		folio = folio_alloc(gfp | __GFP_ZERO, 0);
-		if (!folio) {
-			ret = VM_FAULT_OOM;
-			goto out;
-		}
-
-		err = set_direct_map_invalid_noflush(folio_page(folio, 0));
-		if (err) {
-			folio_put(folio);
-			ret = vmf_error(err);
+		folio = secretmem_folio_alloc(gfp | __GFP_ZERO, 0);
+		if (IS_ERR_OR_NULL(folio)) {
+			ret = folio ? vmf_error(PTR_ERR(folio)) : VM_FAULT_OOM;
 			goto out;
 		}
 
