@@ -6,6 +6,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/mermap.h>
 #include <linux/fs.h>
 #include <linux/swap.h>
 #include <linux/mount.h>
@@ -47,13 +48,79 @@ bool secretmem_active(void)
 	return !!atomic_read(&secretmem_users);
 }
 
+/*
+ * If it's supported, allocate using __GFP_UNMAPPED. This lets the page
+ * allocator amortize TLB flushes and avoids direct map fragmentation.
+ */
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+static inline struct folio *secretmem_folio_alloc(gfp_t gfp, unsigned int order)
+{
+	int err;
+
+	/* Required for __GFP_UNMAPPED|__GFP_ZERO. */
+	err = mermap_mm_prepare(current->mm);
+	if (err)
+		return ERR_PTR(err);
+
+	return folio_alloc(gfp | __GFP_UNMAPPED, order);
+}
+
+static inline void secretmem_vma_close(struct vm_area_struct *area)
+{
+	/*
+	 * Because the folio was allocated with __GFP_UNMAPPED|__GFP_ZERO, a TLB
+	 * shootdown is required for the mermap in order to prevent CPU attacks
+	 * from leaking the content. This is the simplest possible way to
+	 * achieve that, but obviously it's inefficient - it should really be
+	 * amortized against the normal flushing that happened during the VMA
+	 * teardown.
+	 */
+	flush_tlb_mm(area->vm_mm);
+}
+
+/* Used __GFP_UNMAPPED so no need to restore direct map or flush TLB. */
+static inline void secretmem_folio_restore(struct folio *folio) { }
+static inline void secretmem_folio_flush(struct folio *folio) { }
+
+#else
+static inline struct folio *secretmem_folio_alloc(gfp_t gfp, unsigned int order)
+{
+	struct folio *folio;
+	int err;
+
+	folio = folio_alloc(gfp, order);
+	if (!folio)
+		return NULL;
+
+	err = set_direct_map_invalid_noflush(folio_page(folio, 0));
+	if (err) {
+		folio_put(folio);
+		return ERR_PTR(err);
+	}
+
+	return folio;
+}
+
+static inline void secretmem_folio_restore(struct folio *folio)
+{
+	folio_zero_segment(folio, 0, folio_size(folio));
+	set_direct_map_default_noflush(folio_page(folio, 0));
+}
+
+static inline void secretmem_folio_flush(struct folio *folio)
+{
+	unsigned long addr = (unsigned long)folio_address(folio);
+
+	flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
+}
+#endif
+
 static vm_fault_t secretmem_fault(struct vm_fault *vmf)
 {
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	pgoff_t offset = vmf->pgoff;
 	gfp_t gfp = vmf->gfp_mask;
-	unsigned long addr;
 	struct folio *folio;
 	vm_fault_t ret;
 	int err;
@@ -66,16 +133,9 @@ static vm_fault_t secretmem_fault(struct vm_fault *vmf)
 retry:
 	folio = filemap_lock_folio(mapping, offset);
 	if (IS_ERR(folio)) {
-		folio = folio_alloc(gfp | __GFP_ZERO, 0);
-		if (!folio) {
-			ret = VM_FAULT_OOM;
-			goto out;
-		}
-
-		err = set_direct_map_invalid_noflush(folio_page(folio, 0));
-		if (err) {
-			folio_put(folio);
-			ret = vmf_error(err);
+		folio = secretmem_folio_alloc(gfp | __GFP_ZERO, 0);
+		if (IS_ERR_OR_NULL(folio)) {
+			ret = folio ? vmf_error(PTR_ERR(folio)) : VM_FAULT_OOM;
 			goto out;
 		}
 
@@ -87,7 +147,7 @@ retry:
 			 * already happened when we marked the page invalid
 			 * which guarantees that this call won't fail
 			 */
-			set_direct_map_default_noflush(folio_page(folio, 0));
+			secretmem_folio_restore(folio);
 			folio_put(folio);
 			if (err == -EEXIST)
 				goto retry;
@@ -96,8 +156,7 @@ retry:
 			goto out;
 		}
 
-		addr = (unsigned long)folio_address(folio);
-		flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
+		secretmem_folio_flush(folio);
 	}
 
 	vmf->page = folio_file_page(folio, vmf->pgoff);
@@ -110,6 +169,9 @@ out:
 
 static const struct vm_operations_struct secretmem_vm_ops = {
 	.fault = secretmem_fault,
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	.close = secretmem_vma_close,
+#endif
 };
 
 static int secretmem_release(struct inode *inode, struct file *file)
@@ -151,8 +213,7 @@ static int secretmem_migrate_folio(struct address_space *mapping,
 
 static void secretmem_free_folio(struct folio *folio)
 {
-	set_direct_map_default_noflush(folio_page(folio, 0));
-	folio_zero_segment(folio, 0, folio_size(folio));
+	secretmem_folio_restore(folio);
 }
 
 const struct address_space_operations secretmem_aops = {
