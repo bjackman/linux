@@ -1660,4 +1660,14 @@ static inline bool can_spin_trylock(void)
 	return true;
 }
 
+/*
+ * Create a mapping if it doesn't exist. (Otherwise, skip regions with no
+ * existing mapping, and return an error for regions with no leaf pagetable).
+ */
+#define PGRANGE_CREATE		(1 << 0)
+
+int __apply_to_page_range(struct mm_struct *mm, unsigned long addr,
+			  unsigned long size, pte_fn_t fn,
+			  void *data, unsigned int flags);
+
 #endif	/* __MM_INTERNAL_H */
