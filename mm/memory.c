@@ -3309,9 +3309,10 @@ EXPORT_SYMBOL(vm_iomap_memory);
 
 static int apply_to_pte_range(struct mm_struct *mm, pmd_t *pmd,
 				     unsigned long addr, unsigned long end,
-				     pte_fn_t fn, void *data, bool create,
+				     pte_fn_t fn, void *data, unsigned int flags,
 				     pgtbl_mod_mask *mask)
 {
+	bool create = flags & PGRANGE_CREATE;
 	pte_t *pte, *mapped_pte;
 	int err = 0;
 	spinlock_t *ptl;
@@ -3352,10 +3353,11 @@ static int apply_to_pte_range(struct mm_struct *mm, pmd_t *pmd,
 
 static int apply_to_pmd_range(struct mm_struct *mm, pud_t *pud,
 				     unsigned long addr, unsigned long end,
-				     pte_fn_t fn, void *data, bool create,
+				     pte_fn_t fn, void *data, unsigned int flags,
 				     pgtbl_mod_mask *mask)
 {
 	pmd_t *pmd;
+	bool create = flags & PGRANGE_CREATE;
 	unsigned long next;
 	int err = 0;
 
@@ -3380,7 +3382,7 @@ static int apply_to_pmd_range(struct mm_struct *mm, pud_t *pud,
 			pmd_clear_bad(pmd);
 		}
 		err = apply_to_pte_range(mm, pmd, addr, next,
-					 fn, data, create, mask);
+					 fn, data, flags, mask);
 		if (err)
 			break;
 	} while (pmd++, addr = next, addr != end);
@@ -3390,10 +3392,11 @@ static int apply_to_pmd_range(struct mm_struct *mm, pud_t *pud,
 
 static int apply_to_pud_range(struct mm_struct *mm, p4d_t *p4d,
 				     unsigned long addr, unsigned long end,
-				     pte_fn_t fn, void *data, bool create,
+				     pte_fn_t fn, void *data, unsigned int flags,
 				     pgtbl_mod_mask *mask)
 {
 	pud_t *pud;
+	bool create = flags & PGRANGE_CREATE;
 	unsigned long next;
 	int err = 0;
 
@@ -3426,10 +3429,11 @@ static int apply_to_pud_range(struct mm_struct *mm, p4d_t *p4d,
 
 static int apply_to_p4d_range(struct mm_struct *mm, pgd_t *pgd,
 				     unsigned long addr, unsigned long end,
-				     pte_fn_t fn, void *data, bool create,
+				     pte_fn_t fn, void *data, unsigned int flags,
 				     pgtbl_mod_mask *mask)
 {
 	p4d_t *p4d;
+	bool create = flags & PGRANGE_CREATE;
 	unsigned long next;
 	int err = 0;
 
@@ -3452,7 +3456,7 @@ static int apply_to_p4d_range(struct mm_struct *mm, pgd_t *pgd,
 			p4d_clear_bad(p4d);
 		}
 		err = apply_to_pud_range(mm, p4d, addr, next,
-					 fn, data, create, mask);
+					 fn, data, flags, mask);
 		if (err)
 			break;
 	} while (p4d++, addr = next, addr != end);
@@ -3460,11 +3464,12 @@ static int apply_to_p4d_range(struct mm_struct *mm, pgd_t *pgd,
 	return err;
 }
 
-static int __apply_to_page_range(struct mm_struct *mm, unsigned long addr,
-				 unsigned long size, pte_fn_t fn,
-				 void *data, bool create)
+int __apply_to_page_range(struct mm_struct *mm, unsigned long addr,
+			  unsigned long size, pte_fn_t fn,
+			  void *data, unsigned int flags)
 {
 	pgd_t *pgd;
+	bool create = flags & PGRANGE_CREATE;
 	unsigned long start = addr, next;
 	unsigned long end = addr + size;
 	pgtbl_mod_mask mask = 0;
@@ -3488,7 +3493,7 @@ static int __apply_to_page_range(struct mm_struct *mm, unsigned long addr,
 			pgd_clear_bad(pgd);
 		}
 		err = apply_to_p4d_range(mm, pgd, addr, next,
-					 fn, data, create, &mask);
+					 fn, data, flags, &mask);
 		if (err)
 			break;
 	} while (pgd++, addr = next, addr != end);
@@ -3506,7 +3511,7 @@ static int __apply_to_page_range(struct mm_struct *mm, unsigned long addr,
 int apply_to_page_range(struct mm_struct *mm, unsigned long addr,
 			unsigned long size, pte_fn_t fn, void *data)
 {
-	return __apply_to_page_range(mm, addr, size, fn, data, true);
+	return __apply_to_page_range(mm, addr, size, fn, data, PGRANGE_CREATE);
 }
 EXPORT_SYMBOL_GPL(apply_to_page_range);
 
@@ -3520,7 +3525,7 @@ EXPORT_SYMBOL_GPL(apply_to_page_range);
 int apply_to_existing_page_range(struct mm_struct *mm, unsigned long addr,
 				 unsigned long size, pte_fn_t fn, void *data)
 {
-	return __apply_to_page_range(mm, addr, size, fn, data, false);
+	return __apply_to_page_range(mm, addr, size, fn, data, 0);
 }
 
 /*
