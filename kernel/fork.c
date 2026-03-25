@@ -1149,6 +1149,7 @@ fail_cid:
 fail_nocontext:
 	mm_free_id(mm);
 fail_noid:
+	WARN_ON_ONCE(mm_local_region_used(mm));
 	mm_free_pgd(mm);
 fail_mm_init:
 	free_mm(mm);
