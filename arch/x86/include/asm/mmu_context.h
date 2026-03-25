@@ -61,7 +61,6 @@ static inline void init_new_context_ldt(struct mm_struct *mm)
 }
 int ldt_dup_context(struct mm_struct *oldmm, struct mm_struct *mm);
 void destroy_context_ldt(struct mm_struct *mm);
-void ldt_arch_exit_mmap(struct mm_struct *mm);
 #else	/* CONFIG_MODIFY_LDT_SYSCALL */
 static inline void init_new_context_ldt(struct mm_struct *mm) { }
 static inline int ldt_dup_context(struct mm_struct *oldmm,
@@ -70,7 +69,6 @@ static inline int ldt_dup_context(struct mm_struct *oldmm,
 	return 0;
 }
 static inline void destroy_context_ldt(struct mm_struct *mm) { }
-static inline void ldt_arch_exit_mmap(struct mm_struct *mm) { }
 #endif
 
 #ifdef CONFIG_MODIFY_LDT_SYSCALL
