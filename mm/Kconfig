@@ -1509,6 +1509,13 @@ config LAZY_MMU_MODE_KUNIT_TEST
 
 	  If unsure, say N.
 
+config ARCH_SUPPORTS_MM_LOCAL_REGION
+	bool
+
+config MM_LOCAL_REGION
+	bool
+	depends on ARCH_SUPPORTS_MM_LOCAL_REGION
+
 source "mm/damon/Kconfig"
 
 endmenu
