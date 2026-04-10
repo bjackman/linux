@@ -14,6 +14,7 @@
 #include <linux/compiler.h>
 #include <linux/dax.h>
 #include <linux/fs.h>
+#include <linux/set_memory.h>
 #include <linux/sched/signal.h>
 #include <linux/uaccess.h>
 #include <linux/capability.h>
@@ -239,6 +240,54 @@ static void filemap_free_folio(const struct address_space *mapping,
 	folio_put_refs(folio, folio_nr_pages(folio));
 }
 
+#ifdef CONFIG_ARCH_HAS_SET_DIRECT_MAP
+static inline int prep_add_unmapped_folio(struct address_space *mapping,
+					  struct folio *folio)
+{
+	if (!mapping_no_direct_map(mapping))
+		return 0;
+
+	return folio_zap_direct_map(folio);
+}
+
+static inline void prep_remove_unmapped_folio(struct address_space *mapping,
+					      struct folio *folio)
+{
+	if (!mapping_no_direct_map(mapping))
+		return;
+
+	folio_restore_direct_map(folio);
+}
+
+static inline void prep_remove_unmapped_batch(struct address_space *mapping,
+					      struct folio_batch *fbatch)
+{
+	if (!mapping_no_direct_map(mapping))
+		return;
+
+	for (int i = 0; i < folio_batch_count(fbatch); i++)
+		folio_restore_direct_map(fbatch->folios[i]);
+}
+#else
+static inline int prep_add_unmapped_folio(struct address_space *mapping, struct folio *folio)
+{
+	VM_WARN_ON(mapping_no_direct_map(mapping));
+	return 0;
+}
+
+static inline void prep_remove_unmapped_folio(struct address_space *mapping,
+					      struct folio *folio)
+{
+	VM_WARN_ON(mapping_no_direct_map(mapping));
+}
+
+static inline void prep_remove_unmapped_batch(struct address_space *mapping,
+					      struct folio_batch *fbatch)
+{
+	VM_WARN_ON(mapping_no_direct_map(mapping));
+}
+#endif
+
 /**
  * filemap_remove_folio - Remove folio from page cache.
  * @folio: The folio.
@@ -259,6 +308,8 @@ void filemap_remove_folio(struct folio *folio)
 	if (mapping_shrinkable(mapping))
 		inode_lru_list_add(mapping->host);
 	spin_unlock(&mapping->host->i_lock);
+
+	prep_remove_unmapped_folio(mapping, folio);
 
 	filemap_free_folio(mapping, folio);
 }
@@ -338,6 +389,8 @@ void delete_from_page_cache_batch(struct address_space *mapping,
 	if (mapping_shrinkable(mapping))
 		inode_lru_list_add(mapping->host);
 	spin_unlock(&mapping->host->i_lock);
+
+	prep_remove_unmapped_batch(mapping, fbatch);
 
 	for (i = 0; i < folio_batch_count(fbatch); i++)
 		filemap_free_folio(mapping, fbatch->folios[i]);
@@ -963,28 +1016,38 @@ int filemap_add_folio(struct address_space *mapping, struct folio *folio,
 		return ret;
 
 	__folio_set_locked(folio);
+
+	ret = prep_add_unmapped_folio(mapping, folio);
+	if (unlikely(ret))
+		goto err;
+
 	ret = __filemap_add_folio(mapping, folio, index, gfp, &shadow);
-	if (unlikely(ret)) {
-		mem_cgroup_uncharge(folio);
-		__folio_clear_locked(folio);
-	} else {
-		/*
-		 * The folio might have been evicted from cache only
-		 * recently, in which case it should be activated like
-		 * any other repeatedly accessed folio.
-		 * The exception is folios getting rewritten; evicting other
-		 * data from the working set, only to cache data that will
-		 * get overwritten with something else, is a waste of memory.
-		 */
-		WARN_ON_ONCE(folio_test_active(folio));
-		if (!(gfp & __GFP_WRITE) && shadow)
-			workingset_refault(folio, shadow);
-		folio_add_lru(folio);
-		if (kernel_file)
-			mod_node_page_state(folio_pgdat(folio),
-					    NR_KERNEL_FILE_PAGES,
-					    folio_nr_pages(folio));
-	}
+	if (unlikely(ret))
+		goto err_restore;
+
+	/*
+	 * The folio might have been evicted from cache only
+	 * recently, in which case it should be activated like
+	 * any other repeatedly accessed folio.
+	 * The exception is folios getting rewritten; evicting other
+	 * data from the working set, only to cache data that will
+	 * get overwritten with something else, is a waste of memory.
+	 */
+	WARN_ON_ONCE(folio_test_active(folio));
+	if (!(gfp & __GFP_WRITE) && shadow)
+		workingset_refault(folio, shadow);
+	folio_add_lru(folio);
+	if (kernel_file)
+		mod_node_page_state(folio_pgdat(folio),
+				    NR_KERNEL_FILE_PAGES,
+				    folio_nr_pages(folio));
+	return ret;
+
+err_restore:
+	prep_remove_unmapped_folio(mapping, folio);
+err:
+	mem_cgroup_uncharge(folio);
+	__folio_clear_locked(folio);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(filemap_add_folio);
