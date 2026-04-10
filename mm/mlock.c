@@ -475,7 +475,7 @@ static int mlock_fixup(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	int ret = 0;
 
 	if (vma_flags_same_pair(&old_vma_flags, &new_vma_flags) ||
-	    vma_is_secretmem(vma) || !vma_supports_mlock(vma)) {
+	    vma_has_no_direct_map(vma) || !vma_supports_mlock(vma)) {
 		/*
 		 * Don't set VM_LOCKED or VM_LOCKONFAULT and don't count.
 		 * For secretmem, don't allow the memory to be unlocked.

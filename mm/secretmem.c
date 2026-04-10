@@ -52,49 +52,20 @@ static vm_fault_t secretmem_fault(struct vm_fault *vmf)
 	struct address_space *mapping = vmf->vma->vm_file->f_mapping;
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	pgoff_t offset = vmf->pgoff;
-	gfp_t gfp = vmf->gfp_mask;
 	struct folio *folio;
 	vm_fault_t ret;
-	int err;
 
 	if (((loff_t)vmf->pgoff << PAGE_SHIFT) >= i_size_read(inode))
 		return vmf_error(-EINVAL);
 
 	filemap_invalidate_lock_shared(mapping);
 
-retry:
-	folio = filemap_lock_folio(mapping, offset);
+	folio = filemap_grab_folio(mapping, offset);
 	if (IS_ERR(folio)) {
-		folio = folio_alloc(gfp | __GFP_ZERO, 0);
-		if (!folio) {
-			ret = VM_FAULT_OOM;
-			goto out;
-		}
-
-		err = folio_zap_direct_map(folio);
-		if (err) {
-			folio_put(folio);
-			ret = vmf_error(err);
-			goto out;
-		}
-
-		__folio_mark_uptodate(folio);
-		err = filemap_add_folio(mapping, folio, offset, gfp);
-		if (unlikely(err)) {
-			/*
-			 * If a split of large page was required, it
-			 * already happened when we marked the page invalid
-			 * which guarantees that this call won't fail
-			 */
-			folio_restore_direct_map(folio);
-			folio_put(folio);
-			if (err == -EEXIST)
-				goto retry;
-
-			ret = vmf_error(err);
-			goto out;
-		}
+		ret = vmf_error(PTR_ERR(folio));
+		goto out;
 	}
+	folio_mark_uptodate(folio);
 
 	vmf->page = folio_file_page(folio, vmf->pgoff);
 	ret = VM_FAULT_LOCKED;
@@ -129,11 +100,6 @@ static int secretmem_mmap_prepare(struct vm_area_desc *desc)
 	return 0;
 }
 
-bool vma_is_secretmem(struct vm_area_struct *vma)
-{
-	return vma->vm_ops == &secretmem_vm_ops;
-}
-
 static const struct file_operations secretmem_fops = {
 	.release	= secretmem_release,
 	.mmap_prepare	= secretmem_mmap_prepare,
@@ -147,11 +113,10 @@ static int secretmem_migrate_folio(struct address_space *mapping,
 
 static void secretmem_free_folio(struct folio *folio)
 {
-	set_direct_map_default_noflush(folio_page(folio, 0));
 	folio_zero_segment(folio, 0, folio_size(folio));
 }
 
-const struct address_space_operations secretmem_aops = {
+static const struct address_space_operations secretmem_aops = {
 	.dirty_folio	= noop_dirty_folio,
 	.free_folio	= secretmem_free_folio,
 	.migrate_folio	= secretmem_migrate_folio,
@@ -200,6 +165,7 @@ static struct file *secretmem_file_create(unsigned long flags)
 
 	mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
 	mapping_set_unevictable(inode->i_mapping);
+	mapping_set_no_direct_map(inode->i_mapping);
 
 	inode->i_op = &secretmem_iops;
 	inode->i_mapping->a_ops = &secretmem_aops;
