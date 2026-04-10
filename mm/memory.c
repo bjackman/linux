@@ -78,6 +78,7 @@
 #include <linux/sched/sysctl.h>
 #include <linux/pgalloc.h>
 #include <linux/uaccess.h>
+#include <linux/set_memory.h>
 
 #include <trace/events/kmem.h>
 
@@ -7758,3 +7759,48 @@ void vma_pgtable_walk_end(struct vm_area_struct *vma)
 	if (is_vm_hugetlb_page(vma))
 		hugetlb_vma_unlock_read(vma);
 }
+
+#ifdef CONFIG_ARCH_HAS_SET_DIRECT_MAP
+/**
+ * folio_zap_direct_map - remove a folio from the kernel direct map
+ * @folio: folio to remove from the direct map
+ *
+ * Removes the folio from the kernel direct map and flushes the TLB.  This may
+ * require splitting huge pages in the direct map, which can fail due to memory
+ * allocation.  So far, only order-0 folios are supported; this guarantees
+ * the unmap is either a complete success or a total failure.
+ *
+ * Return: 0 on success, or a negative error code on failure.
+ */
+int folio_zap_direct_map(struct folio *folio)
+{
+	struct page *page = folio_page(folio, 0);
+	unsigned long addr = (unsigned long)page_address(page);
+	int ret;
+
+	if (folio_test_large(folio) || folio_test_highmem(folio))
+		return -EINVAL;
+
+	ret = set_direct_map_valid_noflush(page, 1, false);
+	flush_tlb_kernel_range(addr, addr + folio_size(folio));
+
+	return ret;
+}
+EXPORT_SYMBOL_FOR_MODULES(folio_zap_direct_map, "kvm");
+
+/**
+ * folio_restore_direct_map - restore the kernel direct map entry for a folio
+ * @folio: folio whose direct map entry is to be restored
+ *
+ * This may only be called after a prior successful folio_zap_direct_map() on
+ * the same folio.  Because the zap will have already split any huge pages in
+ * the direct map, restoration here only updates protection bits and cannot
+ * fail.
+ */
+void folio_restore_direct_map(struct folio *folio)
+{
+	WARN_ON_ONCE(set_direct_map_valid_noflush(folio_page(folio, 0),
+						  folio_nr_pages(folio), true));
+}
+EXPORT_SYMBOL_FOR_MODULES(folio_restore_direct_map, "kvm");
+#endif /* CONFIG_ARCH_HAS_SET_DIRECT_MAP */
