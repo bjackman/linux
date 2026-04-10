@@ -53,6 +53,8 @@ static inline bool kernel_page_present(struct page *page)
 {
 	return true;
 }
+
+#define can_set_direct_map() false
 #else /* CONFIG_ARCH_HAS_SET_DIRECT_MAP */
 /*
  * Some architectures, e.g. ARM64 can disable direct map modifications at
