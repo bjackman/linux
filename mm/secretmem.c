@@ -146,7 +146,7 @@ retry:
 			 * already happened when we marked the page invalid
 			 * which guarantees that this call won't fail
 			 */
-			set_direct_map_default_noflush(folio_page(folio, 0));
+			secretmem_folio_restore(folio);
 			folio_put(folio);
 			if (err == -EEXIST)
 				goto retry;
@@ -212,7 +212,7 @@ static int secretmem_migrate_folio(struct address_space *mapping,
 
 static void secretmem_free_folio(struct folio *folio)
 {
-	set_direct_map_default_noflush(folio_page(folio, 0));
+	secretmem_folio_restore(folio);
 	folio_zero_segment(folio, 0, folio_size(folio));
 }
 
