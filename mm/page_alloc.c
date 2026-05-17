@@ -1952,6 +1952,9 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 	struct free_area *area;
 	struct page *page;
 
+	if (freetype_idx(freetype) < 0)
+		return NULL;
+
 	/* Find a page of the appropriate size in the preferred list */
 	for (current_order = order; current_order < NR_PAGE_ORDERS; ++current_order) {
 		enum migratetype migratetype = free_to_migratetype(freetype);
@@ -2336,6 +2339,9 @@ find_suitable_fallback(struct free_area *area, unsigned int order,
 		 * the same freetype flags.
 		 */
 		freetype_t fallback_ft = freetype_with_migrate(freetype, fallback_mt);
+
+		if (freetype_idx(fallback_ft) < 0)
+			continue;
 
 		if (!free_area_empty(area, fallback_ft)) {
 			if (ft_out)
@@ -3573,12 +3579,17 @@ static void reserve_highatomic_pageblock(struct page *page, int order,
 static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 						bool force)
 {
+	freetype_t ft_high = freetype_with_migrate(ac->freetype,
+					MIGRATE_HIGHATOMIC);
 	struct zonelist *zonelist = ac->zonelist;
 	struct zoneref *z;
 	struct zone *zone;
 	struct page *page;
 	int order;
 	int ret;
+
+	if (freetype_idx(ft_high) < 0)
+		return false;
 
 	for_each_zone_zonelist_nodemask(zone, z, zonelist, ac->highest_zoneidx,
 								ac->nodemask) {
@@ -3593,8 +3604,6 @@ static bool unreserve_highatomic_pageblock(const struct alloc_context *ac,
 		guard(spinlock_irqsave)(&zone->lock);
 		for (order = 0; order < NR_PAGE_ORDERS; order++) {
 			struct free_area *area = &(zone->free_area[order]);
-			freetype_t ft_high = freetype_with_migrate(ac->freetype,
-							MIGRATE_HIGHATOMIC);
 			unsigned long size;
 
 			page = get_page_from_free_area(area, ft_high);
