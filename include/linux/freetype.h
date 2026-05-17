@@ -73,7 +73,8 @@ typedef struct {
 } freetype_t;
 
 /*
- * Return a dense linear index for freetypes.
+ * Return a dense linear index for freetypes that have lists in the free area.
+ * Return -1 for other freetypes.
  */
 static inline int freetype_idx(freetype_t freetype)
 {
