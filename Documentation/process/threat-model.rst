@@ -152,7 +152,8 @@ regular bug:
     configuration etc).
 
   * anything performed by the root user in the initial namespace (e.g. kernel
-    oops when writing to a privileged device).
+    oops when writing to a privileged device, any vulnerability that requires
+    loading a malicious kernel module).
 
 * **Out of production use**:
 
