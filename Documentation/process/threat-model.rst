@@ -158,9 +158,9 @@ regular bug:
 * **Out of production use**:
 
   This covers theoretical/probabilistic attacks that rely on laboratory
-  conditions with zero system noise, or those requiring an unrealistic number
-  of attempts (e.g., billions of trials) that would be detected by standard
-  system monitoring long before success, such as:
+  conditions with zero system noise, or those incurring an unrealistic cost on
+  the attacker (e.g. requiring vast computational resources to compromise a
+  single machine). Examples include:
 
   * prediction of random numbers that only works in a totally silent
     environment (such as IP ID, TCP ports or sequence numbers that can only be
@@ -170,9 +170,9 @@ regular bug:
     approaches that are prone to measurement noise and not realistically
     reproducible on a production system.
 
-  * issues that can only be triggered by heavy attacks (e.g. brute force) whose
-    impact on the system makes it unlikely or impossible to remain undetected
-    before they succeed (e.g. consuming all memory before succeeding).
+  * issues that can only be triggered by consuming resources that the attacker
+    cannot reasonably acquire (e.g. attacks that consume all memory, in a
+    context where the attacker would be prevented by cgroups from doing so).
 
   * problems seen only under development simulators, emulators, or combinations
     that do not exist on real systems at the time of reporting (issues
