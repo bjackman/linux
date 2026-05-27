@@ -182,12 +182,6 @@ regular bug:
   * issues whose reproduction requires hardware modification or emulation,
     including fake USB devices that pretend to be another one.
 
-  * as well as issues that can be triggered at a cost that is orders of
-    magnitude higher than the expected benefits (e.g. fully functional keyboard
-    emulator only to retrieve 7 uninitialized bytes in a structure, or
-    brute-force method involving millions of connection attempts to guess a
-    port number).
-
 * **Hardening failures**:
 
   * ability to bypass some of the kernel's hardening measures with no
