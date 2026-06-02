@@ -2531,12 +2531,25 @@ bool compaction_zonelist_suitable(struct alloc_context *ac, int order,
 static enum compact_result
 compaction_suit_allocation_order(struct zone *zone, unsigned int order,
 				 int highest_zoneidx, unsigned int alloc_flags,
-				 bool async, bool kcompactd)
+				 bool unmapped, bool async, bool kcompactd)
 {
 	unsigned long free_pages;
 	unsigned long watermark;
 
-	if (kcompactd && defrag_mode)
+	/*
+	 * When trying to generate an unmapped block, check the counter for
+	 * direct-mapped blocks specifically, since we'll need to unmap the
+	 * whole block to service the allocation.
+	 *
+	 * Why doesn't this apply to the other way around too? (Mightn't we need
+	 * to _map_ a whole block, to service a !ALLOC_UNMAPPED allocation?) No,
+	 * because of a likely-temporary simplification: currently, unmapped
+	 * blocks never contain movable pages, so compaction isn't going to free
+	 * up one of those.
+	 */
+	if (unmapped)
+		free_pages = zone_page_state(zone, NR_FREE_PAGES_BLOCKS_MAPPED);
+	else if (kcompactd && defrag_mode)
 		free_pages = zone_free_pages_blocks(zone);
 	else
 		free_pages = zone_page_state(zone, NR_FREE_PAGES);
@@ -2599,6 +2612,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 		ret = compaction_suit_allocation_order(cc->zone, cc->order,
 						       cc->highest_zoneidx,
 						       cc->alloc_flags,
+						       freetype_unmapped(cc->freetype),
 						       cc->mode == MIGRATE_ASYNC,
 						       !cc->direct_compaction);
 		if (ret != COMPACT_CONTINUE)
@@ -3084,7 +3098,7 @@ static bool kcompactd_node_suitable(pg_data_t *pgdat)
 		ret = compaction_suit_allocation_order(zone,
 				pgdat->kcompactd_max_order,
 				highest_zoneidx, alloc_flags,
-				false, true);
+				false, false, true);
 		if (ret == COMPACT_CONTINUE)
 			return true;
 	}
@@ -3127,7 +3141,7 @@ static void kcompactd_do_work(pg_data_t *pgdat)
 
 		ret = compaction_suit_allocation_order(zone,
 				cc.order, zoneid, cc.alloc_flags,
-				false, true);
+				false, false, true);
 		if (ret != COMPACT_CONTINUE)
 			continue;
 
