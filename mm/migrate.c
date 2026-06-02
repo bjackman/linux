@@ -2120,6 +2120,8 @@ again:
 		if (nr_pages >= NR_MAX_BATCHED_MIGRATION)
 			break;
 	}
+	// TODO: This should have a WARN_ON to check we aren't migrating to the
+	// wrong type of block.
 	if (nr_pages >= NR_MAX_BATCHED_MIGRATION)
 		list_cut_before(&folios, from, &folio2->lru);
 	else
