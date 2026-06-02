@@ -824,6 +824,9 @@ compaction_capture(struct capture_control *capc, struct page *page,
 	    capc_mt != MIGRATE_MOVABLE)
 		return false;
 
+	if (freetype_flags(freetype) != freetype_flags(capc->freetype))
+		return false;
+
 	if (migratetype != capc_mt)
 		trace_mm_page_alloc_extfrag(page, capc->order, order,
 					    capc_mt, migratetype);
@@ -4464,6 +4467,12 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	 */
 	if ((alloc_flags & ALLOC_NOFRAGMENT) &&
 	    free_to_migratetype(ac->freetype) != MIGRATE_MOVABLE)
+		compact_order = max(order, pageblock_order);
+	/*
+	 * Unmapped allocations benefit from compaction even at order 0, because the
+	 * allocator will actually grab a whole block.
+	 */
+	if (freetype_flags(ac->freetype) & FREETYPE_UNMAPPED)
 		compact_order = max(order, pageblock_order);
 
 	if (!compact_order)
