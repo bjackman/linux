@@ -4459,6 +4459,10 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	unsigned long pflags;
 	unsigned int noreclaim_flag;
 
+	// TODO: This needs to support attempting to allocate a full block in
+	// order to server an order alloc. Johannes Weiner is working on this
+	// for defrag_mode reasons (note kswapd/kcompactd already have a
+	// reclaim_order bump to try to address this).
 	if (!order)
 		return NULL;
 
@@ -5046,6 +5050,7 @@ restart:
 	 * try prevent permanent fragmentation by migrating from blocks of the
 	 * same migratetype.
 	 */
+	// TODO: should do this if we want to compact for __rmqueue_direct_map() too
 	if (can_compact && (costly_order || (order > 0 && migratetype != MIGRATE_MOVABLE))) {
 		compact_first = true;
 		compact_priority = INIT_COMPACT_PRIORITY;

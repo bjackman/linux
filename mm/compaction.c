@@ -1780,6 +1780,7 @@ static void isolate_freepages(struct compact_control *cc)
 		if (!isolation_suitable(cc, page))
 			continue;
 
+		// TODO: May need to map/unmap here?
 		/* Found a block suitable for isolating free pages from. */
 		nr_isolated = isolate_freepages_block(cc, &isolate_start_pfn,
 					block_end_pfn, cc->freepages, stride, false);
@@ -2108,6 +2109,8 @@ static isolate_migrate_t isolate_migratepages(struct compact_control *cc)
 
 	/* Only scan within a pageblock boundary */
 	block_end_pfn = pageblock_end_pfn(low_pfn);
+
+	// TODO: This needs to skip pageblocks with the wrong flags
 
 	/*
 	 * Iterate over whole pageblocks until we find the first suitable.
@@ -2513,12 +2516,14 @@ compaction_suit_allocation_order(struct zone *zone, unsigned int order,
 	unsigned long free_pages;
 	unsigned long watermark;
 
+	// TODO: This needs to be aware of mapped/unmapped
 	if (kcompactd && defrag_mode)
 		free_pages = zone_page_state(zone, NR_FREE_PAGES_BLOCKS);
 	else
 		free_pages = zone_page_state(zone, NR_FREE_PAGES);
 
 	watermark = wmark_pages(zone, alloc_flags & ALLOC_WMARK_MASK);
+	// TODO: Ditto for all watermarky stuff.
 	if (__zone_watermark_ok(zone, order, watermark, highest_zoneidx,
 				alloc_flags, free_pages))
 		return COMPACT_SUCCESS;
