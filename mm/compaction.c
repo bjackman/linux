@@ -2510,19 +2510,39 @@ bool compaction_zonelist_suitable(struct alloc_context *ac, int order,
 static enum compact_result
 compaction_suit_allocation_order(struct zone *zone, unsigned int order,
 				 int highest_zoneidx, unsigned int alloc_flags,
-				 bool async, bool kcompactd)
+				 bool unmapped, bool async, bool kcompactd)
 {
 	unsigned long free_pages;
 	unsigned long watermark;
 
-	// TODO: This needs to be aware of mapped/unmapped
-	if (kcompactd && defrag_mode)
+	/*
+	 * Might need to generate a whole free block regardless of the actual
+	 * allocation order:
+	 *
+	 * - When allocating an unmapped page, because the allocator only unmaps
+	 *   whole blocks at a time.
+	 *
+	 *   Why doesn't this apply to the other way around too? (Mightn't we
+	 *   need to _map_ a whole block?) This is a temporary simplification:
+	 *   currently, unmapped blocks don't contain movable pages, so
+	 *   compaction isn't going to free up one of those.
+	 *
+	 * - In defrag_mode, because the allocator is unwilling to "steal" pages
+	 *   from the "wrong" block.
+	 *
+	 *   Why is this only under kcompactd?
+	 *
+	 * Temporary simplification: unmapped pageblocks are currently
+	 * nonmovable. So if the compactor is trying to service a
+	 */
+	if (unmapped)
+		free_pages = zone_page_state(zone, NR_FREE_PAGES_BLOCKS_MAPPED);
+	else if (kcompactd && defrag_mode)
 		free_pages = zone_free_pages_blocks(zone);
 	else
 		free_pages = zone_page_state(zone, NR_FREE_PAGES);
 
 	watermark = wmark_pages(zone, alloc_flags & ALLOC_WMARK_MASK);
-	// TODO: Ditto for all watermarky stuff.
 	if (__zone_watermark_ok(zone, order, watermark, highest_zoneidx,
 				alloc_flags, free_pages))
 		return COMPACT_SUCCESS;
@@ -2577,9 +2597,12 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 	cc->freetype = gfp_freetype(cc->gfp_mask);
 
 	if (!is_via_compact_memory(cc->order)) {
+		bool unmapped = freetype_flags(cc->freetype) & FREETYPE_UNMAPPED;
+
 		ret = compaction_suit_allocation_order(cc->zone, cc->order,
 						       cc->highest_zoneidx,
 						       cc->alloc_flags,
+						       unmapped,
 						       cc->mode == MIGRATE_ASYNC,
 						       !cc->direct_compaction);
 		if (ret != COMPACT_CONTINUE)
@@ -3087,7 +3110,7 @@ static bool kcompactd_node_suitable(pg_data_t *pgdat)
 		ret = compaction_suit_allocation_order(zone,
 				pgdat->kcompactd_max_order,
 				highest_zoneidx, alloc_flags,
-				false, true);
+				false, false, true);
 		if (ret == COMPACT_CONTINUE)
 			return true;
 	}
@@ -3130,7 +3153,7 @@ static void kcompactd_do_work(pg_data_t *pgdat)
 
 		ret = compaction_suit_allocation_order(zone,
 				cc.order, zoneid, cc.alloc_flags,
-				false, true);
+				false, false, true);
 		if (ret != COMPACT_CONTINUE)
 			continue;
 
