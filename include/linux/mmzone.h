@@ -181,7 +181,10 @@ enum numa_stat_item {
 
 enum zone_stat_item {
 	NR_FREE_PAGES,
-	NR_FREE_PAGES_BLOCKS,
+	/* Number of free pages in entirely free pageblocks, with direct map */
+	NR_FREE_PAGES_BLOCKS_MAPPED,
+	/* Ditto, without direct map */
+	NR_FREE_PAGES_BLOCKS_UNMAPPED,
 	NR_ZONE_LRU_BASE, /* Used only for compaction and reclaim retry */
 	NR_ZONE_INACTIVE_ANON = NR_ZONE_LRU_BASE,
 	NR_ZONE_ACTIVE_ANON,
