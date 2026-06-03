@@ -213,6 +213,16 @@ static inline unsigned long zone_page_state(struct zone *zone,
 }
 
 /*
+ * Approx number of pages in entirely free pageblocks. Due to races this could
+ * actually return a value more than the number of pages in the zone.
+ */
+static inline unsigned long zone_free_pages_blocks(struct zone *zone)
+{
+	return  zone_page_state(zone, NR_FREE_PAGES_BLOCKS_MAPPED) +
+		zone_page_state(zone, NR_FREE_PAGES_BLOCKS_UNMAPPED);
+}
+
+/*
  * More accurate version that also considers the currently pending
  * deltas. For that we need to loop over all cpus to find the current
  * deltas. There is no synchronization so the result cannot be
