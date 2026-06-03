@@ -824,6 +824,9 @@ compaction_capture(struct capture_control *capc, struct page *page,
 	    capc_mt != MIGRATE_MOVABLE)
 		return false;
 
+	if (freetype_flags(freetype) != freetype_flags(capc->cc->freetype))
+		return false;
+
 	if (migratetype != capc_mt)
 		trace_mm_page_alloc_extfrag(page, capc->cc->order, order,
 					    capc_mt, migratetype);
@@ -4509,20 +4512,27 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	struct page *page = NULL;
 	unsigned long pflags;
 	unsigned int noreclaim_flag;
+	unsigned int compact_order = order;
 
-	// TODO: This needs to support attempting to allocate a full block in
-	// order to server an order alloc. Johannes Weiner is working on this
-	// for defrag_mode reasons (note kswapd/kcompactd already have a
-	// reclaim_order bump to try to address this).
-	if (!order)
+	// TODO: Is it OK to always run compaction like this?
+	/*
+	 * Unmapped allocations benefit from compaction even at order 0, because the
+	 * allocator will actually grab a whole block.
+	 */
+	if (freetype_flags(ac->freetype) & FREETYPE_UNMAPPED)
+		compact_order = pageblock_order;
+
+	if (!compact_order)
 		return NULL;
 
 	psi_memstall_enter(&pflags);
 	delayacct_compact_start();
 	noreclaim_flag = memalloc_noreclaim_save();
 
-	*compact_result = try_to_compact_pages(gfp_mask, order, alloc_flags, ac,
-								prio, &page);
+	// TODO: deal with captured page, if we changed the order it will have the
+	// wrong order. Also check it respects the freetype flags.
+	*compact_result = try_to_compact_pages(gfp_mask, compact_order,
+					       alloc_flags, ac, prio, &page);
 
 	memalloc_noreclaim_restore(noreclaim_flag);
 	psi_memstall_leave(&pflags);
@@ -4531,11 +4541,15 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	if (*compact_result == COMPACT_SKIPPED ||
 	    *compact_result == COMPACT_DEFERRED)
 		return NULL;
+
 	/*
 	 * At least in one zone compaction wasn't deferred or skipped, so let's
 	 * count a compaction stall
 	 */
 	count_vm_event(COMPACTSTALL);
+
+	if (freetype_flags(ac->freetype) & FREETYPE_UNMAPPED)
+		printk("compact_result %d page=%px\n", *compact_result, page);
 
 	/* Prep a captured page if available */
 	if (page)
