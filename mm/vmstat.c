@@ -1189,7 +1189,8 @@ const char * const vmstat_text[] = {
 	/* enum zone_stat_item counters */
 #define I(x) (x)
 	[I(NR_FREE_PAGES)]			= "nr_free_pages",
-	[I(NR_FREE_PAGES_BLOCKS)]		= "nr_free_pages_blocks",
+	[I(NR_FREE_PAGES_BLOCKS_MAPPED)]	= "nr_free_pages_blocks_mapped",
+	[I(NR_FREE_PAGES_BLOCKS_UNMAPPED)]	= "nr_free_pages_blocks_unmapped",
 	[I(NR_ZONE_INACTIVE_ANON)]		= "nr_zone_inactive_anon",
 	[I(NR_ZONE_ACTIVE_ANON)]		= "nr_zone_active_anon",
 	[I(NR_ZONE_INACTIVE_FILE)]		= "nr_zone_inactive_file",
