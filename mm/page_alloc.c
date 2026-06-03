@@ -866,6 +866,13 @@ static inline void account_freepages(struct zone *zone, int nr_pages,
 			   zone->nr_free_highatomic + nr_pages);
 }
 
+static inline enum zone_stat_item free_pages_blocks_stat(freetype_t ft)
+{
+	if (freetype_flags(ft) & FREETYPE_UNMAPPED)
+		return NR_FREE_PAGES_BLOCKS_UNMAPPED;
+	return NR_FREE_PAGES_BLOCKS_MAPPED;
+}
+
 /* Used for pages not on another list */
 static inline void __add_to_free_list(struct page *page, struct zone *zone,
 				      unsigned int order, freetype_t freetype,
@@ -890,7 +897,7 @@ static inline void __add_to_free_list(struct page *page, struct zone *zone,
 	area->nr_free++;
 
 	if (order >= pageblock_order && !is_migrate_isolate(free_to_migratetype(freetype)))
-		__mod_zone_page_state(zone, NR_FREE_PAGES_BLOCKS, nr_pages);
+		__mod_zone_page_state(zone, free_pages_blocks_stat(freetype), nr_pages);
 }
 
 /*
@@ -926,7 +933,7 @@ static inline void move_to_free_list(struct page *page, struct zone *zone,
 	    is_migrate_isolate(old_mt) != is_migrate_isolate(new_mt)) {
 		if (!is_migrate_isolate(old_mt))
 			nr_pages = -nr_pages;
-		__mod_zone_page_state(zone, NR_FREE_PAGES_BLOCKS, nr_pages);
+		__mod_zone_page_state(zone, free_pages_blocks_stat(new_ft), nr_pages);
 	}
 }
 
@@ -954,7 +961,7 @@ static inline void __del_page_from_free_list(struct page *page, struct zone *zon
 	zone->free_area[order].nr_free--;
 
 	if (order >= pageblock_order && !is_migrate_isolate(free_to_migratetype(freetype)))
-		__mod_zone_page_state(zone, NR_FREE_PAGES_BLOCKS, -nr_pages);
+		__mod_zone_page_state(zone, free_pages_blocks_stat(freetype), -nr_pages);
 }
 
 static inline void del_page_from_free_list(struct page *page, struct zone *zone,
