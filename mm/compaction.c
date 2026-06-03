@@ -2336,8 +2336,7 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		if (__zone_watermark_ok(cc->zone, cc->order,
 					high_wmark_pages(cc->zone),
 					cc->highest_zoneidx, cc->alloc_flags,
-					zone_page_state(cc->zone,
-							NR_FREE_PAGES_BLOCKS)))
+					zone_free_pages_blocks(cc->zone)))
 			return COMPACT_SUCCESS;
 
 		return COMPACT_CONTINUE;
@@ -2518,7 +2517,7 @@ compaction_suit_allocation_order(struct zone *zone, unsigned int order,
 
 	// TODO: This needs to be aware of mapped/unmapped
 	if (kcompactd && defrag_mode)
-		free_pages = zone_page_state(zone, NR_FREE_PAGES_BLOCKS);
+		free_pages = zone_free_pages_blocks(zone);
 	else
 		free_pages = zone_page_state(zone, NR_FREE_PAGES);
 

@@ -6891,6 +6891,28 @@ static bool pgdat_watermark_boosted(pg_data_t *pgdat, int highest_zoneidx)
 }
 
 /*
+ * Helper to get *FREE_PAGES* zone stats with accuracy heuristics.
+ *
+ * When there is a high number of CPUs in the system, the cumulative error from
+ * the vmstat per-cpu cache can blur the line between the watermarks. In that
+ * case, be safe and get an accurate snapshot.
+ *
+ * TODO: NR_FREE_PAGES_BLOCKS moves in steps of pageblock_nr_pages, while the
+ * vmstat pcp threshold is limited to 125. On many configurations that counter
+ * won't actually be per-cpu cached. But keep things simple for now; revisit
+ * when somebody cares.
+ */
+static inline unsigned long get_free_pages_stat(struct zone *zone,
+						enum zone_stat_item item)
+{
+	unsigned long free_pages = zone_page_state(zone, item);
+
+	if (zone->percpu_drift_mark && free_pages < zone->percpu_drift_mark)
+		return zone_page_state_snapshot(zone, item);
+	return free_pages;
+}
+
+/*
  * Returns true if there is an eligible zone balanced for the request order
  * and highest_zoneidx
  */
@@ -6905,7 +6927,6 @@ static bool pgdat_balanced(pg_data_t *pgdat, int order, int highest_zoneidx)
 	 * meet watermarks.
 	 */
 	for_each_managed_zone_pgdat(zone, pgdat, i, highest_zoneidx) {
-		enum zone_stat_item item;
 		unsigned long free_pages;
 
 		if (sysctl_numa_balancing_mode & NUMA_BALANCING_MEMORY_TIERING)
@@ -6923,26 +6944,12 @@ static bool pgdat_balanced(pg_data_t *pgdat, int order, int highest_zoneidx)
 		 * has dropped order, simply ensure there are enough
 		 * base pages for compaction, wake kcompactd & sleep.
 		 */
-		if (defrag_mode && order)
-			item = NR_FREE_PAGES_BLOCKS;
-		else
-			item = NR_FREE_PAGES;
-
-		/*
-		 * When there is a high number of CPUs in the system,
-		 * the cumulative error from the vmstat per-cpu cache
-		 * can blur the line between the watermarks. In that
-		 * case, be safe and get an accurate snapshot.
-		 *
-		 * TODO: NR_FREE_PAGES_BLOCKS moves in steps of
-		 * pageblock_nr_pages, while the vmstat pcp threshold
-		 * is limited to 125. On many configurations that
-		 * counter won't actually be per-cpu cached. But keep
-		 * things simple for now; revisit when somebody cares.
-		 */
-		free_pages = zone_page_state(zone, item);
-		if (zone->percpu_drift_mark && free_pages < zone->percpu_drift_mark)
-			free_pages = zone_page_state_snapshot(zone, item);
+		if (defrag_mode && order) {
+			free_pages = get_free_pages_stat(zone, NR_FREE_PAGES_BLOCKS_UNMAPPED) +
+				get_free_pages_stat(zone, NR_FREE_PAGES_BLOCKS_MAPPED);
+		} else {
+			free_pages = get_free_pages_stat(zone, NR_FREE_PAGES);
+		}
 
 		if (__zone_watermark_ok(zone, order, mark, highest_zoneidx,
 					0, free_pages))
