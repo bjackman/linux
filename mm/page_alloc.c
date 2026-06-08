@@ -7775,6 +7775,8 @@ unsigned long __offline_isolated_pages(unsigned long start_pfn,
 	zone = page_zone(pfn_to_page(pfn));
 	zone_lock_irqsave(zone, flags);
 	while (pfn < end_pfn) {
+		freetype_t ft_iso = migrate_to_freetype(MIGRATE_ISOLATE, 0);
+
 		page = pfn_to_page(pfn);
 		/*
 		 * The HWPoisoned page may be not in buddy system, and
@@ -7798,9 +7800,9 @@ unsigned long __offline_isolated_pages(unsigned long start_pfn,
 
 		BUG_ON(page_count(page));
 		BUG_ON(!PageBuddy(page));
-		VM_WARN_ON(get_pageblock_migratetype(page) != MIGRATE_ISOLATE);
+		VM_WARN_ON(!freetypes_equal(get_pageblock_freetype(page), ft_iso));
 		order = buddy_order(page);
-		del_page_from_free_list(page, zone, order, MIGRATE_ISOLATE);
+		del_page_from_free_list(page, zone, order, ft_iso);
 		pfn += (1 << order);
 	}
 	zone_unlock_irqrestore(zone, flags);
