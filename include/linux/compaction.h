@@ -90,7 +90,7 @@ static inline int current_is_kcompactd(void)
 extern unsigned int extfrag_for_order(struct zone *zone, unsigned int order);
 extern int fragmentation_index(struct zone *zone, unsigned int order);
 extern enum compact_result try_to_compact_pages(gfp_t gfp_mask,
-		unsigned int order, unsigned int alloc_flags,
+		unsigned int order, const struct alloc_flags *alloc_flags,
 		const struct alloc_context *ac, enum compact_priority prio,
 		struct page **page);
 extern void reset_isolation_suitable(pg_data_t *pgdat);
@@ -101,7 +101,7 @@ extern void compaction_defer_reset(struct zone *zone, int order,
 				bool alloc_success);
 
 bool compaction_zonelist_suitable(struct alloc_context *ac, int order,
-					int alloc_flags, gfp_t gfp_mask);
+					const struct alloc_flags *alloc_flags, gfp_t gfp_mask);
 
 extern void __meminit kcompactd_run(int nid);
 extern void __meminit kcompactd_stop(int nid);

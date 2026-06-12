@@ -2645,10 +2645,11 @@ static bool migrate_balanced_pgdat(struct pglist_data *pgdat,
 			continue;
 
 		/* Avoid waking kswapd by allocating pages_to_migrate pages. */
+		struct alloc_flags alloc_flags = { .cma = true };
 		if (!zone_watermark_ok(zone, 0,
 				       high_wmark_pages(zone) +
 				       nr_migrate_pages,
-				       ZONE_MOVABLE, ALLOC_CMA))
+				       ZONE_MOVABLE, &alloc_flags))
 			continue;
 		return true;
 	}

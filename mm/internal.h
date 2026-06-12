@@ -18,11 +18,14 @@
 #include <linux/swap.h>
 #include <linux/leafops.h>
 #include <linux/tracepoint-defs.h>
+#include <linux/log2.h>
 
 /* Internal core VMA manipulation functions. */
 #include "vma.h"
 
 struct folio_batch;
+
+struct alloc_flags;
 
 /*
  * Maintains state across a page table move. The operation assumes both source
@@ -1036,7 +1039,7 @@ struct compact_control {
 	const gfp_t gfp_mask;		/* gfp mask of a direct compactor */
 	int order;			/* order a direct compactor needs */
 	int migratetype;		/* migratetype of direct compactor */
-	const unsigned int alloc_flags;	/* alloc flags of a direct compactor */
+	const struct alloc_flags *alloc_flags; /* alloc flags of a direct compactor */
 	const int highest_zoneidx;	/* zone index of a direct compactor */
 	enum migrate_mode mode;		/* Async or sync migration mode */
 	bool ignore_skip_hint;		/* Scan blocks even if marked skip */
@@ -1440,46 +1443,60 @@ extern void set_pageblock_order(void);
 unsigned long reclaim_pages(struct list_head *folio_list);
 unsigned int reclaim_clean_pages_from_list(struct zone *zone,
 					    struct list_head *folio_list);
-/* The ALLOC_WMARK bits are used as an index to zone->watermark */
-#define ALLOC_WMARK_MIN		WMARK_MIN
-#define ALLOC_WMARK_LOW		WMARK_LOW
-#define ALLOC_WMARK_HIGH	WMARK_HIGH
-#define ALLOC_NO_WATERMARKS	0x04 /* don't check watermarks at all */
 
-/* Mask to get the watermark bits */
-#define ALLOC_WMARK_MASK	(ALLOC_NO_WATERMARKS-1)
+struct alloc_flags {
+	/* Used as an index to zone->watermark */
+	enum zone_watermarks wmark: ilog2(NR_WMARK) + 1;
+	/* don't check watermarks at all */
+	bool no_watermarks : 1;
+	bool oom : 1;
+	/*
+	 * Caller cannot block. Allow access to 25% of the min watermark or
+	 * 62.5% if __GFP_HIGH is set.
+	 */
+	bool non_block : 1;
+	/* __GFP_HIGH set. Allow access to 50% of the min watermark. */
+	bool min_reserve : 1;
+	/* check for correct cpuset */
+	bool cpuset : 1;
+	/* allow allocations from CMA areas */
+	bool cma : 1;
+	/* avoid mixing pageblock types */
+	bool nofragment : 1;
+	/* Allows access to MIGRATE_HIGHATOMIC */
+	bool highatomic : 1;
+	/* Only use spin_trylock in allocation path */
+	bool trylock : 1;
+	/* allow waking of kswapd, __GFP_KSWAPD_RECLAIM set */
+	bool kswapd : 1;
+};
+
+static inline bool alloc_flags_no_watermarks(const struct alloc_flags *flags)
+{
+	if (!flags)
+		return false;
+	return flags->no_watermarks || (!IS_ENABLED(CONFIG_MMU) && flags->oom);
+}
 
 /*
  * Only MMU archs have async oom victim reclaim - aka oom_reaper so we
  * cannot assume a reduced access to memory reserves is sufficient for
- * !MMU
+ * !MMU. On !MMU this behaves like no_watermarks.
  */
-#ifdef CONFIG_MMU
-#define ALLOC_OOM		0x08
-#else
-#define ALLOC_OOM		ALLOC_NO_WATERMARKS
-#endif
-
-#define ALLOC_NON_BLOCK		 0x10 /* Caller cannot block. Allow access
-				       * to 25% of the min watermark or
-				       * 62.5% if __GFP_HIGH is set.
-				       */
-#define ALLOC_MIN_RESERVE	 0x20 /* __GFP_HIGH set. Allow access to 50%
-				       * of the min watermark.
-				       */
-#define ALLOC_CPUSET		 0x40 /* check for correct cpuset */
-#define ALLOC_CMA		 0x80 /* allow allocations from CMA areas */
-#ifdef CONFIG_ZONE_DMA32
-#define ALLOC_NOFRAGMENT	0x100 /* avoid mixing pageblock types */
-#else
-#define ALLOC_NOFRAGMENT	  0x0
-#endif
-#define ALLOC_HIGHATOMIC	0x200 /* Allows access to MIGRATE_HIGHATOMIC */
-#define ALLOC_TRYLOCK		0x400 /* Only use spin_trylock in allocation path */
-#define ALLOC_KSWAPD		0x800 /* allow waking of kswapd, __GFP_KSWAPD_RECLAIM set */
+static inline bool alloc_flags_oom(const struct alloc_flags *flags)
+{
+	if (!flags)
+		return false;
+	return flags->oom || (!IS_ENABLED(CONFIG_MMU) && flags->no_watermarks);
+}
 
 /* Flags that allow allocations below the min watermark. */
-#define ALLOC_RESERVES (ALLOC_NON_BLOCK|ALLOC_MIN_RESERVE|ALLOC_HIGHATOMIC|ALLOC_OOM)
+static inline bool alloc_flags_has_reserves(const struct alloc_flags *flags)
+{
+	if (!flags)
+		return false;
+	return flags->non_block || flags->min_reserve || flags->highatomic || alloc_flags_oom(flags);
+}
 
 enum ttu_flags;
 struct tlbflush_unmap_batch;

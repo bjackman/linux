@@ -4943,7 +4943,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
 		struct zone *zone = lruvec_pgdat(lruvec)->node_zones + i;
 		unsigned long size = wmark_pages(zone, mark) + MIN_LRU_BATCH;
 
-		if (managed_zone(zone) && !zone_watermark_ok(zone, 0, size, sc->reclaim_idx, 0))
+		if (managed_zone(zone) && !zone_watermark_ok(zone, 0, size, sc->reclaim_idx, NULL))
 			return false;
 	}
 
@@ -6044,7 +6044,7 @@ static inline bool should_continue_reclaim(struct pglist_data *pgdat,
 
 		/* Allocation can already succeed, nothing to do */
 		if (zone_watermark_ok(zone, sc->order, watermark,
-				      sc->reclaim_idx, 0))
+				      sc->reclaim_idx, NULL))
 			return false;
 
 		if (compaction_suitable(zone, sc->order, watermark,
@@ -6270,7 +6270,7 @@ static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
 
 	/* Allocation can already succeed, nothing to do */
 	if (zone_watermark_ok(zone, sc->order, min_wmark_pages(zone),
-			      sc->reclaim_idx, 0))
+			      sc->reclaim_idx, NULL))
 		return true;
 
 	/*
@@ -6918,7 +6918,7 @@ static bool pgdat_balanced(pg_data_t *pgdat, int order, int highest_zoneidx)
 			free_pages = zone_page_state_snapshot(zone, item);
 
 		if (__zone_watermark_ok(zone, order, mark, highest_zoneidx,
-					0, free_pages))
+					NULL, free_pages))
 			return true;
 	}
 

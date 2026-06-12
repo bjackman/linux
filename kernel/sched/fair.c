@@ -2020,7 +2020,7 @@ static bool pgdat_free_space_enough(struct pglist_data *pgdat)
 
 		if (zone_watermark_ok(zone, 0,
 				      promo_wmark_pages(zone) + enough_wmark,
-				      ZONE_MOVABLE, 0))
+				      ZONE_MOVABLE, NULL))
 			return true;
 	}
 	return false;

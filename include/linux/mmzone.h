@@ -802,6 +802,8 @@ enum zone_watermarks {
 	NR_WMARK
 };
 
+struct alloc_flags;
+
 /*
  * One per migratetype for each PAGE_ALLOC_COSTLY_ORDER. Two additional lists
  * are added for THP. One PCP list is used by GPF_MOVABLE, and the other PCP list
@@ -1615,11 +1617,11 @@ static inline unsigned long pgdat_end_pfn(pg_data_t *pgdat)
 
 void build_all_zonelists(pg_data_t *pgdat);
 bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
-			 int highest_zoneidx, unsigned int alloc_flags,
+			 int highest_zoneidx, const struct alloc_flags *alloc_flags,
 			 long free_pages);
 bool zone_watermark_ok(struct zone *z, unsigned int order,
 		unsigned long mark, int highest_zoneidx,
-		unsigned int alloc_flags);
+		const struct alloc_flags *alloc_flags);
 
 enum kswapd_clear_hopeless_reason {
 	KSWAPD_CLEAR_HOPELESS_OTHER = 0,

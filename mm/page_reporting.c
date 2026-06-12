@@ -272,7 +272,8 @@ page_reporting_process_zone(struct page_reporting_dev_info *prdev,
 	 * Cancel request if insufficient free memory or if we failed
 	 * to allocate page reporting statistics for the zone.
 	 */
-	if (!zone_watermark_ok(zone, 0, watermark, 0, ALLOC_CMA))
+	struct alloc_flags alloc_flags = { .cma = true };
+	if (!zone_watermark_ok(zone, 0, watermark, 0, &alloc_flags))
 		return err;
 
 	/* Process each free list starting from lowest order/mt */
