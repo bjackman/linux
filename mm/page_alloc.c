@@ -5812,7 +5812,7 @@ struct page *alloc_pages_node_noprof(int nid, gfp_t gfp_mask, unsigned int order
 EXPORT_SYMBOL(alloc_pages_node_noprof);
 
 struct folio *__folio_alloc_noprof(gfp_t gfp, unsigned int order, int preferred_nid,
-		nodemask_t *nodemask)
+		nodemask_t *nodemask, unsigned int alloc_flags)
 {
 	struct page *page;
 
@@ -5822,13 +5822,13 @@ struct folio *__folio_alloc_noprof(gfp_t gfp, unsigned int order, int preferred_
 	warn_if_node_offline(preferred_nid, gfp);
 
 	page = __alloc_pages_noprof(gfp | __GFP_COMP, order,
-				    preferred_nid, nodemask, ALLOC_DEFAULT);
+					preferred_nid, nodemask, alloc_flags);
 	return page_rmappable_folio(page);
 }
 
 struct folio *folio_alloc_node_noprof(gfp_t gfp, unsigned int order, int nid)
 {
-	return __folio_alloc_noprof(gfp, order, nid, NULL);
+	return __folio_alloc_noprof(gfp, order, nid, NULL, ALLOC_DEFAULT);
 }
 EXPORT_SYMBOL(folio_alloc_node_noprof);
 
