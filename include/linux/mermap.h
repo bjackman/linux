@@ -28,6 +28,8 @@ static inline void *mermap_addr(struct mermap_alloc *alloc)
 	return (void *)alloc->base;
 }
 
+void mermap_clear_folio(struct folio *folio);
+
 /*
  * arch_mermap_flush_tlb() is called before a part of the local CPU's mermap
  * region is remapped to a new address. No other CPU is allowed to _access_ that

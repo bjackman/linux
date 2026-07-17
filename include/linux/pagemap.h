@@ -211,7 +211,12 @@ enum mapping_flags {
 	AS_WRITEBACK_MAY_DEADLOCK_ON_RECLAIM = 9,
 	AS_KERNEL_FILE = 10,	/* mapping for a fake kernel file that shouldn't
 				   account usage to user cgroups */
-	AS_NO_DIRECT_MAP = 11,	/* Folios in the mapping are not in the direct map */
+	AS_NO_DIRECT_MAP = 11,	/* Folios in the mapping are not in the direct map.
+				   They are also zeroed before being added to the mapping, but
+				   this is separate from and incompatible with __GFP_ZERO. They
+				   are also zeroed again on removal if they get restored to the
+				   direct map. */
+	AS_MERMAP_STALE = 12,	/* A folio in the mapping may require a mermap TLB flush. */
 	/* Bits 16-25 are used for FOLIO_ORDER */
 	AS_FOLIO_ORDER_BITS = 5,
 	AS_FOLIO_ORDER_MIN = 16,
@@ -362,20 +367,13 @@ static inline gfp_t mapping_gfp_constraint(const struct address_space *mapping,
 	return mapping_gfp_mask(mapping) & gfp_mask;
 }
 
-/*
- * This is non-atomic.  Only to be used before the mapping is activated.
- * Probably needs a barrier...
- */
-static inline void mapping_set_gfp_mask(struct address_space *m, gfp_t mask)
-{
-	m->gfp_mask = mask;
-}
-
 static inline void mapping_set_no_direct_map(struct address_space *mapping)
 {
 	WARN_ON(!can_set_direct_map());
 	/* folio_zap_direct_map() doesn't support large folios. */
 	WARN_ON(mapping_max_folio_order(mapping));
+	/* Incompatible with ALLOC_UNMAPPED. */
+	WARN_ON(mapping_gfp_mask(mapping) & __GFP_ZERO);
 	set_bit(AS_NO_DIRECT_MAP, &mapping->flags);
 }
 
@@ -387,6 +385,26 @@ static inline bool mapping_no_direct_map(const struct address_space *mapping)
 static inline bool vma_has_no_direct_map(const struct vm_area_struct *vma)
 {
 	return vma->vm_file && mapping_no_direct_map(vma->vm_file->f_mapping);
+}
+
+/*
+ * This is non-atomic.  Only to be used before the mapping is activated.
+ * Probably needs a barrier...
+ */
+static inline void mapping_set_gfp_mask(struct address_space *m, gfp_t mask)
+{
+	WARN_ON(mask & __GFP_ZERO && mapping_no_direct_map(m));
+	m->gfp_mask = mask;
+}
+
+static inline void mapping_set_mermap_stale(struct address_space *m)
+{
+	set_bit(AS_MERMAP_STALE, &m->flags);
+}
+
+static inline bool mapping_grab_mermap_stale(struct address_space *m)
+{
+	return test_and_clear_bit(AS_MERMAP_STALE, &m->flags);
 }
 
 /*
