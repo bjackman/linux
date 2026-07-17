@@ -111,14 +111,8 @@ static int secretmem_migrate_folio(struct address_space *mapping,
 	return -EBUSY;
 }
 
-static void secretmem_free_folio(struct folio *folio)
-{
-	folio_zero_segment(folio, 0, folio_size(folio));
-}
-
 static const struct address_space_operations secretmem_aops = {
 	.dirty_folio	= noop_dirty_folio,
-	.free_folio	= secretmem_free_folio,
 	.migrate_folio	= secretmem_migrate_folio,
 };
 
