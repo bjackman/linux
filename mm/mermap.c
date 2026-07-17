@@ -336,3 +336,40 @@ void mermap_mm_teardown(struct mm_struct *mm)
 
 	free_percpu(mm->mermap.cpu);
 }
+
+/*
+ * Zero a folio via the mermap.
+ *
+ * This should be decoupled from the mermap implementation; it could be moved
+ * outside mermap.c if a better place arises to put it.
+ */
+void mermap_clear_folio(struct folio *folio)
+{
+	unsigned int numpages = folio_nr_pages(folio);
+	struct page *page = folio_page(folio, 0);
+	void *mermap;
+
+	BUILD_BUG_ON(IS_ENABLED(CONFIG_HIGHMEM));
+
+	/* Fast path: single mapping (may fail under preemption). */
+	scoped_guard(migrate) {
+		mermap = mermap_get(page, numpages << PAGE_SHIFT, PAGE_KERNEL_NOGLOBAL);
+		if (mermap) {
+			void *buf = kasan_reset_tag(mermap_addr(mermap));
+
+			for (int i = 0; i < numpages; i++)
+				clear_page(buf + (i << PAGE_SHIFT));
+			mermap_put(mermap);
+			return;
+		}
+	}
+
+	/* Slow path, map each page individually (always succeeds). */
+	for (int i = 0; i < numpages; i++) {
+		scoped_guard(preempt) {
+			mermap = mermap_get_reserved(page + i, PAGE_KERNEL_NOGLOBAL);
+			clear_page(kasan_reset_tag(mermap_addr(mermap)));
+			mermap_put(mermap);
+		}
+	}
+}

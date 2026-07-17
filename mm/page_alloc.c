@@ -5838,6 +5838,12 @@ struct folio *__folio_alloc_noprof(gfp_t gfp, unsigned int order, int preferred_
 	return page_rmappable_folio(page);
 }
 
+struct folio *__folio_alloc_node_noprof(gfp_t gfp, unsigned int order, int nid,
+					unsigned int alloc_flags)
+{
+	return __folio_alloc_noprof(gfp, order, nid, NULL, alloc_flags);
+}
+
 struct folio *folio_alloc_node_noprof(gfp_t gfp, unsigned int order, int nid)
 {
 	return __folio_alloc_noprof(gfp, order, nid, NULL, ALLOC_DEFAULT);
