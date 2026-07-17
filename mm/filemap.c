@@ -14,6 +14,7 @@
 #include <linux/compiler.h>
 #include <linux/dax.h>
 #include <linux/fs.h>
+#include <linux/mermap.h>
 #include <linux/set_memory.h>
 #include <linux/sched/signal.h>
 #include <linux/uaccess.h>
@@ -242,12 +243,55 @@ static void filemap_free_folio(const struct address_space *mapping,
 	folio_put_refs(folio, folio_nr_pages(folio));
 }
 
-#ifdef CONFIG_ARCH_HAS_SET_DIRECT_MAP
+/* Fast version: pages are already unmapped, but need zeroing. */
+#if defined(CONFIG_MERMAP)
+static inline int prep_add_unmapped_folio(struct address_space *mapping,
+					  struct folio *folio)
+{
+	int err;
+
+	if (!mapping_no_direct_map(mapping))
+		return 0;
+
+	err = mermap_mm_prepare(current->mm);
+	if (err)
+		return err;
+
+	mermap_clear_folio(folio);
+	mapping_set_mermap_stale(mapping);
+	return 0;
+}
+
+static inline void prep_remove_unmapped_folio(struct address_space *mapping,
+					      struct folio *folio_ignored)
+{
+	if (!mapping_no_direct_map(mapping))
+		return;
+
+	/* Folio is not going back in the direct map so no need to zero it here. */
+
+	mapping_check_flush_mermap(mapping);
+}
+
+static inline void prep_remove_unmapped_batch(struct address_space *mapping,
+					      struct folio_batch *fbatch)
+{
+	prep_remove_unmapped_folio(mapping, NULL);
+}
+/* Slow version: zap and flush direct map on-demand. */
+#elif defined(CONFIG_ARCH_HAS_SET_DIRECT_MAP)
 static inline int prep_add_unmapped_folio(struct address_space *mapping,
 					  struct folio *folio)
 {
 	if (!mapping_no_direct_map(mapping))
 		return 0;
+
+	/*
+	 * Note under this configuration, we could have just allocated with
+	 * __GFP_ZERO. But for consistency with the ALLOC_UNMAPPED version it's
+	 * forbidden, so zero manually.
+	 */
+	folio_zero_segment(folio, 0, folio_size(folio));
 
 	return folio_zap_direct_map(folio);
 }
@@ -259,6 +303,7 @@ static inline void prep_remove_unmapped_folio(struct address_space *mapping,
 		return;
 
 	folio_restore_direct_map(folio);
+	folio_zero_segment(folio, 0, folio_size(folio));
 }
 
 static inline void prep_remove_unmapped_batch(struct address_space *mapping,
@@ -267,26 +312,31 @@ static inline void prep_remove_unmapped_batch(struct address_space *mapping,
 	if (!mapping_no_direct_map(mapping))
 		return;
 
-	for (int i = 0; i < folio_batch_count(fbatch); i++)
-		folio_restore_direct_map(fbatch->folios[i]);
+	for (int i = 0; i < folio_batch_count(fbatch); i++) {
+		struct folio *folio = fbatch->folios[i];
+
+		folio_restore_direct_map(folio);
+		folio_zero_segment(folio, 0, folio_size(folio));
+	}
 }
+/* AS_NO_DIRECT_MAP unsupported. */
 #else
 static inline int prep_add_unmapped_folio(struct address_space *mapping, struct folio *folio)
 {
-	VM_WARN_ON(mapping_no_direct_map(mapping));
+	VM_WARN_ON(!IS_ENABLED(CONFIG_PAGE_ALLOC_UNMAPPED) && mapping_no_direct_map(mapping));
 	return 0;
 }
 
 static inline void prep_remove_unmapped_folio(struct address_space *mapping,
 					      struct folio *folio)
 {
-	VM_WARN_ON(mapping_no_direct_map(mapping));
+	VM_WARN_ON(!IS_ENABLED(CONFIG_PAGE_ALLOC_UNMAPPED) && mapping_no_direct_map(mapping));
 }
 
 static inline void prep_remove_unmapped_batch(struct address_space *mapping,
 					      struct folio_batch *fbatch)
 {
-	VM_WARN_ON(mapping_no_direct_map(mapping));
+	VM_WARN_ON(!IS_ENABLED(CONFIG_PAGE_ALLOC_UNMAPPED) && mapping_no_direct_map(mapping));
 }
 #endif
 
@@ -1055,30 +1105,52 @@ err:
 EXPORT_SYMBOL_GPL(filemap_add_folio);
 
 #ifdef CONFIG_NUMA
-struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order,
-		struct mempolicy *policy)
+static inline
+struct folio *__filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order,
+		struct mempolicy *policy, unsigned int alloc_flags)
 {
 	int n;
 	struct folio *folio;
 
 	if (policy)
-		return folio_alloc_mpol_noprof(gfp, order, policy,
-				NO_INTERLEAVE_INDEX, numa_node_id());
+		return __folio_alloc_mpol_noprof(gfp, order, policy,
+				NO_INTERLEAVE_INDEX, numa_node_id(), alloc_flags);
 
 	if (cpuset_do_page_mem_spread()) {
 		unsigned int cpuset_mems_cookie;
 		do {
 			cpuset_mems_cookie = read_mems_allowed_begin();
 			n = cpuset_mem_spread_node();
-			folio = folio_alloc_node_noprof(gfp, order, n);
+			folio = __folio_alloc_node_noprof(gfp, order, n, alloc_flags);
 		} while (!folio && read_mems_allowed_retry(cpuset_mems_cookie));
 
 		return folio;
 	}
-	return folio_alloc_noprof(gfp, order);
+
+	if ((gfp & __GFP_THISNODE))
+		return __folio_alloc_noprof(gfp, order, numa_node_id(), NULL, alloc_flags);
+
+	return __folio_alloc_mpol_noprof(gfp, order, get_task_policy(current),
+			NO_INTERLEAVE_INDEX, numa_node_id(), alloc_flags);
+}
+
+struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order,
+		struct mempolicy *policy)
+{
+	return __filemap_alloc_folio_noprof(gfp, order, policy, ALLOC_DEFAULT);
 }
 EXPORT_SYMBOL(filemap_alloc_folio_noprof);
+#else
+static inline
+struct folio *__filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order,
+		struct mempolicy *policy, unsigned int alloc_flags)
+{
+	return __folio_alloc_noprof(gfp, order, numa_node_id(), NULL, alloc_flags);
+}
 #endif
+
+#define __filemap_alloc_folio(...)				\
+	alloc_hooks(__filemap_alloc_folio_noprof(__VA_ARGS__))
 
 /*
  * filemap_invalidate_lock_two - lock invalidate_lock for two mappings
@@ -1986,6 +2058,15 @@ out:
 	return folio;
 }
 
+static inline unsigned int mapping_alloc_flags(struct address_space *mapping)
+{
+#ifdef CONFIG_PAGE_ALLOC_UNMAPPED
+	if (IS_ENABLED(CONFIG_MERMAP) && mapping_no_direct_map(mapping))
+		return ALLOC_UNMAPPED;
+#endif
+	return ALLOC_DEFAULT;
+}
+
 /**
  * __filemap_get_folio_mpol - Find and get a reference to a folio.
  * @mapping: The address_space to search.
@@ -2074,7 +2155,8 @@ no_page:
 			err = -ENOMEM;
 			if (order > min_order)
 				alloc_gfp |= __GFP_NORETRY | __GFP_NOWARN;
-			folio = filemap_alloc_folio(alloc_gfp, order, policy);
+			folio = __filemap_alloc_folio(alloc_gfp, order, policy,
+						mapping_alloc_flags(mapping));
 			if (!folio)
 				continue;
 

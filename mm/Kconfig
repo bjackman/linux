@@ -1341,6 +1341,7 @@ config SECRETMEM
 	default y
 	bool "Enable memfd_secret() system call" if EXPERT
 	depends on ARCH_HAS_SET_DIRECT_MAP
+	select PAGECACHE_NO_DIRECT_MAP
 	help
 	  Enable the memfd_secret() system call with the ability to create
 	  memory areas visible only in the context of the owning process and
@@ -1507,12 +1508,19 @@ config MM_LOCAL_REGION
 	bool
 	depends on ARCH_SUPPORTS_MM_LOCAL_REGION
 
+# This doesn't directly enable any code, it just exists to combine other
+# features - anything that needs AS_NO_DIRECT_MAP should "select" this config
+# and, wherever the platform supports it, that will change the default of those
+# other features which make AS_NO_DIRECT_MAP more efficient.
+config PAGECACHE_NO_DIRECT_MAP
+	bool
+
 config ARCH_SUPPORTS_MERMAP
 	bool
 	select ARCH_SUPPORTS_MM_LOCAL_REGION
 
 config MERMAP
-	bool
+	def_bool PAGECACHE_NO_DIRECT_MAP
 	depends on ARCH_SUPPORTS_MERMAP
 	select MM_LOCAL_REGION
 
@@ -1528,7 +1536,9 @@ config MERMAP_KUNIT_TEST
 	  If unsure, say N.
 
 config PAGE_ALLOC_UNMAPPED
-	bool
+	# It doesn't actually depend on the mermap, but with current usecases
+	# one isn't useful without the other.
+	def_bool MERMAP
 	depends on !HIGHMEM
 
 config PAGE_ALLOC_KUNIT_TEST

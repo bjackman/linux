@@ -255,6 +255,43 @@ static inline int mmap_file(struct file *file, struct vm_area_struct *vma)
 	return err;
 }
 
+#ifdef CONFIG_MERMAP
+static inline void mapping_check_flush_mermap(struct address_space *mapping)
+{
+	/*
+	 * Note this flush is hugely over-aggressive: only the mermap region
+	 * needs flushing, but assume that flushing the whole address space is
+	 * faster. Also only certain mm's (most of the time, just current->mm)
+	 * actually have stale entries, but assume the benefit of tracking that
+	 * would be minimal.
+	 *
+	 * Probably more important: the TLB has likely already been flushed
+	 * anyway for unrelated reasons since the mermap got used. If/when this
+	 * is shown to matter, the simplistic address space flag will need to be
+	 * replaced with something more deeply integrated into other TLB
+	 * flushing logic to enable proper amortisation.
+	 */
+	if (mapping_grab_mermap_stale(mapping))
+		flush_tlb_all();
+}
+
+/*
+ * VMA is being closed, i.e. mm might be losing logical access to the contents.
+ * For AS_NO_DIRECT_MAP, the folios were mermapped so stale TLB entries need to
+ * be removed to prevent CPU sidechannel leaks.
+ */
+static inline void vma_check_flush_mermap(struct vm_area_struct *vma)
+{
+	if (!vma->vm_file || !vma->vm_file->f_mapping ||
+	    !mapping_no_direct_map(vma->vm_file->f_mapping))
+		return;
+
+	mapping_check_flush_mermap(vma->vm_file->f_mapping);
+}
+#else
+static inline void vma_check_flush_mermap(struct vm_area_struct *vma) { }
+#endif
+
 /*
  * If the VMA has a close hook then close it, and since closing it might leave
  * it in an inconsistent state which makes the use of any hooks suspect, clear
@@ -262,6 +299,8 @@ static inline int mmap_file(struct file *file, struct vm_area_struct *vma)
  */
 static inline void vma_close(struct vm_area_struct *vma)
 {
+	vma_check_flush_mermap(vma);
+
 	if (vma->vm_ops && vma->vm_ops->close) {
 		vma->vm_ops->close(vma);
 
