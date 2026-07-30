@@ -1808,7 +1808,7 @@ static inline bool should_skip_init(gfp_t flags)
 }
 
 inline void post_alloc_hook(struct page *page, unsigned int order,
-				gfp_t gfp_flags)
+				gfp_t gfp_flags, unsigned int alloc_flags)
 {
 	const bool zero_tags = gfp_flags & __GFP_ZEROTAGS;
 	bool init = !want_init_on_free() && want_init_on_alloc(gfp_flags) &&
@@ -1865,7 +1865,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
 							unsigned int alloc_flags)
 {
-	post_alloc_hook(page, order, gfp_flags);
+	post_alloc_hook(page, order, gfp_flags, alloc_flags);
 
 	if (order && (gfp_flags & __GFP_COMP))
 		prep_compound_page(page, order);
@@ -4074,7 +4074,7 @@ __alloc_pages_may_oom(gfp_t gfp_mask, unsigned int order,
 	 */
 	page = get_page_from_freelist((gfp_mask | __GFP_HARDWALL) &
 				      ~__GFP_DIRECT_RECLAIM, order,
-				      ALLOC_WMARK_HIGH|ALLOC_CPUSET, ac);
+				      ac->alloc_flags|ALLOC_WMARK_HIGH|ALLOC_CPUSET, ac);
 	if (page)
 		goto out;
 
@@ -4120,7 +4120,7 @@ __alloc_pages_may_oom(gfp_t gfp_mask, unsigned int order,
 		 */
 		if (gfp_mask & __GFP_NOFAIL)
 			page = __alloc_pages_cpuset_fallback(gfp_mask, order,
-					ALLOC_NO_WATERMARKS, ac);
+					ac->alloc_flags|ALLOC_NO_WATERMARKS, ac);
 	}
 out:
 	mutex_unlock(&oom_lock);
@@ -4773,8 +4773,12 @@ restart:
 	 * The fast path uses conservative alloc_flags to succeed only until
 	 * kswapd needs to be woken up, and to avoid the cost of setting up
 	 * alloc_flags precisely. So we do that now.
+	 *
+	 * Can't just or alloc_flags if it contains WMARK bits, but those flags
+	 * shouldn't be set in ac->alloc_flags.
 	 */
-	alloc_flags = alloc_flags_slowpath(gfp_mask, order);
+	VM_WARN_ON(ac->alloc_flags & ALLOC_WMARK_MASK);
+	alloc_flags = ac->alloc_flags | alloc_flags_slowpath(gfp_mask, order);
 
 	/*
 	 * We need to recalculate the starting point for the zonelist iterator
@@ -4816,7 +4820,7 @@ retry:
 	reserve_flags = __gfp_pfmemalloc_flags(gfp_mask);
 	if (reserve_flags)
 		alloc_flags = alloc_flags_cma(gfp_mask) | reserve_flags |
-				(alloc_flags & ALLOC_KSWAPD);
+				ac->alloc_flags | (alloc_flags & ALLOC_KSWAPD);
 
 	/*
 	 * Reset the nodemask and zonelist iterators if memory policies can be
@@ -4985,6 +4989,8 @@ nopage:
 	 * we always retry
 	 */
 	if (unlikely(nofail)) {
+		unsigned int alloc_flags = ac->alloc_flags | ALLOC_MIN_RESERVE;
+
 		/*
 		 * Lacking direct_reclaim we can't do anything to reclaim memory,
 		 * we disregard these unreasonable nofail requests and still
@@ -5000,7 +5006,7 @@ nopage:
 		 * could deplete whole memory reserves which would just make
 		 * the situation worse.
 		 */
-		page = __alloc_pages_cpuset_fallback(gfp_mask, order, ALLOC_MIN_RESERVE, ac);
+		page = __alloc_pages_cpuset_fallback(gfp_mask, order, alloc_flags, ac);
 		if (page)
 			goto got_pg;
 
@@ -5326,7 +5332,9 @@ struct page *__alloc_frozen_pages_noprof(gfp_t gfp, unsigned int order,
 {
 	struct page *page;
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
-	struct alloc_context ac = { };
+	struct alloc_context ac = {
+		.alloc_flags = alloc_flags,
+	};
 	unsigned int fastpath_alloc_flags = alloc_flags;
 
 	/* Other flags could be supported later if needed. */
@@ -7099,7 +7107,7 @@ static void split_free_frozen_pages(struct list_head *list, gfp_t gfp_mask)
 		list_for_each_entry_safe(page, next, &list[order], lru) {
 			int i;
 
-			post_alloc_hook(page, order, gfp_mask);
+			post_alloc_hook(page, order, gfp_mask, ALLOC_DEFAULT);
 			if (!order)
 				continue;
 
@@ -7304,7 +7312,7 @@ int alloc_contig_frozen_range_noprof(unsigned long start, unsigned long end,
 		struct page *head = pfn_to_page(start);
 
 		check_new_pages(head, order);
-		prep_new_page(head, order, gfp_mask, 0);
+		prep_new_page(head, order, gfp_mask, ALLOC_DEFAULT);
 	} else {
 		ret = -EINVAL;
 		WARN(true, "PFN range: requested [%lu, %lu), allocated [%lu, %lu)\n",
