@@ -1,0 +1,168 @@
+# git-rebase-todo that reproduces this branch: the mermap + freetype_t +
+# FREETYPE_UNMAPPED subset of ALLOC_UNMAPPED v4 on v7.2-rc5, trimmed on the
+# premise that __GFP_SENSITIVE will be a GFP flag - so none of the API changes
+# that exist purely to let code outside mm/ pass an ALLOC_ flag in are carried.
+#
+# 10 prerequisite patches, the cover letter, and patches 4-24 of 26.
+# alloc-trylock v5 is down to 6 of its 18 patches.
+#
+# TWO COMMITS ON THIS BRANCH ARE NOT UPSTREAM PATCHES and are not in this todo:
+#   "mm/page_alloc: carry alloc_context.alloc_flags and post_alloc_hook()'s"
+#       - the mm-internal half of cf3b3031ef7f8, extracted.  MUST be applied
+#         after e71e6e115 and before the cover letter, or the tree will not
+#         build.  See notes-gfp.md section 3.1.
+#   "mm: backport scaffolding - make MERMAP selectable"
+#       - applied last; without it CONFIG_MERMAP and CONFIG_PAGE_ALLOC_UNMAPPED
+#         are unreachable and none of the new code is compiled.  Section 3.2.
+# Cherry-pick both from claude/alloc-unmapped-backport-gfp-psfpcn.
+#
+# The "# DROPPED (notes-gfp 1)" lines are the difference from
+# claude/alloc-unmapped-backport-freetype-psfpcn.
+#
+# Usage:
+#   git fetch origin master alloc-unmapped
+#   git switch -c alloc-unmapped-gfp origin/alloc-unmapped
+#   GIT_SEQUENCE_EDITOR="cp $PWD/alloc-unmapped-backport-rebase-todo" \
+#       git rebase -i --keep-empty --onto origin/master origin/master
+#
+# --keep-empty is needed for the empty b4 cover-letter commit.  Order below is
+# oldest-first (mm-new order), which is also a valid topological order.
+
+# ============================================================================
+# gfp-pessimisation v2 (notes 1.1)
+# ============================================================================
+pick 6176de146 mm/page_alloc: drop flag-conversion "optimisation"
+
+# ============================================================================
+# alloc-trylock v5, 6 of 18 patches (notes-gfp 2)
+# Creates mm/page_alloc.h, which v7.2 does not have, plus ALLOC_DEFAULT /
+# ALLOC_NOLOCK / fastpath_alloc_flags / 1-arg alloc_flags_cma().
+# The 15/18 -> 14/18 -> 13/18 -> 8..12/18 chain is NOT taken: it exists only to
+# give __alloc_pages_noprof() a public-facing alloc_flags parameter, which a GFP
+# flag does not need.  See notes-gfp.md section 1.
+# ============================================================================
+pick 4a28f8182 mm/page_alloc: rename ALLOC_TRYLOCK -> ALLOC_NOLOCK
+pick 511b762e4 mm/page_alloc: some renames to clarify alloc_flags scopes
+# ^ CONFLICT mm/page_alloc.c -- notes 3.1 (7a496b133 not backported)
+# DROPPED (notes-minimal 1): e11b5c372 mm: name some args in a function declaration
+pick 80bbff065 mm: split out internal page_alloc.h
+# ^ CONFLICT mm/internal.h x2 -- notes 3.2 (f51ae275a const nodemask, and the
+# ^ e11b5c372 named-args block, whose effect is inherited via the moved text)
+pick 49b09a465 mm/page_alloc: unify __alloc_frozen_pages[_nolock]_noprof()
+# ^ CONFLICT mm/page_alloc.c -- notes 3.3 (same cause as 3.1)
+# DROPPED (notes-minimal 1): e3370af71 mm/page_alloc: relax GFP WARN in nolock allocs
+pick 4eb22c260 mm: move some stuff to mm/page_alloc.h
+# DROPPED (notes-gfp 1): 9b777c01e perf/x86/intel: use higher-level allocator API
+# DROPPED (notes-gfp 1): 3417d8f34 KVM: VMX: use higher-level allocator API
+# DROPPED (notes-gfp 1): b7606739d x86/virt: use higher-level allocator API
+# DROPPED (notes-gfp 1): 2b5d31f57 sgi-xp: use higher-level allocator API
+# DROPPED (notes-gfp 1): 010455a92 net/funeth: switch to higher-level allocator API
+# DROPPED (notes-gfp 1): d65ae4c5f mm: remove __alloc_pages_node()
+# DROPPED (notes-gfp 1): 82c49de33 mm: move __alloc_pages() to mm/page_alloc.h
+# DROPPED (notes-gfp 1): cf3b3031e mm: replace __GFP_NO_CODETAG with ALLOC_NO_CODETAG
+# DROPPED (notes-minimal 1): 3c4fb0280 mm: remove the __GFP_NO_OBJ_EXT flag
+pick e71e6e115 mm/page_alloc: drop alloc_flags arg from alloc_flags_cma()
+# ^ CONFLICT mm/page_alloc.c -- notes-gfp 5.  New here: the hunk also carries
+# ^ "ac->alloc_flags |", which does not exist until the extraction commit below.
+#
+# >>> NOW APPLY "mm/page_alloc: carry alloc_context.alloc_flags and
+# >>> post_alloc_hook()'s" (not an upstream patch -- notes-gfp 3.1).
+# DROPPED (notes-minimal 1): 0650b2553 mm: factor out can_spin_trylock()
+
+# ============================================================================
+# "mm: fix reclaim storms in defrag_mode" v2, 3 of 4 patches (notes 2.3)
+# Hard dep of "always direct compact for unmapped allocs": compact_order and
+# the reshaped struct capture_control.  2/4 is a FUNCTIONAL dep - without it
+# non-movable pageblock-order compaction cannot scan other block types, so the
+# series' compaction promotion would silently never produce a free block.
+# ============================================================================
+# DROPPED (notes-minimal 1): 67d0ba828 mm: page_alloc: __GFP_FS lockdep annotation for direct compaction
+pick 0e6379e72 mm: compaction: support non-movable compaction for pageblock requests
+pick 17f165092 mm: page_alloc: move capture_control to the page allocator
+pick 40685a0b2 mm: page_alloc: fix non-movable reclaim storm in defrag_mode
+
+# ============================================================================
+# folio-alloc-cleanups -- NOT NEEDED on this branch (notes-freetype 1.1).  It
+# was required only by series patches 25 and 26, both of which are dropped.
+# ============================================================================
+# DROPPED (notes-freetype 1): c34a134c1 mm, treewide: replace __folio_alloc_node() with folio_alloc_node()
+# (was: CONFLICT include/linux/gfp.h -- does not arise here)
+# DROPPED (notes-freetype 1): 9c238f9b3 mm: move __folio_alloc() to page_alloc.h
+
+# ============================================================================
+# ALLOC_UNMAPPED v4: cover letter (empty commit)
+# Reworded during the backport to describe this branch's scope, and its
+# b4-submit-tracking block REMOVED -- a subset of the series is not a revision
+# of it, and b4 prep would otherwise offer to send a v5 missing five patches.
+# ============================================================================
+pick bb1cbf879 mm: Add ALLOC_UNMAPPED and AS_NO_DIRECT_MAP
+
+# ---- patches 1-3/26: AS_NO_DIRECT_MAP -- ALL DROPPED (notes-freetype 1) -----
+# DROPPED (notes-freetype 1): 10e93fd30 set_memory: add folio_{zap,restore}_direct_map helpers
+# DROPPED (notes-freetype 1): c23b038bc mm/secretmem: make use of folio_{zap,restore}_direct_map
+# DROPPED (notes-freetype 1): 7575645e2 mm: introduce AS_NO_DIRECT_MAP
+# (was: CONFLICT mm/mlock.c; also the GFP_HIGHUSER divergence from
+# ^ not backporting ad66a8fe9 ("mm/secretmem: don't allow highmem folios")
+
+# ---- patches 4-8/26: prep + x86 mm-local region ---------------------------
+pick 8d2984520 x86/mm: split out preallocate_sub_pgd()
+pick 436df72de x86: move PAE PMD preallocation defines to header
+pick 1349e2be1 x86/tlb: Expose some flush function declarations to modules
+pick 71508d77f x86/mm: introduce mm-local region
+pick 53e253979 x86/mm: move LDT remap into mm-local region
+
+# ---- patches 9-12/26: prep + the mermap -----------------------------------
+pick 1036b40bb mm: Create flags arg for __apply_to_page_range()
+# ^ CONFLICT mm/internal.h -- notes 3.4.  Only happens on this branch: the
+# ^ can_spin_trylock() anchor is gone with 0650b2553.
+pick e0d6afbd3 mm: Add more flags for __apply_to_page_range()
+pick 3fbc19eaf x86/mm: introduce the mermap
+# ^ CONFLICT mm/Makefile -- notes 3.7 (531a2a8e5 alloc_tag.o)
+pick a958e7419 mm: KUnit tests for the mermap
+
+# ---- patches 13-15/26: introduce freetypes --------------------------------
+pick 8217fc330 mm: introduce freetype_t
+# ^ CONFLICT mm/internal.h -- notes 3.8.  Only one hunk, PROVIDED 0e6379e72 is
+# ^ picked above; without it mm/compaction.c conflicts too and resolving it by
+# ^ hand would silently defeat the series' compaction promotion.
+pick 58d75ba6b mm: move migratetype definitions to freetype.h
+pick c4f195355 mm/page_alloc: add support for freetypes with no freelist
+
+# ---- patches 16-25/26: introduce ALLOC_UNMAPPED ---------------------------
+pick 88272644a mm: add definitions for allocating unmapped pages
+# ^ CONFLICT mm/page_alloc.h -- notes-gfp 4.1.  ALLOC_UNMAPPED is anchored on
+# ^ ALLOC_NO_CODETAG, which is absent; keep its 0x2000 value regardless.
+pick 8e3e8c7e5 mm: encode freetype flags in pageblock flags
+pick ae3afcc00 mm/page_alloc: separate pcplists by freetype flags
+pick 3f8c634ac mm/page_alloc: rename ALLOC_NON_BLOCK back to _HARDER
+# ^ CONFLICT mm/page_alloc.c -- notes 3.9.  The rename has to be re-aimed at
+# ^ the inline block in alloc_flags_slowpath(); check no ALLOC_NON_BLOCK is left.
+pick 39da4b0bc mm/page_alloc: introduce ALLOC_NOBLOCK
+pick 71737e208 mm/page_alloc: implement FREETYPE_UNMAPPED allocations
+# ^ CONFLICT mm/page_alloc.c -- notes-gfp 4.1.  Drop ALLOC_NO_CODETAG from both
+# ^ SUPPORTED_INPUT_ALLOC_FLAGS definitions.
+pick 618b48142 mm: Minimal KUnit tests for some new page_alloc logic
+# ^ NEEDS EDITING -- notes-gfp 4.2.  do_many_alloc_pages() calls the 5-arg
+# ^ __alloc_pages(); switch it to __alloc_frozen_pages() + set_page_refcounted().
+# ^ This is the only thing on the branch that wanted the public parameter.
+pick ccb8ead8b mm: Split out NR_FREE_PAGES_BLOCKS_[UN]MAPPED
+pick dda9957ef mm/page_alloc: always direct compact for unmapped allocs
+# DROPPED (notes-freetype 1): 89d417670 mm: plumb alloc flags into some alloc funcs
+
+# ---- patches 25-26/26: page cache adoption -- DROPPED (notes-freetype 1) ---
+# DROPPED (notes-freetype 1): 1315774fc mm: add fast path for AS_NO_DIRECT_MAP
+
+# Deliberately NOT picked (notes 2.2): spin-trylock-followup v3, alloc-nolock-fixes
+# v1, ad66a8fe9 (secretmem highmem), 7a496b133, 311ac72a0, 6beede602, f51ae275a,
+# 855c42778, 79fef9054, 531a2a8e5, 5350e41f0 and the rest of the mm-new delta.
+# page_alloc-unmapped-prep v1 is already upstream in v7.2 (notes 2.1).
+#
+# Trimming stops here.  See notes-minimal section 2: the alloc-trylock chain and
+# the compaction dependency are irreducible, so "minimal" only saves 5 patches.
+#
+# Then apply the scaffolding commit (see the NOTE at the top), or arrange for
+# CONFIG_MERMAP / CONFIG_PAGE_ALLOC_UNMAPPED to be selected some other way.
+#
+# Then apply "mm: backport scaffolding - make MERMAP selectable" (notes-gfp 3.2),
+# or arrange for CONFIG_MERMAP / CONFIG_PAGE_ALLOC_UNMAPPED to be selected some
+# other way -- e.g. by the __GFP_SENSITIVE work itself.
