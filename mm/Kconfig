@@ -1521,9 +1521,21 @@ config ARCH_SUPPORTS_MERMAP
 	select ARCH_SUPPORTS_MM_LOCAL_REGION
 
 config MERMAP
-	bool
+	bool "Ephemeral mm-local mappings (mermap)"
 	depends on ARCH_SUPPORTS_MERMAP
 	select MM_LOCAL_REGION
+	help
+	  Provides a fast way to create ephemeral mm-local mappings of
+	  physical pages, in order to access pages that are absent from the
+	  kernel direct map.
+
+	  Upstream this symbol is selected indirectly, via
+	  PAGECACHE_NO_DIRECT_MAP, by the AS_NO_DIRECT_MAP page cache support
+	  that is not part of this branch.  It is given a prompt here so that
+	  the mermap and the freetype code below can be built and tested;
+	  expect ASI's __GFP_SENSITIVE to select it instead.
+
+	  If unsure, say N.
 
 config MERMAP_KUNIT_TEST
 	tristate "KUnit tests for the mermap" if !KUNIT_ALL_TESTS
@@ -1537,7 +1549,9 @@ config MERMAP_KUNIT_TEST
 	  If unsure, say N.
 
 config PAGE_ALLOC_UNMAPPED
-	bool
+	# It doesn't actually depend on the mermap, but with current usecases
+	# one isn't useful without the other.
+	def_bool MERMAP
 	depends on !HIGHMEM
 
 config PAGE_ALLOC_KUNIT_TEST
